@@ -1145,7 +1145,7 @@ function _simulatecrystallisation(CryProblem::CrystallisationProblem{NuclF, GrF,
         return du
     end
 
-    θ = ComponentArray(;
+    θ = (;
                        nucl = CryProblem.parameterset_nucleation,
                        gr = CryProblem.parameterset_growth)
 
@@ -1305,11 +1305,11 @@ finite volume method with flux limiters.
                           @view u[1:(end - 1)])
     end
 
-    θ = ComponentArray(;
+    θ = (;
                        nucl = CryProblem.parameterset_nucleation,
                        gr = CryProblem.parameterset_growth,
                        br = CryProblem.parameterset_breakage,
-                       agg = CryProblem.parameterset_aggregation,)
+                       agg = CryProblem.parameterset_aggregation)
 
     # Construct initial conditions with the correct element type
     u0_typed = eltype(CryProblem.parameterset_nucleation).(_get_initial_state(CryProblem))
@@ -1317,7 +1317,7 @@ finite volume method with flux limiters.
     # println("Initial state shape: ", size(u0_typed))
 
     ODEprob = ODEProblem(HRFV_FLWmodel,
-                         convert(NuP, u0_typed), # NuP is type of parameterset_nucleation
+                         u0_typed, # eltype-matched plain state (do NOT convert to the params type)
                          (saveat[1], saveat[end]),
                          θ)
 
@@ -1491,17 +1491,17 @@ finite volume method with size-dependent growth rates.
         return 0.99 * CryProblem.solver.cell_dL[1] / maximum(g_vec)
     end
 
-    θ = ComponentArray(;
+    θ = (;
                        nucl = CryProblem.parameterset_nucleation,
                        gr = CryProblem.parameterset_growth,
                        br = CryProblem.parameterset_breakage,
-                       agg = CryProblem.parameterset_aggregation,)
+                       agg = CryProblem.parameterset_aggregation)
 
     # Construct initial conditions with the correct element type
     u0_typed = eltype(CryProblem.parameterset_nucleation).(_get_initial_state(CryProblem))
 
     ODEprob = ODEProblem(HRFV_FLWmodel,
-                         convert(NuP, u0_typed), # NuP is type of parameterset_nucleation
+                         u0_typed, # eltype-matched plain state (do NOT convert to the params type)
                          (saveat[1], saveat[end]),
                          θ)
 
@@ -1641,11 +1641,11 @@ function _simulatecrystallisation(CryProblem::CrystallisationProblem{NuclF, GrF,
         return nothing
     end
 
-    θ = ComponentArray(;
+    θ = (;
                        nucl = CryProblem.parameterset_nucleation,
                        gr = CryProblem.parameterset_growth,
                        br = CryProblem.parameterset_breakage,
-                       agg = CryProblem.parameterset_aggregation,)
+                       agg = CryProblem.parameterset_aggregation)
 
     ET = eltype(CryProblem.parameterset_nucleation) # Assumes this reflects TPara
     utyped = ET.(_get_initial_state(CryProblem)) # Convert initial state to correct type
