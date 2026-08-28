@@ -283,7 +283,7 @@ Base.@kwdef @concrete struct nucl_CNT <: AbstractFPNucleationFunction
     symbols::Vector{Symbol} = [:Aⱼ, :γ]
 end
 
-paramaxis(::nucl_CNT) = Axis(Aj = 1, γ = 2)
+paramaxis(::nucl_CNT) = ComponentArrays.Axis(Aj = 1, γ = 2)
 
 """
     nucl_CNT_multiloading <: AbstractFPNucleationFunction
@@ -342,7 +342,7 @@ Base.@kwdef @concrete struct nucl_empirical <: AbstractFPNucleationFunction
     symbols::Vector{Symbol} = [:Aj, :j]
 end
 
-paramaxis(::nucl_empirical) = Axis(Aj = 1, j = 2)
+paramaxis(::nucl_empirical) = ComponentArrays.Axis(Aj = 1, j = 2)
 
 """
     nucl_empirical_energy <: AbstractFPNucleationFunction
@@ -360,7 +360,7 @@ Base.@kwdef @concrete struct nucl_empirical_energy <: AbstractFPNucleationFuncti
     symbols::Vector{Symbol} = [:Aj, :Ea, :j]
 end
 
-paramaxis(::nucl_empirical_energy) = Axis(Aj = 1, Ea = 2, j = 3)
+paramaxis(::nucl_empirical_energy) = ComponentArrays.Axis(Aj = 1, Ea = 2, j = 3)
 
 """
     nucl_CNTnoS <: AbstractFPNucleationFunction
@@ -378,7 +378,7 @@ Base.@kwdef @concrete struct nucl_CNTnoS <: AbstractFPNucleationFunction
     symbols::Vector{Symbol} = [:Aⱼ, :γ]
 end
 
-paramaxis(::nucl_CNTnoS) = Axis(Aj = 1, γ = 2)
+paramaxis(::nucl_CNTnoS) = ComponentArrays.Axis(Aj = 1, γ = 2)
 
 """
     nucl_secondary <: AbstractFPNucleationFunction
@@ -396,7 +396,7 @@ Base.@kwdef @concrete struct nucl_secondary <: AbstractFPNucleationFunction
     symbols::Vector{Symbol} = [:Aⱼ, :Ea, :j]
 end
 
-paramaxis(::nucl_secondary) = Axis(Aj = 1, Ea = 2, j = 3)
+paramaxis(::nucl_secondary) = ComponentArrays.Axis(Aj = 1, Ea = 2, j = 3)
 
 """
     nucl_prim_plus_second <: AbstractFPNucleationFunction
@@ -414,7 +414,7 @@ Base.@kwdef @concrete struct nucl_prim_plus_second <: AbstractFPNucleationFuncti
     symbols::Vector{Symbol} = [:Aⱼ_prim, :Ea_prim, :j_prim, :Aⱼ_sec, :Ea_sec, :j_sec]
 end
 
-paramaxis(::nucl_prim_plus_second) = Axis(prim = ViewAxis(1:3,
+paramaxis(::nucl_prim_plus_second) = ComponentArrays.Axis(prim = ViewAxis(1:3,
                                                           paramaxis(nucl_empirical_energy())),
                                           sec = ViewAxis(4:6, paramaxis(nucl_secondary())))
 
@@ -434,7 +434,7 @@ Base.@kwdef @concrete struct nucl_CNT_plus_second <: AbstractFPNucleationFunctio
     symbols::Vector{Symbol} = [:Aⱼ_CNT, :γ, :Aⱼ_sec, :Ea, :j]
 end
 
-paramaxis(::nucl_CNT_plus_second) = Axis(cnt = ViewAxis(1:2, paramaxis(nucl_CNT())),
+paramaxis(::nucl_CNT_plus_second) = ComponentArrays.Axis(cnt = ViewAxis(1:2, paramaxis(nucl_CNT())),
                                          sec = ViewAxis(3:5, paramaxis(nucl_secondary())))
 
 """
@@ -455,7 +455,7 @@ Base.@kwdef @concrete struct nucl_CNT_fixed <: AbstractFPNucleationFunction
     γ::Float64
 end
 
-paramaxis(::nucl_CNT_fixed) = Axis()
+paramaxis(::nucl_CNT_fixed) = ComponentArrays.Axis()
 
 """
     _fixkinetics(NuF::nucl_CNT, params::AbstractArray{<:Real}) -> nucl_CNT_fixed
@@ -505,7 +505,7 @@ Base.@kwdef @concrete struct nucl_empirical_fixed <: AbstractFPNucleationFunctio
     j::Float64
 end
 
-paramaxis(::nucl_empirical_fixed) = Axis()
+paramaxis(::nucl_empirical_fixed) = ComponentArrays.Axis()
 
 """
     _fixkinetics(NuF::nucl_empirical, params::AbstractArray{<:Real}) -> nucl_empirical_fixed
@@ -569,7 +569,7 @@ Base.@kwdef @concrete struct growth_empirical <: AbstractFPScalarGrowthFunction
     symbols::Vector{Symbol} = [:Ag, :g]
 end
 
-paramaxis(::growth_empirical) = Axis(Ag = 1, g = 2)
+paramaxis(::growth_empirical) = ComponentArrays.Axis(Ag = 1, g = 2)
 """
     growth_energy <: AbstractFPScalarGrowthFunction
 
@@ -588,7 +588,7 @@ Base.@kwdef @concrete struct growth_energy <: AbstractFPScalarGrowthFunction
     Ea::Float64 = 53 * 1e3  # Activation energy in J/mol - default to 50 kJ/mol, range is supposedly 50-60 kJ/mol https://doi.org/10.1016/j.jcrysgro.2016.09.049
 end
 
-paramaxis(::growth_energy) = Axis(Ag = 1, g = 2)
+paramaxis(::growth_energy) = ComponentArrays.Axis(Ag = 1, g = 2)
 
 """
     growth_energy_multiloading <: AbstractFPScalarGrowthFunction
@@ -650,7 +650,7 @@ Base.@kwdef @concrete struct growth_energy_est <: AbstractFPScalarGrowthFunction
     symbols::Vector{Symbol} = [:Ag, :Eag, :g]
 end
 
-paramaxis(::growth_energy_est) = Axis(Ag = 1, Eag = 2, g = 3)
+paramaxis(::growth_energy_est) = ComponentArrays.Axis(Ag = 1, Eag = 2, g = 3)
 
 """
     growth_BCF <: AbstractFPScalarGrowthFunction
@@ -668,7 +668,7 @@ Base.@kwdef @concrete struct growth_BCF <: AbstractFPScalarGrowthFunction
     symbols::Vector{Symbol} = [:C3, :C4]
 end
 
-paramaxis(::growth_BCF) = Axis(C3 = 1, C4 = 2)
+paramaxis(::growth_BCF) = ComponentArrays.Axis(C3 = 1, C4 = 2)
 
 """
     growth_BpS <: AbstractFPScalarGrowthFunction
@@ -686,7 +686,7 @@ Base.@kwdef @concrete struct growth_BpS <: AbstractFPScalarGrowthFunction
     symbols::Vector{Symbol} = [:C1, :C2]
 end
 
-paramaxis(::growth_BpS) = Axis(C1 = 1, C2 = 2)
+paramaxis(::growth_BpS) = ComponentArrays.Axis(C1 = 1, C2 = 2)
 
 """
     growth_empirical_length <: AbstractFPLengthGrowthFunction
@@ -720,7 +720,7 @@ Base.@kwdef @concrete struct growth_empirical_fixed <: AbstractFPScalarGrowthFun
     string::String = "Emp. Gr Fixed"
 end
 
-paramaxis(::growth_empirical_fixed) = Axis()
+paramaxis(::growth_empirical_fixed) = ComponentArrays.Axis()
 
 """
     _fixkinetics(GrF::growth_empirical, params::AbstractArray{<:Real}) -> growth_empirical_fixed
@@ -771,7 +771,7 @@ Base.@kwdef @concrete struct growth_dissolution <: AbstractFPScalarGrowthFunctio
     symbols::Vector{Symbol} = [:Ad, :Ead, :d]
 end
 
-paramaxis(::growth_dissolution) = Axis(Ad = 1, Ead = 2, d = 3)
+paramaxis(::growth_dissolution) = ComponentArrays.Axis(Ad = 1, Ead = 2, d = 3)
 """
     growth_dissolution_length <: AbstractFPLengthGrowthFunction
 
@@ -788,7 +788,7 @@ Base.@kwdef @concrete struct growth_dissolution_length <: AbstractFPLengthGrowth
     symbols::Vector{Symbol} = [:Ad, :Ead, :d, :κ, :p]
 end
 
-paramaxis(::growth_dissolution_length) = Axis(Ad = 1, Ead = 2, d = 3, κ = 4, p = 5)
+paramaxis(::growth_dissolution_length) = ComponentArrays.Axis(Ad = 1, Ead = 2, d = 3, κ = 4, p = 5)
 
 """
     growth_dissolution <: AbstractFPScalarGrowthFunction
@@ -806,7 +806,7 @@ Base.@kwdef @concrete struct growth_energy_dissolution <: AbstractFPScalarGrowth
     symbols::Vector{Symbol} = [:Ag, :g, :Ad, :Ead, :d]
 end
 
-paramaxis(::growth_energy_dissolution) = Axis(Ag = 1, g = 2, Ad = 3, Ead = 4, d = 5)
+paramaxis(::growth_energy_dissolution) = ComponentArrays.Axis(Ag = 1, g = 2, Ad = 3, Ead = 4, d = 5)
 
 
 """
@@ -825,7 +825,7 @@ Base.@kwdef @concrete struct nobreakage <: AbstractBreakageFunction
     symbols::Vector{Symbol} = []
 end
 
-paramaxis(::nobreakage) = Axis()
+paramaxis(::nobreakage) = ComponentArrays.Axis()
 
 """
     breakage_empirical <: AbstractBreakageFunction
@@ -841,7 +841,7 @@ Base.@kwdef @concrete struct breakage_empirical <: AbstractBreakageFunction
     string::String = "Emp. Br"
 end
 
-paramaxis(::breakage_empirical) = Axis(b = 1, n = 2)
+paramaxis(::breakage_empirical) = ComponentArrays.Axis(b = 1, n = 2)
 
 """
     breakage_uniform <: AbstractBreakageFunction
@@ -857,7 +857,7 @@ Base.@kwdef @concrete struct breakage_uniform <: AbstractBreakageFunction
     string::String = "Uniform. Br"
 end
 
-paramaxis(::breakage_uniform) = Axis(logb = 1, n = 2)
+paramaxis(::breakage_uniform) = ComponentArrays.Axis(logb = 1, n = 2)
 
 """
     noaggregation <: AbstractAggregationFunction
@@ -875,7 +875,7 @@ Base.@kwdef @concrete struct noaggregation <: AbstractAggregationFunction
     symbols::Vector{Symbol} = []
 end
 
-paramaxis(::noaggregation) = Axis()
+paramaxis(::noaggregation) = ComponentArrays.Axis()
 
 """
     aggr_scalar <: AbstractAggregationFunction
@@ -891,7 +891,7 @@ Base.@kwdef @concrete struct aggr_scalar <: AbstractAggregationFunction
     string::String = "Scalar Aggr"
 end
 
-paramaxis(::aggr_scalar) = Axis(logβ = 1)
+paramaxis(::aggr_scalar) = ComponentArrays.Axis(logβ = 1)
 
 """
     aggr_linear <: AbstractAggregationFunction
@@ -907,7 +907,7 @@ Base.@kwdef @concrete struct aggr_linear <: AbstractAggregationFunction
     string::String = "Linear Aggr"
 end
 
-paramaxis(::aggr_linear) = Axis(logβ = 1)
+paramaxis(::aggr_linear) = ComponentArrays.Axis(logβ = 1)
 
 """
     aggr_linearvol <: AbstractAggregationFunction
@@ -923,7 +923,7 @@ Base.@kwdef @concrete struct aggr_linearvol <: AbstractAggregationFunction
     string::String = "Linear Volume Aggr"
 end
 
-paramaxis(::aggr_linearvol) = Axis(logβ = 1)
+paramaxis(::aggr_linearvol) = ComponentArrays.Axis(logβ = 1)
 
 """
     aggr_avg <: AbstractAggregationFunction
@@ -982,50 +982,31 @@ end
 """
     AbstractObservable
 
-Abstract supertype for observable containers (see `SeriesObservable`,
-`ScalarObservable`).
+Abstract supertype for observable containers (see `Observable`).
 """
 abstract type AbstractObservable end
 
 """
-    SeriesObservable{Tt,Tμ,Tσ2} <: AbstractObservable
+    Observable{T,Tt,Tσ2} <: AbstractObservable
 
-An observable measured as a time series with its own (possibly irregular)
-time grid, carrying a per-point mean and variance.
-
-Fields:
-- `time::Tt`: measurement times (minutes)
-- `mean::Tμ`: per-point mean, `length(mean) == length(time)`
-- `variance::Tσ2`: per-point variance; `nothing` when only a single
-  replicate was measured
-"""
-Base.@kwdef @concrete struct SeriesObservable{Tt <: AbstractVector{<:Real},
-                                              Tμ <: AbstractVector{<:Real},
-                                              Tσ2 <: Union{Nothing,
-                                                           AbstractVector{<:Real}}} <:
-                 AbstractObservable
-    time::Tt
-    mean::Tμ
-    variance::Tσ2 = nothing
-end
-
-"""
-    ScalarObservable{T,Tσ2,Tt} <: AbstractObservable
-
-An observable measured once (e.g. final particle size d43 or d50q),
-carrying a value and variance.
+A single measured observable (concentration, d43, pH, ...), measured once or
+as a time series. The SHAPE of the fields carries the semantics: a time
+series has vector-valued `time` and `mean` (plus a per-point `variance` when
+replicates exist); a final-state scalar has scalar `time` and `mean` (plus a
+scalar `variance`). Branch on the shape by dispatch, e.g.
+`f(obs::Observable{<:AbstractVector})` — never with runtime `isa` checks.
 
 Fields:
-- `value::T`: measured value
-- `variance::Tσ2`: measurement variance; `nothing` for a single replicate
-- `time::Tt`: time of measurement (defaults to `zero(T)`)
+- `mean::T`: measured value(s); `AbstractVector` for a time series
+- `time::Tt`: measurement time(s): `Real` for a scalar, `AbstractVector` for a series
+- `variance::Tσ2`: variance; `nothing` when unavailable (single replicate)
 """
-Base.@kwdef @concrete struct ScalarObservable{T <: Real,
-                                              Tσ2 <: Union{Nothing, Real},
-                                              Tt <: Real} <: AbstractObservable
-    value::T
+
+
+Base.@kwdef @concrete struct Observable{T, Tt, Tσ2} <: AbstractObservable
+    mean::T
+    time::Tt = zero(mean)
     variance::Tσ2 = nothing
-    time::Tt = zero(value)
 end
 
 """
@@ -1042,7 +1023,7 @@ A single crystallisation experiment: a typed `NamedTuple` of observables
 plus the run conditions.
 
 Fields:
-- `observables::O`: e.g. `(concentration = SeriesObservable(...), d43 = ScalarObservable(...), d50q = ScalarObservable(...))`.
+- `observables::O`: e.g. `(concentration = Observable(...), d43 = Observable(...), d50q = Observable(...))`.
   The `concentration` observable is mandatory for loss evaluation.
 - `temperature::Float64`: run temperature in Kelvin
 - `loading::Float64`: loading (e.g. volumetric solids fraction)
@@ -1475,7 +1456,8 @@ Base.@kwdef @concrete struct CrystallisationProblem{NuF <: AbstractNucleationFun
                                                     GrP <: AbstractVector{<:Real},
                                                     BrP <: AbstractVector{<:Real},
                                                     AggP <: AbstractVector{<:Real},
-                                                    TP <: AbstractTemperature} <:
+                                                    TP <: AbstractTemperature,
+                                                                     SM <: AbstractSaturationModel} <:
                              AbstractCrystallisationProblem
 
     # Operation
@@ -1487,7 +1469,7 @@ Base.@kwdef @concrete struct CrystallisationProblem{NuF <: AbstractNucleationFun
     # Solute
     ρ::Float64 = 1370.0
     initial_concentration::Float64 = 20.0
-    saturation_model::AbstractSaturationModel = lysozyme_saturation()
+    saturation_model::SM = lysozyme_saturation()
     kv::Float64 = 0.81 #0.55
     molecular_volume::Float64 = 2.97e-26
 

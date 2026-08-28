@@ -4,38 +4,25 @@ Functions for forward sensitivity analysis of crystallisation models using SciML
 
 function forwardsensitivity(CryProblem::CrystallisationProblem{NuclF, GrF, nobreakage,
                                                                noaggregation, MoM, NuP, GrP,
-                                                               BrP, AggP},
+                                                               BrP, AggP, TP, SM},
                             saveat) where {NuclF <: AbstractNucleationFunction,
                                            GrF <: AbstractGrowthFunction,
                                            NuP <: AbstractVector{<:Real},
                                            GrP <: AbstractVector{<:Real},
                                            BrP <: AbstractVector{<:Real},
-                                           AggP <: AbstractVector{<:Real}}
+                                           AggP <: AbstractVector{<:Real},
+                                           TP <: AbstractTemperature,
+                                           SM <: AbstractSaturationModel}
 
     function MoM_model(du, u, p, t)
-        numberdensity = @view u[1:(end - 1)]
-        temp = temperature(CryProblem.temp_profile, t)
-        sat_conc = saturation_concentration(CryProblem, t)
-        supersat = u[end] / sat_conc
-
         scalargrowth = growthrate(CryProblem.kinetics_growthfunction,
-                                  p.gr,
-                                  supersat,
-                                  CryProblem,
-                                  temp,
-                                  CryProblem.loading,
-                                  numberdensity)
+                                  p.gr, CryProblem, u, t)
 
         n_mom = CryProblem.solver.nmoments
         @assert n_mom >= 2 "MoM solver requires nmoments >= 2 (concentration closure uses µ2)"
 
         du[1] = nucleationrate(CryProblem.kinetics_nucleationfunction,
-                               p.nucl,
-                               supersat,
-                               CryProblem,
-                               temp,
-                               CryProblem.loading,
-                               numberdensity)
+                               p.nucl, CryProblem, u, t)
         for k in 2:(n_mom + 1)
             du[k] = (k - 1) * scalargrowth * u[k - 1]
         end
@@ -64,7 +51,7 @@ end
 
 function forwardsensitivity(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
                                                                FiniteVol, NuP, GrP, BrP,
-                                                               AggP},
+                                                               AggP, TP, SM},
                             saveat) where {NuclF <: AbstractNucleationFunction,
                                            GrF <: AbstractGrowthFunction,
                                            BrF <: AbstractBreakageFunction,
@@ -72,23 +59,21 @@ function forwardsensitivity(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, 
                                            NuP <: AbstractVector{<:Real},
                                            GrP <: AbstractVector{<:Real},
                                            BrP <: AbstractVector{<:Real},
-                                           AggP <: AbstractVector{<:Real}}
+                                           AggP <: AbstractVector{<:Real},
+                                           TP <: AbstractTemperature,
+                                           SM <: AbstractSaturationModel}
 
     fluxlimiter_ospre(r) = (1.5(r^2) + r) / (r^2 + r + 1)
 
     function HRFV_FLWmodel(dstdt, st, p, t)
 
         numberdensity = @view st[1:(end - 1)]
-        sat_conc = saturation_concentration(CryProblem, t)
-        temp = temperature(CryProblem.temp_profile, t)
 
         scalargrowth = growthrate(CryProblem.kinetics_growthfunction, p.gr,
-                                  st[end] / sat_conc, CryProblem, temp,
-                                  CryProblem.loading, numberdensity)
+                                  CryProblem, st, t)
 
         flux = vcat(nucleationrate(CryProblem.kinetics_nucleationfunction, p.nucl,
-                                   st[end] / sat_conc, CryProblem, temp,
-                                   CryProblem.loading, numberdensity), ## Inflow
+                                   CryProblem, st, t), ## Inflow
                     scalargrowth * 0.5 * (numberdensity[1] + numberdensity[2]),
                     [scalargrowth * (numberdensity[i-1] +
                       0.5 *

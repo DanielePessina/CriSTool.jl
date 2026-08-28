@@ -67,7 +67,7 @@ using StaticArrays
 
 ## Export stuff
 export CrystallisationFVSolution, CrystallisationMoMSolution, CrystallisationProblem
-export SeriesObservable, ScalarObservable, CrystallisationExperiment, AbstractExperiment,
+export Observable, CrystallisationExperiment, AbstractExperiment,
        initial_concentration
 export AbstractSaturationModel, ConstantSaturation, PolynomialSaturation, CallableSaturation,
        lysozyme_saturation, saturation_concentration, supersaturation

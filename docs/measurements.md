@@ -1,8 +1,8 @@
 # Measurements and data loading
 
 CriSTool represents each experimental run as a `CrystallisationExperiment`:
-a typed `NamedTuple` of per-observable containers (`SeriesObservable` for
-time series with their own grid, `ScalarObservable` for final-state scalars
+a typed `NamedTuple` of per-observable containers (`Observable` for
+time series with their own grid, `Observable` for final-state scalars
 like d43) plus the run conditions (temperature, loading, `exp_id`). There is
 no `Dict{Symbol,Any}` anywhere; adding a new observable (pH, mass, PSD, ...)
 means adding a field to the `NamedTuple`, not a new container type.
@@ -41,7 +41,7 @@ expt = experiments[1]
 expt.observables.concentration.time    # measurement grid (minutes)
 expt.observables.concentration.mean    # mean concentration per timepoint
 expt.observables.concentration.variance
-expt.observables.d43.value             # final d43 scalar (µm)
+expt.observables.d43.mean             # final d43 scalar (µm)
 expt.observables.d43.variance
 initial_concentration(expt)            # first concentration timepoint
 expt.temperature                       # Kelvin

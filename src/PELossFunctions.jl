@@ -381,15 +381,16 @@ function _solve_experiment(problem::CrystallisationProblem, params,
 end
 
 """
-    _size_pair(problem, observables, solution) -> (ScalarObservable, AbstractVector)
+    _size_pair(observables, solution) -> (Observable, AbstractVector)
 
 Return the particle-size observable and simulated size trajectory used by
-losses: `d43` for the MoM solver, `d50q` for discretised solvers (matching the
-legacy loss behaviour). Read through `size_metrics` so consumers never index
-solution fields directly.
+losses, dispatched on the solution type: `d43` for the MoM solver, `d50q`
+for discretised solvers (matching the legacy loss behaviour). Read through
+`size_metrics` so consumers never index solution fields directly.
 """
-_size_pair(problem::CrystallisationProblem, observables, solution) =
-    problem.solver isa MoM ? (observables.d43, size_metrics(solution).d43) :
+_size_pair(observables, solution::CrystallisationMoMSolution) =
+    (observables.d43, size_metrics(solution).d43)
+_size_pair(observables, solution::CrystallisationFVSolution) =
     (observables.d50q, size_metrics(solution).d50q)
 
 """
@@ -407,13 +408,13 @@ function _loss_objectives(lf::AbstractPELossFunction, problem::CrystallisationPr
         obs = expt.observables
         conc = obs.concentration
         solution = _solve_experiment(problem, params, expt)
-        size_obs, size_sim = _size_pair(problem, obs, solution)
+        size_obs, size_sim = _size_pair(obs, solution)
 
         conc_contrib += sum(log.(2π .* (conc.variance[2:end] .+ 1e-6)) .+
                             ((solution.concentration[2:end] .- conc.mean[2:end]) .^ 2) ./
                             (conc.variance[2:end] .+ 1e-6))
         size_contrib += log(2π * (size_obs.variance + 1e-6)) +
-                        ((size_sim[end] - size_obs.value)^2) / (size_obs.variance + 1e-6)
+                        ((size_sim[end] - size_obs.mean)^2) / (size_obs.variance + 1e-6)
     end
     return (lf.weighting[1] * 0.5 * conc_contrib, lf.weighting[2] * 0.5 * size_contrib)
 end
@@ -450,11 +451,11 @@ function loss(lf::mae, problem::CrystallisationProblem, params,
         obs = expt.observables
         conc = obs.concentration
         solution = _solve_experiment(problem, params, expt)
-        size_obs, size_sim = _size_pair(problem, obs, solution)
+        size_obs, size_sim = _size_pair(obs, solution)
 
         if solution.success
             (abs.(solution.concentration .- conc.mean),
-             [abs(size_sim[end] - size_obs.value)])
+             [abs(size_sim[end] - size_obs.mean)])
         else
             (fill(1e6, length(conc.mean)), [1e6])
         end

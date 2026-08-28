@@ -367,13 +367,13 @@ function build_simulation_thesis_table_data(measurements,
         if sol isa CrystallisationMoMSolution
             size_label = "d43"
             pred_text = string(round(get_characteristic_size(sol), sigdigits = 3))
-                            meas_text = format_plot_measurement_value(measurements[m].observables.d43.value,
+                            meas_text = format_plot_measurement_value(measurements[m].observables.d43.mean,
                                                           measurements[m].observables.d43.variance;
                                                           show_uncertainty = show_measurement_uncertainty)
         elseif sol isa CrystallisationFVSolution
             size_label = "d50"
             pred_text = string(round(get_characteristic_size(sol), sigdigits = 3))
-                            meas_text = format_plot_measurement_value(measurements[m].observables.d50q.value,
+                            meas_text = format_plot_measurement_value(measurements[m].observables.d50q.mean,
                                                           measurements[m].observables.d50q.variance;
                                                           show_uncertainty = show_measurement_uncertainty)
         end
@@ -457,7 +457,7 @@ function plot_measurements_vs_ensemble(measurements::Vector{<:AbstractExperiment
                 std_pred_size = ensemble_sol.d43_std[end]
                 pred_text = "$(round(mean_pred_size, sigdigits=3)) ± $(round(std_pred_size, sigdigits=2))"
 
-                                    meas_mean = measurements[m].observables.d43.value
+                                    meas_mean = measurements[m].observables.d43.mean
                     meas_std = sqrt(measurements[m].observables.d43.variance)
                     meas_text = "$(round(meas_mean, sigdigits=3)) ± $(round(meas_std, sigdigits=2))"
             elseif hasproperty(ensemble_sol, :d50q_mean)
@@ -466,7 +466,7 @@ function plot_measurements_vs_ensemble(measurements::Vector{<:AbstractExperiment
                 std_pred_size = ensemble_sol.d50q_std[end]
                 pred_text = "$(round(mean_pred_size, sigdigits=3)) ± $(round(std_pred_size, sigdigits=2))"
 
-                                    meas_mean = measurements[m].observables.d50q.value
+                                    meas_mean = measurements[m].observables.d50q.mean
                     meas_std = sqrt(measurements[m].observables.d50q.variance)
                     meas_text = "$(round(meas_mean, sigdigits=3)) ± $(round(meas_std, sigdigits=2))"
             end
@@ -598,13 +598,13 @@ function plot_measurements_vs_ensemble(measurements::Vector{<:AbstractExperiment
                 std_pred_size = ensemble_sol.d43_std[end]
                 predicted_size_str = "T = $(round(measurements[m].temperature-273,digits = 2) )°C, Load = $(round(measurements[m].loading, sigdigits=2)) g/L, Pred. D43 = $(round(mean_pred_size, sigdigits=3)) ± $(round(std_pred_size, sigdigits=2)) μm"
 
-                                    measured_size_str = "Meas. = $(round(measurements[m].observables.d43.value, sigdigits=3)) ± $(round(sqrt(measurements[m].observables.d43.variance), sigdigits=2)) μm"
+                                    measured_size_str = "Meas. = $(round(measurements[m].observables.d43.mean, sigdigits=3)) ± $(round(sqrt(measurements[m].observables.d43.variance), sigdigits=2)) μm"
             elseif hasproperty(ensemble_sol, :d50q_mean) # FV solution
                 mean_pred_size = ensemble_sol.d50q_mean[end]
                 std_pred_size = ensemble_sol.d50q_std[end]
                 predicted_size_str = "T = $(round(measurements[m].temperature-273,digits = 2) )°C, Load = $(round(measurements[m].loading, sigdigits=2)) g/L,Pred. D50 = $(round(mean_pred_size, sigdigits=3)) ± $(round(std_pred_size, sigdigits=2)) μm"
 
-                                    measured_size_str = "Meas. = $(round(measurements[m].observables.d50q.value, sigdigits=3)) ± $(round(sqrt(measurements[m].observables.d50q.variance), sigdigits=2)) μm"
+                                    measured_size_str = "Meas. = $(round(measurements[m].observables.d50q.mean, sigdigits=3)) ± $(round(sqrt(measurements[m].observables.d50q.variance), sigdigits=2)) μm"
             end
 
             # Get the actual experiment ID if available, otherwise use the loop index
@@ -804,7 +804,7 @@ function plot_ps_measurements_vs_ensemble(measurements::Vector{<:AbstractExperim
 
         for m in eachindex(measurements)
             sol = optimal_solutions[m][2]
-            size_traj = sol isa CrystallisationMoMSolution ? sol.d43 : sol.d50q
+            size_traj = CriSTool._size_trajectory(sol)
             Makie.lines!(ax1, sol.time, size_traj, color = resolve_experiment_color(colors, m, color_palette, colouroffset),
                          linewidth = ms_linewidth,
                          linestyle = :dash)
@@ -865,7 +865,7 @@ function plot_ps_measurements_vs_ensemble(measurements::Vector{<:AbstractExperim
             size_matrix, size_mean, size_std, label_symbol = get_size_fields(ensemble_sol)
 
             # Measurement values (d43; all loaders also populate d50q with the same value)
-            meas_size = measurements[m].observables.d43.value
+            meas_size = measurements[m].observables.d43.mean
             meas_std = sqrt.(measurements[m].observables.d43.variance)
 
             if !isnothing(meas_size)
@@ -1156,12 +1156,12 @@ function plot_measurements_vs_simulation(measurements::Vector{<:AbstractExperime
             # Collect size information for text box
             if sol isa CrystallisationMoMSolution
                 pred_str = "Exp. $(exp_id) T = $(round(measurements[m].temperature-273,digits = 2) )°C, L = $(round(measurements[m].loading, sigdigits=2)) g/L, Pred. d43 = $(round(predicted_size, sigdigits=2)) μm"
-                                    meas_str = "Meas. = $(round(measurements[m].observables.d43.value, sigdigits=3)) ± $(round(sqrt(measurements[m].observables.d43.variance), sigdigits=2)) μm"
+                                    meas_str = "Meas. = $(round(measurements[m].observables.d43.mean, sigdigits=3)) ± $(round(sqrt(measurements[m].observables.d43.variance), sigdigits=2)) μm"
                     combined_str = "$pred_str, $meas_str"
                 push!(size_info, combined_str)
             elseif sol isa CrystallisationFVSolution
                 pred_str = "Exp. $(exp_id) T = $(round(measurements[m].temperature-273,digits = 2) )°C, L = $(round(measurements[m].loading, sigdigits=2)) g/L, Pred. D50 = $(round(predicted_size, sigdigits=2)) μm"
-                                    meas_str = "Meas. = $(round(measurements[m].observables.d50q.value, sigdigits=3)) ± $(round(sqrt(measurements[m].observables.d50q.variance), sigdigits=2)) μm"
+                                    meas_str = "Meas. = $(round(measurements[m].observables.d50q.mean, sigdigits=3)) ± $(round(sqrt(measurements[m].observables.d50q.variance), sigdigits=2)) μm"
                     combined_str = "$pred_str, $meas_str"
                     push!(size_info, combined_str)
             end
@@ -1362,13 +1362,13 @@ function plot_ps_measurements_vs_simulation(measurements::Vector{<:AbstractExper
                          linewidth = ms_linewidth,
                          linestyle = :dash)
 
-            # Makie.errorbars!(ax1, measurements[m].observables.concentration.time[end], measurements[m].observables.d43.value,
+            # Makie.errorbars!(ax1, measurements[m].observables.concentration.time[end], measurements[m].observables.d43.mean,
             #                  sqrt.(measurements[m].observables.d43.variance),
             #                  color = :black,
             #                  whiskerwidth = ms_whiskerwidth,
             #                  linewidth = ms_linewidtheb)
 
-            p = Makie.scatter!(ax1, measurements[m].observables.concentration.time[end], measurements[m].observables.d43.value,
+            p = Makie.scatter!(ax1, measurements[m].observables.concentration.time[end], measurements[m].observables.d43.mean,
                                color = resolve_experiment_color(colors, m, color_palette, colouroffset),
                                markersize = ms_markersize,
                                strokewidth = 2)
@@ -1385,12 +1385,12 @@ function plot_ps_measurements_vs_simulation(measurements::Vector{<:AbstractExper
             # Collect size information for text box
             if sol isa CrystallisationMoMSolution
                 pred_str = "Exp. $(exp_id) T = $(round(measurements[m].temperature-273,digits = 2) )°C, L = $(round(measurements[m].loading, sigdigits=2)) g/L, Pred. d43 = $(round(predicted_size, sigdigits=2)) μm"
-                                    meas_str = "Meas. = $(round(measurements[m].observables.d43.value, sigdigits=3)) ± $(round(sqrt(measurements[m].observables.d43.variance), sigdigits=2)) μm"
+                                    meas_str = "Meas. = $(round(measurements[m].observables.d43.mean, sigdigits=3)) ± $(round(sqrt(measurements[m].observables.d43.variance), sigdigits=2)) μm"
                     combined_str = "$pred_str, $meas_str"
                 push!(size_info, combined_str)
             elseif sol isa CrystallisationFVSolution
                 pred_str = "Exp. $(exp_id) T = $(round(measurements[m].temperature-273,digits = 2) )°C, L = $(round(measurements[m].loading, sigdigits=2)) g/L, Pred. D50 = $(round(predicted_size, sigdigits=2)) μm"
-                                    meas_str = "Meas. = $(round(measurements[m].observables.d50q.value, sigdigits=3)) ± $(round(sqrt(measurements[m].observables.d50q.variance), sigdigits=2)) μm"
+                                    meas_str = "Meas. = $(round(measurements[m].observables.d50q.mean, sigdigits=3)) ± $(round(sqrt(measurements[m].observables.d50q.variance), sigdigits=2)) μm"
                     combined_str = "$pred_str, $meas_str"
                     push!(size_info, combined_str)
             end

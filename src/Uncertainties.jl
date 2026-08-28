@@ -256,7 +256,7 @@ function _run_ensemble_internal(samples::Matrix{Float64},
         concentration = Matrix{Float64}(undef, n_timepoints, n_samples)
         d43 = Matrix{Float64}(undef, n_timepoints, n_samples)
         d32 = Matrix{Float64}(undef, n_timepoints, n_samples)
-        d50q = solver isa MoM ? nothing : Matrix{Float64}(undef, n_timepoints, n_samples)
+        d50q = _d50q_buffer(solver, n_timepoints, n_samples)
 
         @floop for i in 1:n_samples
             prob,
@@ -274,9 +274,7 @@ function _run_ensemble_internal(samples::Matrix{Float64},
             concentration[:, i] = sol.concentration
             d43[:, i] = sol.d43
             d32[:, i] = sol.d32
-            if solver isa AbstractDiscretisedSolver
-                d50q[:, i] = sol.d50q
-            end
+            _store_d50q!(d50q, sol, i, solver)
             next!(prog)
         end
 
@@ -285,6 +283,26 @@ function _run_ensemble_internal(samples::Matrix{Float64},
     end
     return ensemble_solutions
 end
+
+
+"""
+    _d50q_buffer(solver, n_timepoints, n_samples)
+
+d50q accumulation buffer: `nothing` for the MoM solver (no quantiles),
+a `Matrix{Float64}` for discretised solvers (solver-type dispatch).
+"""
+_d50q_buffer(solver::MoM, n_timepoints, n_samples) = nothing
+_d50q_buffer(solver::AbstractDiscretisedSolver, n_timepoints, n_samples) =
+    Matrix{Float64}(undef, n_timepoints, n_samples)
+
+"""
+    _store_d50q!(buffer, sol, i, solver)
+
+Store the i-th d50q trajectory into the buffer (no-op for MoM).
+"""
+_store_d50q!(buffer, sol, i, solver::MoM) = nothing
+_store_d50q!(buffer::AbstractMatrix, sol, i, solver::AbstractDiscretisedSolver) =
+    (buffer[:, i] = sol.d50q; nothing)
 
 """
     run_ensemble_fixed(samples::Matrix{Float64},
@@ -341,7 +359,7 @@ function run_ensemble_fixed(samples::Matrix{Float64},
     concentration = Matrix{Float64}(undef, n_timepoints, n_samples)
     d43 = Matrix{Float64}(undef, n_timepoints, n_samples)
     d32 = Matrix{Float64}(undef, n_timepoints, n_samples)
-    d50q = solver isa MoM ? nothing : Matrix{Float64}(undef, n_timepoints, n_samples)
+    d50q = _d50q_buffer(solver, n_timepoints, n_samples)
 
     prog = Progress(n_samples,
                     desc = "Simulating ensemble: ",
@@ -366,9 +384,7 @@ function run_ensemble_fixed(samples::Matrix{Float64},
         concentration[:, i] = sol.concentration
         d43[:, i] = sol.d43
         d32[:, i] = sol.d32
-        if solver isa AbstractDiscretisedSolver
-            d50q[:, i] = sol.d50q
-        end
+        _store_d50q!(d50q, sol, i, solver)
         next!(prog)
     end
 

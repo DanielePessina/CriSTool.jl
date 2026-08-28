@@ -1,0 +1,18 @@
+name = "CriSToolBenchmarks"
+uuid = "d3a9f6e2-5b1c-4a7e-9f2d-8c4e1a5b6c7d"
+version = "0.1.0"
+authors = ["CriSTool"]
+
+[deps]
+AllocCheck = "9b6a8646-10ed-4001-bbdc-1d2f46dfbb1a"
+Chairmarks = "0ca39b1e-fe0b-4e98-acfc-b1656634c4de"
+ComponentArrays = "b0b7db55-cfe3-40fc-9ded-d10e2dbeff66"
+CriSTool = "85fc7edd-a5b7-4e55-9de4-f5475cce2f08"
+StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
+
+[compat]
+AllocCheck = "0.2.6"
+Chairmarks = "1.3.1"
+ComponentArrays = "0.15.44"
+StatsBase = "0.34.13"
+julia = "1.12"

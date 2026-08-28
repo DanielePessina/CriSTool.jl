@@ -198,6 +198,16 @@ Time grid of a solution.
 """
 time(sol::AbstractSolution) = sol.time
 
+
+"""
+    _size_trajectory(sol::AbstractSolution) -> AbstractVector
+
+Characteristic size trajectory: `d43` for MoM, `d50q` for discretised
+solutions (solver-type dispatch).
+"""
+_size_trajectory(sol::CrystallisationMoMSolution) = sol.d43
+_size_trajectory(sol::CrystallisationFVSolution) = sol.d50q
+
 """
     state_vars(sol::CrystallisationMoMSolution) -> NamedTuple
 

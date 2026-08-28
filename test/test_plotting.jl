@@ -18,10 +18,10 @@
 
     measurement = CrystallisationExperiment(;
                                                     observables = (;
-                                                    concentration = SeriesObservable(; time = save_idx, mean = solution.concentration,
+                                                    concentration = Observable(; time = save_idx, mean = solution.concentration,
                                                     variance = fill(0.01, length(save_idx))),
-                                                    d43 = ScalarObservable(; value = solution.d43[end], variance = 4.0),
-                                                    d50q = ScalarObservable(; value = solution.d43[end], variance = 4.0)),
+                                                    d43 = Observable(; mean = solution.d43[end], variance = 4.0),
+                                                    d50q = Observable(; mean = solution.d43[end], variance = 4.0)),
                                                     temperature = temperature,
                                                     loading = loading,
                                                     exp_id = 42)
@@ -38,7 +38,7 @@
                                                                        [solution];
                                                                        show_measurement_uncertainty = false)
     @test thesis_deterministic.size_label == "d43"
-    @test thesis_deterministic.rows[1][5] == string(round(measurement.observables.d43.value, sigdigits = 3))
+    @test thesis_deterministic.rows[1][5] == string(round(measurement.observables.d43.mean, sigdigits = 3))
     @test !occursin("±", thesis_deterministic.rows[1][5])
 
     param_symbols = vcat(nucl_CNT().symbols, growth_empirical().symbols)
@@ -70,10 +70,10 @@ end
 
     measurement = CrystallisationExperiment(;
                                                     observables = (;
-                                                    concentration = SeriesObservable(; time = save_idx, mean = solution.concentration,
+                                                    concentration = Observable(; time = save_idx, mean = solution.concentration,
                                                     variance = fill(0.01, length(save_idx))),
-                                                    d43 = ScalarObservable(; value = solution.d43[end], variance = 4.0),
-                                                    d50q = ScalarObservable(; value = solution.d43[end], variance = 4.0)),
+                                                    d43 = Observable(; mean = solution.d43[end], variance = 4.0),
+                                                    d50q = Observable(; mean = solution.d43[end], variance = 4.0)),
                                                     temperature = temperature,
                                                     loading = loading,
                                                     exp_id = 42)

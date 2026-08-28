@@ -1,8 +1,8 @@
 @testset "Measurements container" begin
     # Construction and accessors
-    conc = SeriesObservable(; time = [0.0, 30.0, 60.0], mean = [14.0, 12.0, 9.0],
+    conc = Observable(; time = [0.0, 30.0, 60.0], mean = [14.0, 12.0, 9.0],
                             variance = [0.1, 0.2, 0.3])
-    d43 = ScalarObservable(; value = 10.5, variance = 2.0, time = 60.0)
+    d43 = Observable(; time = 60.0, mean = 10.5, variance = 2.0)
     expt = CrystallisationExperiment(; observables = (; concentration = conc, d43 = d43),
                                      temperature = 290.15, loading = 0.0, exp_id = 7)
 
@@ -12,12 +12,12 @@
     @test expt.temperature == 290.15
     @test expt.exp_id == 7
 
-    # SeriesObservable invariants
+    # Observable invariants
     @test length(conc.time) == length(conc.mean) == length(conc.variance)
     @test issorted(conc.time)
 
     # variance = nothing for single replicates
-    single = SeriesObservable(; time = [0.0, 1.0], mean = [1.0, 2.0])
+    single = Observable(; time = [0.0, 1.0], mean = [1.0, 2.0])
     @test single.variance === nothing
 end
 
@@ -39,14 +39,14 @@ end
     @test conc3.mean[3] ≈ 7.7071
 
     # Particle size: last timepoint PS, same value in d43 and d50q slots
-    @test ms[1].observables.d43.value ≈ 9.2480539
+    @test ms[1].observables.d43.mean ≈ 9.2480539
     @test ms[1].observables.d43.variance ≈ 5.345406308581576
-    @test ms[1].observables.d43.value == ms[1].observables.d50q.value
+    @test ms[1].observables.d43.mean == ms[1].observables.d50q.mean
     @test ms[1].observables.d43.time == conc3.time[end]
 
     # PS = -1 sentinel -> dummy 10.0 / 100.0 (Exp 9 has real PS; use a sheet
     # where the sentinel path is exercised via the loading filter instead)
-    @test ms[7].observables.d43.value ≈ 11.868243
+    @test ms[7].observables.d43.mean ≈ 11.868243
     @test ms[7].observables.d43.variance ≈ 0.2669785799800902
 
     # No data for an unknown loading -> empty
@@ -74,8 +74,8 @@ end
     # PSD variance floor: 10% std -> (0.1 * value)^2
     psd_balanced = psd_measurementbalancer(ms, 10)
     for m in psd_balanced
-        @test m.observables.d43.variance >= (0.1 * m.observables.d43.value)^2 - 1e-12
-        @test m.observables.d50q.variance >= (0.1 * m.observables.d50q.value)^2 - 1e-12
+        @test m.observables.d43.variance >= (0.1 * m.observables.d43.mean)^2 - 1e-12
+        @test m.observables.d50q.variance >= (0.1 * m.observables.d50q.mean)^2 - 1e-12
     end
 end
 
@@ -94,7 +94,7 @@ end
         c1, c2 = e1.observables.concentration, e2.observables.concentration
         @test c1.time == c2.time
         @test c1.mean == c2.mean
-        @test e1.observables.d43.value == e2.observables.d43.value
+        @test e1.observables.d43.mean == e2.observables.d43.mean
     end
 
     # Resampled times are a subset of the original grid; initial point is kept

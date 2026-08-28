@@ -2,7 +2,7 @@
 Utilities for loading and representing experimental measurement data for
 crystallisation runs. Experiments are stored in the typed
 `CrystallisationExperiment` container: a `NamedTuple` of per-observable
-`SeriesObservable`/`ScalarObservable` entries plus run conditions.
+`Observable` entries plus run conditions.
 """
 
 using Random
@@ -31,7 +31,7 @@ The sheet is expected to include the following columns:
   optional `PS` (Real), optional `PS_var` (Real).
 
 Notes:
-- The `concentration` observable is a `SeriesObservable(time, mean, variance)`.
+- The `concentration` observable is a `Observable(time, mean, variance)`.
 - Particle size (PS) is taken at the last timepoint only and stored as both a
   `d43` and a `d50q` `ScalarObservable` (the legacy loader stored the same
   value in both slots). If `PS` at the last timepoint is `-1` or `missing`, a
@@ -150,12 +150,10 @@ function load_experiments(filepath::AbstractString, sheet_name::AbstractString,
 
         out[i] = CrystallisationExperiment(;
             observables = (;
-                concentration = SeriesObservable(; time = time, mean = conc,
+                concentration = Observable(; time = time, mean = conc,
                                                  variance = conc_var),
-                d43 = ScalarObservable(; value = ps_mean, variance = ps_var,
-                                       time = time[end]),
-                d50q = ScalarObservable(; value = ps_mean, variance = ps_var,
-                                        time = time[end]),
+                d43 = Observable(; time = time[end], mean = ps_mean, variance = ps_var),
+                d50q = Observable(; time = time[end], mean = ps_mean, variance = ps_var),
             ),
             temperature = round(Texp + 273.15, digits = 2),
             loading = Float64(loading),
@@ -212,13 +210,11 @@ function load_experiments_legacy(filepath::AbstractString, sheet_ids::Vector{Int
 
         measurements[i] = CrystallisationExperiment(;
             observables = (;
-                concentration = SeriesObservable(; time = df_c.time,
+                concentration = Observable(; time = df_c.time,
                                                  mean = df_c.concentrationmean,
                                                  variance = df_c.concentrationvariance),
-                d50q = ScalarObservable(; value = df_q.qmean[1],
-                                        variance = df_q.qvariance[1]),
-                d43 = ScalarObservable(; value = df_d.qmean[end],
-                                       variance = df_d.qvariance[end]),
+                d50q = Observable(; mean = df_q.qmean[1], variance = df_q.qvariance[1]),
+                d43 = Observable(; mean = df_d.qmean[end], variance = df_d.qvariance[end]),
             ),
             temperature = NaN,
             loading = 0.0,
@@ -257,13 +253,12 @@ function load_experiments_legacy_single(filepath::AbstractString, n_sheets::Int6
 
         measurements[i] = CrystallisationExperiment(;
             observables = (;
-                concentration = SeriesObservable(; time = df_c.time,
+                concentration = Observable(; time = df_c.time,
                                                  mean = df_c.concentrationmean),
-                d50q = ScalarObservable(; value = df_q.qmean[1],
-                                        variance = df_q.qvariance[1]),
-                d10 = ScalarObservable(; value = df_d.d10[1]),
-                d32 = ScalarObservable(; value = df_d.d32[1]),
-                d43 = ScalarObservable(; value = df_d.d43[1]),
+                d50q = Observable(; mean = df_q.qmean[1], variance = df_q.qvariance[1]),
+                d10 = Observable(; mean = df_d.d10[1]),
+                d32 = Observable(; mean = df_d.d32[1]),
+                d43 = Observable(; mean = df_d.d43[1]),
             ),
             temperature = NaN,
             loading = 0.0,
@@ -278,6 +273,18 @@ function load_experiments_legacy_single(filepath::AbstractString, n_sheets::Int6
 
 end
 
+
+"""
+    _psd_floor_observable(obs::Observable, psd_std_pc) -> Observable
+
+Raise a scalar observable's variance to at least `(psd_std_pc% of mean)^2`;
+time-series observables pass through unchanged (shape dispatch).
+"""
+_psd_floor_observable(obs::Observable{<:Real}, psd_std_pc) = Observable(;
+    mean = obs.mean, time = obs.time,
+    variance = max(obs.variance, (obs.mean * psd_std_pc * 1e-2)^2))
+_psd_floor_observable(obs::Observable, psd_std_pc) = obs
+
 """
     repeatmeasurementbalancer(experiments::Vector{CrystallisationExperiment}, minconcstd::Real=10) -> Vector{CrystallisationExperiment}
 
@@ -291,7 +298,7 @@ function repeatmeasurementbalancer(experiments::Vector{CrystallisationExperiment
 
     for (i, expt) in enumerate(experiments)
         conc = expt.observables.concentration
-        balanced_conc = SeriesObservable(;
+        balanced_conc = Observable(;
             time = conc.time,
             mean = conc.mean,
             variance = max.(conc.variance,
@@ -321,13 +328,7 @@ function psd_measurementbalancer(experiments::Vector{CrystallisationExperiment},
 
     for (i, expt) in enumerate(experiments)
         obs = expt.observables
-        balanced_obs = map(obs) do observable
-            observable isa ScalarObservable || return observable
-            var_floor = (observable.value * psd_std_pc * 1e-2)^2
-            return ScalarObservable(; value = observable.value,
-                                    variance = max(observable.variance, var_floor),
-                                    time = observable.time)
-        end
+        balanced_obs = map(obs -> _psd_floor_observable(obs, psd_std_pc), expt.observables)
         newmeasurements[i] = CrystallisationExperiment(;
             observables = balanced_obs,
             temperature = expt.temperature,
@@ -379,7 +380,7 @@ function _bootstrap_repeatmeasurements_rng(experiments::Vector{CrystallisationEx
                          expt.exp_id, :conc))
         end
         if include_ps
-            push!(pool, (conc.time[end], expt.observables.d43.value,
+            push!(pool, (conc.time[end], expt.observables.d43.mean,
                          expt.observables.d43.variance, expt.exp_id, :ps))
         end
     end
@@ -444,19 +445,17 @@ function _bootstrap_repeatmeasurements_rng(experiments::Vector{CrystallisationEx
                 ps_var = ps_entries[ps_idx][3]
             end
         else
-            ps_mean = expt.observables.d43.value
+            ps_mean = expt.observables.d43.mean
             ps_var = expt.observables.d43.variance
         end
 
         push!(out,
               CrystallisationExperiment(;
                   observables = (;
-                      concentration = SeriesObservable(; time = time, mean = conc,
+                      concentration = Observable(; time = time, mean = conc,
                                                        variance = conc_var),
-                      d43 = ScalarObservable(; value = ps_mean, variance = ps_var,
-                                             time = time[end]),
-                      d50q = ScalarObservable(; value = ps_mean, variance = ps_var,
-                                              time = time[end]),
+                      d43 = Observable(; time = time[end], mean = ps_mean, variance = ps_var),
+                      d50q = Observable(; time = time[end], mean = ps_mean, variance = ps_var),
                   ),
                   temperature = expt.temperature,
                   loading = expt.loading,
