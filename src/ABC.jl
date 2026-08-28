@@ -157,8 +157,9 @@ function run_abc(lossfunction::AbstractPELossFunction,
 
     loss_problem = _build_loss_problem(nucleationfunction, growthfunction,
                                        aggregationfunction, breakagefunction, solver)
+    loss_setup = prepare_loss(loss_problem, measurement)
 
-    optimallossfunction = loss(lossfunction, loss_problem, optimalpara, measurement)
+    optimallossfunction = loss(lossfunction, loss_setup, optimalpara)
 
     target = _abcde_target(optimallossfunction, dof, length(optimalpara),
                            confidenceinterval; test = test)
@@ -181,7 +182,7 @@ function run_abc(lossfunction::AbstractPELossFunction,
 
     print_start_panel(label, start_content; verbosity = verbosity)
 
-    lossfn = x -> loss(lossfunction, loss_problem, collect(x), measurement)
+    lossfn = x -> loss(lossfunction, loss_setup, collect(x))
 
     res, reached_ϵ = _runsampler(sampler, prior, lossfn, target, optimallossfunction;
                                  nparticles = nparticles, generations = generations,

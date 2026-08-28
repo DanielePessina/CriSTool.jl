@@ -76,8 +76,8 @@ export AbstractNucleationFunction, AbstractGrowthFunction, nucl_CNT,
        nucl_empirical, nucl_CNTnoS, growth_empirical, growth_BpS, growth_BCF
 export AbstractAggregationFunction, AbstractBreakageFunction, nobreakage,
        breakage_empirical, aggregation_empirical, noaggregation
-export runsimulation, paramaxis
-export AbstractPELossFunction, logMLE, mae, loss
+export runsimulation, paramaxis, crystallisation_odeproblem
+export AbstractPELossFunction, logMLE, mae, loss, prepare_loss, LossSetup
 export load_experiments, load_experiments_legacy, load_experiments_legacy_single,
        bootstrap_repeatmeasurements, repeatmeasurementbalancer, psd_measurementbalancer
 export getmomentsizes

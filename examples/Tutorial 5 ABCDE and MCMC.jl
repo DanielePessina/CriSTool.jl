@@ -53,10 +53,10 @@ function main()
     σ2      = (0.05 .* abs.(noisy_c) .+ 0.02) .^ 2
     meas    = CrystallisationExperiment(;
                                                           observables = (;
-                                                          concentration = SeriesObservable(; time = save_grid, mean = noisy_c,
+                                                          concentration = Observable(; time = save_grid, mean = noisy_c,
                                                           variance = σ2),
-                                                          d43 = ScalarObservable(; value = ref.d43[end], variance = 0.1),
-                                                          d50q = ScalarObservable(; value = ref.d43[end], variance = 0.1)),
+                                                          d43 = Observable(; mean = ref.d43[end], variance = 0.1),
+                                                          d50q = Observable(; mean = ref.d43[end], variance = 0.1)),
                                                           temperature = T_K, loading = loading, exp_id = 1)
 
     lb = [25.0, 0.30, 0.30, 2.0]

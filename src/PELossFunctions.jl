@@ -158,17 +158,15 @@ x0 = isnothing(x0) ? [lb[i] + (ub[i] - lb[i]) * rand() for i in eachindex(lb)] :
 
     loss_problem = _build_loss_problem(nucleationfunction, growthfunction,
                                        aggregationfunction, breakagefunction, solver)
+    setup = prepare_loss(loss_problem, setofmeasurements)
 
-    searchf = OptimizationBase.OptimizationFunction((x,
-                                                     (lf, problem, experiments)) -> loss(lf,
-                                                                                         problem,
-                                                                                         x,
-                                                                                         experiments),
+    searchf = OptimizationBase.OptimizationFunction((x, (lf, loss_setup)) -> loss(lf,
+                                                                                   loss_setup,
+                                                                                   x),
                                                     adtype)
 
     optprob = OptimizationBase.OptimizationProblem(searchf, x0,
-                                                   (lossfunction, loss_problem,
-                                                    setofmeasurements), lb = lb, ub = ub)
+                                                   (lossfunction, setup), lb = lb, ub = ub)
 
     results = OptimizationBase.solve(optprob, searchalgo;
                                      progress = (verbosity > 0 && !HPC), maxiters = 2e6,
@@ -251,20 +249,72 @@ function _build_loss_problem(nucleationfunction::AbstractNucleationFunction,
 end
 
 """
-    batchLF_procSO(lossfunction, problem, parameter_mat, experiments) -> Vector
+    PreparedExperiment
+
+A per-experiment simulation bundle: the experiment's `CrystallisationProblem`
+(conditions applied: temperature, loading, initial concentration), its
+`ODEProblem` template, the solver algorithm, and the measurement time grid.
+The ODEProblem is built once and reused across parameter vectors with
+`remake` (SciML idiom) — the parameter-estimation hot loop never reconstructs
+problems.
+"""
+struct PreparedExperiment
+    problem::CrystallisationProblem
+    odeproblem::ODEProblem
+    algorithm::Any
+    saveat::Vector{Float64}
+end
+
+"""
+    LossSetup
+
+A `CrystallisationProblem` (kinetics + solver + saturation) bundled with
+per-experiment `PreparedExperiment`s. Built with `prepare_loss` and evaluated
+with `loss(lf, setup, params)`.
+"""
+struct LossSetup
+    problem::CrystallisationProblem
+    experiments::Vector{CrystallisationExperiment}
+    prepared::Vector{PreparedExperiment}
+end
+
+"""
+    prepare_loss(problem::CrystallisationProblem,
+                 experiments::Vector{CrystallisationExperiment}) -> LossSetup
+
+Build per-experiment `ODEProblem` templates (u0 from each experiment's
+initial concentration, tspan from its measurement grid, constant temperature
+profile, loading). Each loss evaluation then only remakes the parameter
+vector — no ODEProblem construction in the optimisation loop.
+"""
+function prepare_loss(problem::CrystallisationProblem,
+                      experiments::Vector{<:AbstractExperiment})
+    prepared = map(experiments) do expt
+        per_exp_problem = _experiment_problem(problem, expt)
+        odeprob, algorithm = crystallisation_odeproblem(per_exp_problem,
+                                                        expt.observables.concentration.time)
+        PreparedExperiment(per_exp_problem, odeprob, algorithm,
+                           expt.observables.concentration.time)
+    end
+    return LossSetup(problem, experiments, prepared)
+end
+
+
+"""
+    batchLF_procSO(lossfunction, setup::LossSetup, parameter_mat) -> Vector
 
 Evaluate the single-objective loss function for a batch of parameter sets in
-parallel (rows of `parameter_mat` are parameter samples).
+parallel (rows of `parameter_mat` are parameter samples), each evaluation
+using the prepared `ODEProblem` templates via `remake`.
 """
 function batchLF_procSO(lossfunction::AbstractPELossFunction,
-                        problem::CrystallisationProblem,
-                        parameter_mat::AbstractArray{Float64},
-                        experiments::Vector{<:AbstractExperiment})
+                        setup::LossSetup,
+                        parameter_mat::AbstractArray{Float64})
 
     fx = zeros(Float64, size(parameter_mat, 1))
 
     @floop for (i, θ) in enumerate(eachrow(parameter_mat))
-        fx[i] = loss(lossfunction, problem, θ, experiments)
+        fx[i] = loss(lossfunction, setup, θ)
     end
 
     return fx
@@ -272,22 +322,25 @@ function batchLF_procSO(lossfunction::AbstractPELossFunction,
 end
 
 """
-    batchLF_procMO(lossfunction, problem, parameter_mat, experiments) -> Matrix
+    batchLF_procMO(lossfunction, setup::LossSetup, parameter_mat) -> Matrix
 
 Evaluate the multi-objective loss function for a batch of parameter sets in
 parallel (rows of `parameter_mat` are parameter samples, columns are the
 concentration and particle-size objectives).
 """
 function batchLF_procMO(lossfunction::AbstractPELossFunction,
-                        problem::CrystallisationProblem,
-                        parameter_mat::AbstractArray{Float64},
-                        experiments::Vector{<:AbstractExperiment})
+                        setup::LossSetup,
+                        parameter_mat::AbstractArray{Float64})
 
     Nt = size(parameter_mat, 1)
     fx = zeros(Nt, 2)
 
     @floop for i in 1:Nt
-        fx[i, :] = _loss_objectives(lossfunction, problem, parameter_mat[i, :], experiments)
+        objectives = map(zip(setup.prepared, setup.experiments)) do (prep, expt)
+            _experiment_objectives(lossfunction, expt, _solve_prepared(prep, parameter_mat[i, :]))
+        end
+        fx[i, 1] = sum(o -> o[1], objectives)
+        fx[i, 2] = sum(o -> o[2], objectives)
     end
 
     return fx
@@ -302,7 +355,8 @@ Run Differential Evolution optimization for parameter estimation.
 function _MHoptimise(algo::Metaheuristics.Algorithm{Metaheuristics.DE}, lossfunction,
                      problem::CrystallisationProblem, experiments, parameter_bounds,
                      nparticles, options)
-    return optimize((x) -> batchLF_procSO(lossfunction, problem, x, experiments),
+    setup = prepare_loss(problem, experiments)
+    return optimize((x) -> batchLF_procSO(lossfunction, setup, x),
                     parameter_bounds,
                     DE(;
                        N = nparticles,
@@ -318,7 +372,8 @@ Run NSGA-II multi-objective optimization for parameter estimation.
 function _MHoptimise(algo::Metaheuristics.Algorithm{Metaheuristics.NSGA2}, lossfunction,
                      problem::CrystallisationProblem, experiments, parameter_bounds,
                      nparticles, options)
-    return optimize((x) -> batchLF_procMO(lossfunction, problem, x, experiments),
+    setup = prepare_loss(problem, experiments)
+    return optimize((x) -> batchLF_procMO(lossfunction, setup, x),
                     parameter_bounds,
                     NSGA2(;
                           N = nparticles,
@@ -333,7 +388,8 @@ Run Simulated Annealing optimization for parameter estimation.
 function _MHoptimise(algo::Metaheuristics.Algorithm{Metaheuristics.SA}, lossfunction,
                      problem::CrystallisationProblem, experiments, parameter_bounds,
                      nparticles, options)
-    return optimize((x) -> batchLF_procSO(lossfunction, problem, x, experiments),
+    setup = prepare_loss(problem, experiments)
+    return optimize((x) -> batchLF_procSO(lossfunction, setup, x),
                     parameter_bounds,
                     SA(;
                        N = nparticles,
@@ -348,36 +404,93 @@ Run Particle Swarm Optimization for parameter estimation.
 function _MHoptimise(algo::Metaheuristics.Algorithm{Metaheuristics.PSO}, lossfunction,
                      problem::CrystallisationProblem, experiments, parameter_bounds,
                      nparticles, options)
-    return optimize((x) -> batchLF_procSO(lossfunction, problem, x, experiments),
+    setup = prepare_loss(problem, experiments)
+    return optimize((x) -> batchLF_procSO(lossfunction, setup, x),
                     parameter_bounds,
                     PSO(;
                         N = nparticles,
                         options = options))
 end
 
-##### Loss Functions
+"""
+    _experiment_problem(problem, expt) -> CrystallisationProblem
+
+The problem with the experiment's conditions applied (temperature profile,
+loading, initial concentration). Kinetics, saturation model, and physical
+constants carry over from the base problem.
+"""
+function _experiment_problem(problem::CrystallisationProblem,
+                             expt::CrystallisationExperiment)
+    return CrystallisationProblem(;
+        temp_profile = ConstantTemperature(expt.temperature),
+        loading = expt.loading,
+        ρ = problem.ρ,
+        initial_concentration = initial_concentration(expt),
+        saturation_model = problem.saturation_model,
+        kv = problem.kv,
+        molecular_volume = problem.molecular_volume,
+        kinetics_nucleationfunction = problem.kinetics_nucleationfunction,
+        kinetics_growthfunction = problem.kinetics_growthfunction,
+        kinetics_aggregationfunction = problem.kinetics_aggregationfunction,
+        kinetics_breakagefunction = problem.kinetics_breakagefunction,
+        parameterset_nucleation = problem.parameterset_nucleation,
+        parameterset_growth = problem.parameterset_growth,
+        parameterset_aggregation = problem.parameterset_aggregation,
+        parameterset_breakage = problem.parameterset_breakage,
+        R = problem.R,
+        kb = problem.kb,
+        solver = problem.solver)
+end
+
+"""
+    _params_to_p(prob, params) -> NamedTuple
+
+Split a flat parameter vector (documented order
+`[p_nucleation; p_growth; p_aggregation; p_breakage]`) into the named-tuple
+parameter container used by the ODE right-hand sides. The field types match
+the template's `p` exactly for the same parameter element type, so `remake`
+keeps the problem type stable across evaluations.
+"""
+function _params_to_p(prob::CrystallisationProblem, params)
+    nν = prob.kinetics_nucleationfunction.nparams
+    ng = prob.kinetics_growthfunction.nparams
+    na = prob.kinetics_aggregationfunction.nparams
+    nb = prob.kinetics_breakagefunction.nparams
+    return (nucl = params[1:nν],
+            gr = params[(nν + 1):(nν + ng)],
+            agg = params[(nν + ng + 1):(nν + ng + na)],
+            br = params[(nν + ng + na + 1):(nν + ng + na + nb)])
+end
+
+_solve_kwargs(solver::MoM) = (reltol = solver.reltol, abstol = solver.abstol)
+_solve_kwargs(solver::AbstractDiscretisedSolver) =
+    (reltol = solver.reltol, abstol = solver.abstol, dense = false,
+     alg_hints = [:stiff], maxiters = 1e8)
+
+"""
+    _solve_prepared(prep::PreparedExperiment, params) -> AbstractSolution
+
+Solve a prepared experiment for a parameter vector: `remake` the template
+ODEProblem with the named parameter container, then solve with the same
+options as `_simulatecrystallisation`.
+"""
+function _solve_prepared(prep::PreparedExperiment, params)
+    remade = remake(prep.odeproblem; p = _params_to_p(prep.problem, params))
+    sol = solve(remade, prep.algorithm; saveat = prep.saveat,
+                _solve_kwargs(prep.problem.solver)...)
+    return _wrap_solution(prep.problem, sol)
+end
 
 """
     _solve_experiment(problem, params, expt) -> AbstractSolution
 
-Simulate one experiment with `params` under the experiment's conditions
-(initial concentration from the `concentration` series observable, constant
-temperature profile, loading), saving at the measurement time grid.
+Convenience wrapper for one-off evaluations (tests, scripting): build a
+single-experiment `LossSetup` and solve. Use `prepare_loss` + `loss(lf,
+setup, params)` for optimisation loops.
 """
 function _solve_experiment(problem::CrystallisationProblem, params,
                            expt::CrystallisationExperiment)
-    obs = expt.observables
-    p, solution = runsimulation(params;
-                                nucl = problem.kinetics_nucleationfunction,
-                                gr = problem.kinetics_growthfunction,
-                                agg = problem.kinetics_aggregationfunction,
-                                br = problem.kinetics_breakagefunction,
-                                initial_concentration = initial_concentration(expt),
-                                save_idx = obs.concentration.time,
-                                solver = problem.solver,
-                                loading = expt.loading,
-                                temp_profile = ConstantTemperature(expt.temperature))
-    return solution
+    return _solve_prepared(prepare_loss(problem, [expt]).prepared[1], params)
 end
 
 """
@@ -394,63 +507,57 @@ _size_pair(observables, solution::CrystallisationFVSolution) =
     (observables.d50q, size_metrics(solution).d50q)
 
 """
-    _loss_objectives(lf::AbstractPELossFunction, problem, params, experiments) -> (Float64, Float64)
+    _experiment_objectives(lf, expt, solution) -> (Float64, Float64)
 
-Per-experiment (concentration, particle-size) objective contributions, summed
-over experiments, with the legacy weighting semantics
-(`weighting[i] * 0.5 * objective_i`).
+(Concentration, particle-size) objective contributions of one experiment,
+with the legacy weighting semantics (`weighting[i] * 0.5 * objective_i`).
 """
-function _loss_objectives(lf::AbstractPELossFunction, problem::CrystallisationProblem,
-                          params, experiments::Vector{<:AbstractExperiment})
-    conc_contrib = 0.0
-    size_contrib = 0.0
-    for expt in experiments
-        obs = expt.observables
-        conc = obs.concentration
-        solution = _solve_experiment(problem, params, expt)
-        size_obs, size_sim = _size_pair(obs, solution)
+function _experiment_objectives(lf::AbstractPELossFunction,
+                                expt::CrystallisationExperiment, solution)
+    obs = expt.observables
+    conc = obs.concentration
+    size_obs, size_sim = _size_pair(obs, solution)
 
-        conc_contrib += sum(log.(2π .* (conc.variance[2:end] .+ 1e-6)) .+
-                            ((solution.concentration[2:end] .- conc.mean[2:end]) .^ 2) ./
-                            (conc.variance[2:end] .+ 1e-6))
-        size_contrib += log(2π * (size_obs.variance + 1e-6)) +
-                        ((size_sim[end] - size_obs.mean)^2) / (size_obs.variance + 1e-6)
-    end
+    conc_contrib = sum(log.(2π .* (conc.variance[2:end] .+ 1e-6)) .+
+                       ((solution.concentration[2:end] .- conc.mean[2:end]) .^ 2) ./
+                       (conc.variance[2:end] .+ 1e-6))
+    size_contrib = log(2π * (size_obs.variance + 1e-6)) +
+                   ((size_sim[end] - size_obs.mean)^2) / (size_obs.variance + 1e-6)
     return (lf.weighting[1] * 0.5 * conc_contrib, lf.weighting[2] * 0.5 * size_contrib)
 end
 
 """
-    loss(lf::logMLE, problem::CrystallisationProblem, params,
-         experiments::Vector{CrystallisationExperiment}) -> Real
+    loss(lf::logMLE, setup::LossSetup, params) -> Real
 
-Log Maximum Likelihood Estimation loss over all experiments.
+Log Maximum Likelihood Estimation loss over all prepared experiments.
 
 Evaluates the negative log-likelihood combining concentration trajectory
 (measured times, first timepoint excluded) and final particle size
 (`d43` for MoM, `d50q` for discretised solvers), with a `1e-6` variance floor,
 matching the legacy `parameterestimation_lossfunction` semantics.
 """
-function loss(lf::logMLE, problem::CrystallisationProblem, params,
-              experiments::Vector{<:AbstractExperiment})
-    return sum(_loss_objectives(lf, problem, params, experiments))
+function loss(lf::logMLE, setup::LossSetup, params)
+    total = 0.0
+    for (prep, expt) in zip(setup.prepared, setup.experiments)
+        solution = _solve_prepared(prep, params)
+        total += sum(_experiment_objectives(lf, expt, solution))
+    end
+    return total
 end
 
 """
-    loss(lf::mae, problem::CrystallisationProblem, params,
-         experiments::Vector{CrystallisationExperiment}) -> Real
+    loss(lf::mae, setup::LossSetup, params) -> Real
 
-Mean Absolute Error loss over all experiments: mean absolute concentration
-error over all timepoints plus mean absolute final particle-size error
-(`d43` for MoM, `d50q` for discretised solvers). Failed simulations
-contribute a `1e6` penalty per timepoint.
+Mean Absolute Error loss over all prepared experiments: mean absolute
+concentration error over all timepoints plus mean absolute final
+particle-size error (`d43` for MoM, `d50q` for discretised solvers). Failed
+simulations contribute a `1e6` penalty per timepoint.
 """
-function loss(lf::mae, problem::CrystallisationProblem, params,
-              experiments::Vector{<:AbstractExperiment})
-
-    error_values = map(experiments) do expt
+function loss(lf::mae, setup::LossSetup, params)
+    error_values = map(zip(setup.prepared, setup.experiments)) do (prep, expt)
         obs = expt.observables
         conc = obs.concentration
-        solution = _solve_experiment(problem, params, expt)
+        solution = _solve_prepared(prep, params)
         size_obs, size_sim = _size_pair(obs, solution)
 
         if solution.success
@@ -469,3 +576,15 @@ function loss(lf::mae, problem::CrystallisationProblem, params,
 
     return lf.weighting[1] * total_conc_mae + lf.weighting[2] * total_q_mae
 end
+
+"""
+    loss(lf::logMLE, problem::CrystallisationProblem, params,
+         experiments::Vector{CrystallisationExperiment}) -> Real
+
+Convenience form: builds a `LossSetup` via `prepare_loss` and evaluates.
+For optimisation loops, build the setup once and call
+`loss(lf, setup, params)`.
+"""
+loss(lf::AbstractPELossFunction, problem::CrystallisationProblem, params,
+     experiments::Vector{<:AbstractExperiment}) =
+    loss(lf, prepare_loss(problem, experiments), params)

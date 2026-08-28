@@ -78,11 +78,12 @@ struct nucl_custom <: AbstractFPNucleationFunction
 end
 nucl_custom() = nucl_custom(2, "Custom Nu", [:A, :b])
 
-paramaxis(::nucl_custom) = Axis(A = 1, b = 2)
+paramaxis(::nucl_custom) = ComponentArrays.Axis(A = 1, b = 2)
 
-function nucleationrate(nf::nucl_custom, parameters, S, system,
-                        temperature, loading, numberdensity)
+function nucleationrate(nf::nucl_custom, parameters,
+                        prob::CrystallisationProblem, state, t)
     p = _named_params(nf, parameters)
+    S = supersaturation(prob, state, t)
     return S > 1.001 ? (60 * exp(p.A)) * (S - 1)^p.b : 0.0
 end
 
@@ -94,11 +95,12 @@ struct growth_custom <: AbstractFPScalarGrowthFunction
 end
 growth_custom() = growth_custom(2, "Custom Gr", [:Ag, :g])
 
-paramaxis(::growth_custom) = Axis(Ag = 1, g = 2)
+paramaxis(::growth_custom) = ComponentArrays.Axis(Ag = 1, g = 2)
 
-function growthrate(gf::growth_custom, parameters, S, system,
-                    temperature, loading, numberdensity)
+function growthrate(gf::growth_custom, parameters,
+                    prob::CrystallisationProblem, state, t)
     p = _named_params(gf, parameters)
+    S = supersaturation(prob, state, t)
     return S > 1.001 ? p.Ag * (S - 1)^p.g : 0.0
 end
 ```
