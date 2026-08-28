@@ -15,7 +15,7 @@ function forwardsensitivity(CryProblem::CrystallisationProblem{NuclF, GrF, nobre
     function MoM_model(du, u, p, t)
         numberdensity = @view u[1:(end - 1)]
         temp = temperature(CryProblem.temp_profile, t)
-        sat_conc = _get_saturationconcentration(CryProblem.temp_profile, t)
+        sat_conc = saturation_concentration(CryProblem, t)
         supersat = u[end] / sat_conc
 
         scalargrowth = growthrate(CryProblem.kinetics_growthfunction,
@@ -26,6 +26,9 @@ function forwardsensitivity(CryProblem::CrystallisationProblem{NuclF, GrF, nobre
                                   CryProblem.loading,
                                   numberdensity)
 
+        n_mom = CryProblem.solver.nmoments
+        @assert n_mom >= 2 "MoM solver requires nmoments >= 2 (concentration closure uses µ2)"
+
         du[1] = nucleationrate(CryProblem.kinetics_nucleationfunction,
                                p.nucl,
                                supersat,
@@ -33,12 +36,10 @@ function forwardsensitivity(CryProblem::CrystallisationProblem{NuclF, GrF, nobre
                                temp,
                                CryProblem.loading,
                                numberdensity)
-
-        du[2] = scalargrowth * u[1]
-        du[3] = 2 * scalargrowth * u[2]
-        du[4] = 3 * scalargrowth * u[3]
-        du[5] = 4 * scalargrowth * u[4]
-        du[6] = -3 * CryProblem.kv * CryProblem.ρ * scalargrowth * u[3]
+        for k in 2:(n_mom + 1)
+            du[k] = (k - 1) * scalargrowth * u[k - 1]
+        end
+        du[end] = -3 * CryProblem.kv * CryProblem.ρ * scalargrowth * u[3]
     end
 
     θ = ComponentArray(nucl = CryProblem.parameterset_nucleation,
@@ -78,7 +79,7 @@ function forwardsensitivity(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, 
     function HRFV_FLWmodel(dstdt, st, p, t)
 
         numberdensity = @view st[1:(end - 1)]
-        sat_conc = _get_saturationconcentration(CryProblem.temp_profile, t)
+        sat_conc = saturation_concentration(CryProblem, t)
         temp = temperature(CryProblem.temp_profile, t)
 
         scalargrowth = growthrate(CryProblem.kinetics_growthfunction, p.gr,

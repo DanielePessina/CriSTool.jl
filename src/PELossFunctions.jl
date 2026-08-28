@@ -385,11 +385,12 @@ end
 
 Return the particle-size observable and simulated size trajectory used by
 losses: `d43` for the MoM solver, `d50q` for discretised solvers (matching the
-legacy loss behaviour).
+legacy loss behaviour). Read through `size_metrics` so consumers never index
+solution fields directly.
 """
 _size_pair(problem::CrystallisationProblem, observables, solution) =
-    problem.solver isa MoM ? (observables.d43, solution.d43) :
-    (observables.d50q, solution.d50q)
+    problem.solver isa MoM ? (observables.d43, size_metrics(solution).d43) :
+    (observables.d50q, size_metrics(solution).d50q)
 
 """
     _loss_objectives(lf::AbstractPELossFunction, problem, params, experiments) -> (Float64, Float64)

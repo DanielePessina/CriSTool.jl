@@ -77,17 +77,25 @@
         @test result ≈ 293.15
     end
 
-    @testset "Saturation Concentration Type Stability" begin
+    @testset "Saturation Model Type Stability" begin
         temp_profile = CriSTool.ConstantTemperature(293.15)
 
-        # Test scalar call
-        sat_conc = @inferred(CriSTool._get_saturationconcentration(temp_profile, 0.0))
+        # Default lysozyme polynomial: hand-computed value at 20°C
+        sm = lysozyme_saturation()
+        @test sm isa PolynomialSaturation
+        sat_conc = @inferred(saturation_concentration(sm, temp_profile, 0.0))
         @test sat_conc isa Float64
-        @test sat_conc > 0  # Physical sanity check
+        # 0.3705 + 7.171e-2*20 - 1.924e-3*400 + 17.97e-5*8000
+        @test sat_conc ≈ 0.3705 + 7.171e-2 * 20.0 - 1.924e-3 * 400.0 + 17.97e-5 * 8000.0
+        @test sat_conc > 0
 
-        # Test without time argument
-        sat_conc_default = @inferred(CriSTool._get_saturationconcentration(temp_profile))
-        @test sat_conc_default ≈ sat_conc
+        # Without time argument == t = 0
+        @test @inferred(saturation_concentration(sm, temp_profile)) ≈ sat_conc
+
+        # Constant and callable models
+        @test saturation_concentration(ConstantSaturation(2.47), temp_profile, 123.0) == 2.47
+        callable = CallableSaturation((T, t) -> 0.5 * T)
+        @test saturation_concentration(callable, temp_profile, 0.0) ≈ 0.5 * 293.15
     end
 
     @testset "Loss Function Constructors" begin

@@ -8,6 +8,7 @@ import StaticArrays
 
 @testset "CriSTool.jl" begin
     include("test_structs.jl")
+    include("test_saturation.jl")
     include("test_kinetics.jl")
     include("test_runsimulation.jl")
     include("test_solvers.jl")

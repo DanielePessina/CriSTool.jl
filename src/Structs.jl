@@ -1155,12 +1155,17 @@ Method of Moments solver for crystallization population balance equations.
 
 Fields:
 - `string::String`: Solver identifier ("MoM")
+- `nmoments::Int64`: Highest tracked moment order. The state holds
+  moments `µ0 .. µ_nmoments` plus the liquid-phase concentration
+  (`nmoments + 2` states). Must be `>= 2` (the concentration closure uses
+  `µ2`); `d43 = µ4/µ3` requires `nmoments >= 4` (the default).
 - `timestepping_algorithm::Symbol`: Time-stepping algorithm selector (e.g. `:tsit5`, `:ssprk43`, `:auto`).
 - `reltol::Float64`: Scalar relative tolerance for ODE solver.
 - `abstol::Float64`: Scalar absolute tolerance for ODE solver.
 """
 Base.@kwdef @concrete struct MoM <: AbstractSolver
     string::String = "MoM"
+    nmoments::Int64 = 4
     timestepping_algorithm::Symbol = :auto
     reltol::Float64 = 1e-10
     abstol::Float64 = 1e-8
@@ -1338,54 +1343,87 @@ Evaluate the callable temperature function at t=0.
 @inline temperature(c::CallableTemperature) = temperature(c, 0.0)
 ##############################################################
 
+##############################################################
+## Saturation models
+##############################################################
+
 """
-    _get_saturationconcentration(T::AbstractTemperature, t::Real) -> Float64
+    AbstractSaturationModel
 
-Compute saturation concentration at a given temperature and time.
-
-Uses a polynomial correlation for solubility as a function of temperature in Celsius.
-
-# Arguments
-- `T::AbstractTemperature`: Temperature profile
-- `t::Real`: Time (s)
-
-# Returns
-- Saturation concentration (kg/kg solvent)
+Abstract supertype for solubility/saturation models (see
+`ConstantSaturation`, `PolynomialSaturation`, `CallableSaturation`).
 """
-function _get_saturationconcentration(T::AbstractTemperature, t::Real)
-    0.3705 + (7.171e-2) * (temperature(T, t) - 273.15) -
-    (1.924e-3) * (temperature(T, t) - 273.15)^2 +
-    (17.97e-5) * (temperature(T, t) - 273.15)^3
+abstract type AbstractSaturationModel end
+
+"""
+    lysozyme_saturation() -> PolynomialSaturation
+
+The legacy lysozyme solubility polynomial (kg/m³, temperature in °C):
+`0.3705 + 7.171e-2 ΔT - 1.924e-3 ΔT² + 17.97e-5 ΔT³`, with
+`ΔT = T_K - 273.15`. This is the default `CrystallisationProblem`
+saturation model (backward compatible with the original hardcoded curve).
+"""
+lysozyme_saturation() =
+    PolynomialSaturation(; coeffs = [0.3705, 7.171e-2, -1.924e-3, 17.97e-5])
+
+"""
+    ConstantSaturation{T<:Real} <: AbstractSaturationModel
+
+Constant solubility `value` (kg/m³), independent of temperature and time.
+"""
+Base.@kwdef @concrete struct ConstantSaturation{T <: Real} <: AbstractSaturationModel
+    value::T
 end
 
 """
-    _get_saturationconcentration(T::AbstractTemperature) -> Float64
+    PolynomialSaturation{T<:Real} <: AbstractSaturationModel
 
-Compute saturation concentration at t=0.
-
-# Arguments
-- `T::AbstractTemperature`: Temperature profile
-
-# Returns
-- Saturation concentration at initial time
+Solubility as a polynomial in `T - Tref` (default `Tref = 273.15`, i.e.
+temperature in Celsius): `coeffs[1] + coeffs[2] x + coeffs[3] x² + ...`,
+evaluated with Horner's scheme.
 """
-_get_saturationconcentration(T::AbstractTemperature) = _get_saturationconcentration(T, 0.0)
-
-"""
-    _get_saturationconcentration(T::AbstractTemperature, t::AbstractArray{<:Real}) -> Vector{Float64}
-
-Compute saturation concentration at multiple time points.
-
-# Arguments
-- `T::AbstractTemperature`: Temperature profile
-- `t::AbstractArray{<:Real}`: Array of time points
-
-# Returns
-- Vector of saturation concentrations at each time point
-"""
-function _get_saturationconcentration(T::AbstractTemperature, t::AbstractArray{<:Real})
-    [_get_saturationconcentration(T, t_) for t_ in t]
+Base.@kwdef @concrete struct PolynomialSaturation{T <: Real} <: AbstractSaturationModel
+    coeffs::Vector{T}
+    Tref::T = 273.15
 end
+
+"""
+    CallableSaturation{F} <: AbstractSaturationModel
+
+Arbitrary solubility as a user function `f(T_K, t)` of temperature (K) and
+time (minutes).
+"""
+Base.@kwdef @concrete struct CallableSaturation{F} <: AbstractSaturationModel
+    f::F
+end
+
+"""
+    saturation_concentration(sm::AbstractSaturationModel, temp_profile, t) -> Real
+
+Solubility (kg/m³) at time `t` under the temperature profile `temp_profile`.
+"""
+saturation_concentration(sm::ConstantSaturation, temp_profile, t) = sm.value
+
+function saturation_concentration(sm::PolynomialSaturation, temp_profile, t)
+    x = temperature(temp_profile, t) - sm.Tref
+    c = sm.coeffs
+    acc = c[end]
+    @inbounds for i in (length(c) - 1):-1:1
+        acc = acc * x + c[i]
+    end
+    return acc
+end
+
+saturation_concentration(sm::CallableSaturation, temp_profile, t) =
+    sm.f(temperature(temp_profile, t), t)
+
+"""
+    saturation_concentration(sm::AbstractSaturationModel, temp_profile) -> Real
+
+Solubility at time `t = 0` under the temperature profile.
+"""
+saturation_concentration(sm::AbstractSaturationModel, temp_profile) =
+    saturation_concentration(sm, temp_profile, 0.0)
 
 ## Problem struct
 
@@ -1413,7 +1451,7 @@ Fields:
 - `temp_profile::TP`: Temperature profile (see `AbstractTemperature`)
 - `ρ::Float64`: Crystal density (kg/m³)
 - `initial_concentration::Float64`: Initial solute concentration (kg/m³)
-- `saturation_concentration::Float64`: Saturation concentration (kg/m³)
+- `saturation_model::AbstractSaturationModel`: Solubility model (default `lysozyme_saturation()`)
 - `kv::Float64`: Volume shape factor
 - `molecular_volume::Float64`: Molecular volume (m³)
 - `kinetics_nucleationfunction::NuF`: Nucleation function
@@ -1449,7 +1487,7 @@ Base.@kwdef @concrete struct CrystallisationProblem{NuF <: AbstractNucleationFun
     # Solute
     ρ::Float64 = 1370.0
     initial_concentration::Float64 = 20.0
-    saturation_concentration::Float64 = _get_saturationconcentration(temp_profile)# 2.47
+    saturation_model::AbstractSaturationModel = lysozyme_saturation()
     kv::Float64 = 0.81 #0.55
     molecular_volume::Float64 = 2.97e-26
 
@@ -1474,3 +1512,21 @@ Base.@kwdef @concrete struct CrystallisationProblem{NuF <: AbstractNucleationFun
     solver::solmethod = MoM()
 
 end
+
+"""
+    saturation_concentration(prob::CrystallisationProblem, t) -> Real
+
+Solubility (kg/m³) of the problem at time `t` under its temperature profile.
+"""
+saturation_concentration(prob::CrystallisationProblem, t) =
+    saturation_concentration(prob.saturation_model, prob.temp_profile, t)
+
+"""
+    supersaturation(prob::CrystallisationProblem, state, t) -> Real
+
+Supersaturation ratio `state[end] / saturation_concentration(prob, t)`. The
+liquid-phase concentration is the last state component in both the MoM and
+discretised solver states.
+"""
+supersaturation(prob::CrystallisationProblem, state, t) =
+    state[end] / saturation_concentration(prob, t)

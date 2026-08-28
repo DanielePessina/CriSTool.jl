@@ -190,3 +190,45 @@ Returns the main characteristic particle size from a simulation solution.
 """
 get_characteristic_size(sol::CrystallisationMoMSolution) = sol.d43[end]
 get_characteristic_size(sol::CrystallisationFVSolution) = sol.d50q[end]
+
+"""
+    time(sol::AbstractSolution) -> AbstractVector
+
+Time grid of a solution.
+"""
+time(sol::AbstractSolution) = sol.time
+
+"""
+    state_vars(sol::CrystallisationMoMSolution) -> NamedTuple
+
+Named state variables of a MoM solution: `concentration`.
+"""
+state_vars(sol::CrystallisationMoMSolution) = (; concentration = sol.concentration)
+
+"""
+    state_vars(sol::CrystallisationFVSolution) -> NamedTuple
+
+Named state variables of a discretised solution: `concentration`,
+`numberdensity` (mesh × time) and `voldensity` (mesh × time).
+"""
+state_vars(sol::CrystallisationFVSolution) = (; concentration = sol.concentration,
+                                                numberdensity = sol.numberdensity,
+                                                voldensity = sol.voldensity)
+
+"""
+    size_metrics(sol::CrystallisationMoMSolution) -> NamedTuple
+
+Particle-size metrics of a MoM solution: `d10`, `d32`, `d43`, `mu2`.
+"""
+size_metrics(sol::CrystallisationMoMSolution) =
+    (; d10 = sol.d10, d32 = sol.d32, d43 = sol.d43, mu2 = sol.mu2)
+
+"""
+    size_metrics(sol::CrystallisationFVSolution) -> NamedTuple
+
+Particle-size metrics of a discretised solution: quantiles `d10q`/`d50q`/`d90q`
+plus `d10`/`d32`/`d43`.
+"""
+size_metrics(sol::CrystallisationFVSolution) =
+    (; d10q = sol.d10q, d50q = sol.d50q, d90q = sol.d90q,
+      d10 = sol.d10, d32 = sol.d32, d43 = sol.d43)

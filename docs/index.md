@@ -38,6 +38,7 @@ end
 - [ABCDE routine](abcde.md)
 - [Measurements and data loading](measurements.md)
 - [Temperature profiles](temperature-profiles.md)
+- [Saturation models and supersaturation](saturation-models.md)
 - [Ensembles and uncertainty](uq-ensembles.md)
 
 ## Tutorials

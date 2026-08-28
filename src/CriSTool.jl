@@ -69,6 +69,9 @@ using StaticArrays
 export CrystallisationFVSolution, CrystallisationMoMSolution, CrystallisationProblem
 export SeriesObservable, ScalarObservable, CrystallisationExperiment, AbstractExperiment,
        initial_concentration
+export AbstractSaturationModel, ConstantSaturation, PolynomialSaturation, CallableSaturation,
+       lysozyme_saturation, saturation_concentration, supersaturation
+export AbstractSolution, state_vars, size_metrics
 export AbstractNucleationFunction, AbstractGrowthFunction, nucl_CNT,
        nucl_empirical, nucl_CNTnoS, growth_empirical, growth_BpS, growth_BCF
 export AbstractAggregationFunction, AbstractBreakageFunction, nobreakage,

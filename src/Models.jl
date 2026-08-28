@@ -601,7 +601,7 @@ function growthrate(gf::growth_dissolution_length, parameters::T, S::K,
                     numberdensity) where {T <: AbstractVector, K <: Real,
                                           M <: AbstractVector}
     pn = _named_params(gf, parameters)
-    sat_concentration = _get_saturationconcentration(CriSTool.ConstantTemperature(temperature))
+    sat_concentration = saturation_concentration(lysozyme_saturation(), CriSTool.ConstantTemperature(temperature))
     concentration = S * sat_concentration
 
     try
@@ -643,7 +643,7 @@ function growthrate(gf::growth_dissolution, parameters::T, S::K, system,
                     temperature, loading,
                     numberdensity) where {T <: AbstractVector, K <: Real}
     p = _named_params(gf, parameters)
-    sat_concentration = _get_saturationconcentration(CriSTool.ConstantTemperature(temperature))
+    sat_concentration = saturation_concentration(lysozyme_saturation(), CriSTool.ConstantTemperature(temperature))
     concentration = S * sat_concentration
 
     try
@@ -969,7 +969,7 @@ function _get_initial_state(CryProblem)
 
         elseif CryProblem.solver isa MoM
 
-            return [zeros(5); CryProblem.initial_concentration]
+            return [zeros(CryProblem.solver.nmoments + 1); CryProblem.initial_concentration]
 
         end
     else
@@ -1121,26 +1121,26 @@ function _simulatecrystallisation(CryProblem::CrystallisationProblem{NuclF, GrF,
                                                                              TP <:
                                                                              AbstractTemperature}
     function MoM_model(u, p, t)
-        scalargrowth = growthrate(CryProblem.kinetics_growthfunction,
-                                  p.gr,
-                                  u[end] /
-                                  _get_saturationconcentration(CryProblem.temp_profile, t),
+        S = supersaturation(CryProblem, u, t)
+        scalargrowth = growthrate(CryProblem.kinetics_growthfunction, p.gr, S,
                                   CryProblem, temperature(CryProblem.temp_profile, t),
-                                  CryProblem.loading,
-                                  u[1:(end - 1)])
+                                  CryProblem.loading, u[1:(end - 1)])
+        B = nucleationrate(CryProblem.kinetics_nucleationfunction, p.nucl, S,
+                           CryProblem, temperature(CryProblem.temp_profile, t),
+                           CryProblem.loading, u[1:(end - 1)])
 
-        du = SVector(nucleationrate(CryProblem.kinetics_nucleationfunction,
-                                    p.nucl,
-                                    u[end] /
-                                    _get_saturationconcentration(CryProblem.temp_profile, t),
-                                    CryProblem, temperature(CryProblem.temp_profile, t),
-                                    CryProblem.loading,
-                                    u[1:(end - 1)]),
-                     scalargrowth * u[1],
-                     2 * scalargrowth * u[2],
-                     3 * scalargrowth * u[3],
-                     4 * scalargrowth * u[4],
-                     -3 * CryProblem.kv * CryProblem.ρ * scalargrowth * u[3])
+        n_mom = CryProblem.solver.nmoments
+        @assert n_mom >= 2 "MoM solver requires nmoments >= 2 (concentration closure uses µ2)"
+        n_states = n_mom + 2
+        du = SVector(ntuple(Val(n_states)) do k
+            if k == 1
+                B
+            elseif k == n_states
+                -3 * CryProblem.kv * CryProblem.ρ * scalargrowth * u[3]
+            else
+                (k - 1) * scalargrowth * u[k - 1]
+            end
+        end)
 
         return du
     end
@@ -1150,7 +1150,9 @@ function _simulatecrystallisation(CryProblem::CrystallisationProblem{NuclF, GrF,
                        gr = CryProblem.parameterset_growth)
 
     ET = eltype(CryProblem.parameterset_nucleation)
-    u0_typed = SVector{6, ET}(ET.(_get_initial_state(CryProblem)))
+    n_states = CryProblem.solver.nmoments + 2
+    u0_vec = ET.(_get_initial_state(CryProblem))
+    u0_typed = SVector(ntuple(k -> u0_vec[k], Val(n_states)))
     ODEprob = ODEProblem(MoM_model, u0_typed, (saveat[1], saveat[end]), θ)
 
     tstep_solver = _resolve_timestepping_algorithm(CryProblem.solver, :tsit5)
@@ -1162,12 +1164,21 @@ function _simulatecrystallisation(CryProblem::CrystallisationProblem{NuclF, GrF,
 
     final_state = collect(sol[:, end])
 
+    n_mom = CryProblem.solver.nmoments
+    # Fixed moment indices: state k holds µ_{k-1}; µ2 = state 3, µ3 = state 4,
+    # µ4 = state 5. Higher moments (if any) do not change these metrics.
+    d32 = n_mom >= 3 ? 1e6 .* sol[4, :] ./ (sol[3, :] .+ 1e-6) :
+          fill(NaN, length(sol.t))
+    d43 = n_mom >= 4 ? 1e6 .* sol[5, :] ./ (sol[4, :] .+ 1e-6) :
+          fill(NaN, length(sol.t))
+    mu2 = n_mom >= 2 ? sol[3, :] : fill(NaN, length(sol.t))
+
     return CrystallisationMoMSolution(sol.t,
-                                      sol[6, :],
+                                      sol[n_states, :],
                                       1e6 * (sol[2, :]) ./ (sol[1, :] .+ 1e-6),
-                                      1e6 * (sol[4, :]) ./ (sol[3, :] .+ 1e-6),
-                                      1e6 * (sol[5, :]) ./ (sol[4, :] .+ 1e-6),
-                                      sol[3, :], # mu2
+                                      d32,
+                                      d43,
+                                      mu2,
                                       final_state,
                                       sol.destats,
                                       OrdinaryDiffEq.SciMLBase.successful_retcode(sol.retcode))
@@ -1223,7 +1234,7 @@ finite volume method with flux limiters.
         # Cache properties that are constant for the current time step
         cell_centre = CryProblem.solver.cell_centre
         temp = temperature(CryProblem.temp_profile, t)
-        S = st[end] / _get_saturationconcentration(CryProblem.temp_profile, t)
+        S = supersaturation(CryProblem, st, t)
 
         scalargrowth = growthrate(CryProblem.kinetics_growthfunction,
                                   p.gr,
@@ -1299,7 +1310,7 @@ finite volume method with flux limiters.
         return 0.99 * CryProblem.solver.cell_dL[1] /
                growthrate(CryProblem.kinetics_growthfunction,
                           p.gr,
-                          u[end] / _get_saturationconcentration(CryProblem.temp_profile, t),
+                          supersaturation(CryProblem, u, t),
                           CryProblem, temperature(CryProblem.temp_profile, t),
                           CryProblem.loading,
                           @view u[1:(end - 1)])
@@ -1407,7 +1418,7 @@ finite volume method with size-dependent growth rates.
         # Cache properties that are constant for the current time step
         cell_centre = CryProblem.solver.cell_centre
         temp = temperature(CryProblem.temp_profile, t)
-        S = st[end] / _get_saturationconcentration(CryProblem.temp_profile, t)
+        S = supersaturation(CryProblem, st, t)
 
         lengthbasedgrowth = growthrate(CryProblem.kinetics_growthfunction,
                                        p.gr,
@@ -1482,8 +1493,7 @@ finite volume method with size-dependent growth rates.
     function CFLcallback(u, integrator, p, t)
         g_vec = growthrate(CryProblem.kinetics_growthfunction,
                            p.gr,
-                           u[end] /
-                           _get_saturationconcentration(CryProblem.temp_profile, t),
+                           supersaturation(CryProblem, u, t),
                            CryProblem.solver.cell_centre,
                            temperature(CryProblem.temp_profile, t),
                            CryProblem.loading,
@@ -1590,7 +1600,7 @@ function _simulatecrystallisation(CryProblem::CrystallisationProblem{NuclF, GrF,
         numberdensity = @view st[1:(end - 1)]
         cell_centre = CryProblem.solver.cell_centre
         temp = temperature(CryProblem.temp_profile, t)
-        S = st[end] / _get_saturationconcentration(CryProblem.temp_profile, t)
+        S = supersaturation(CryProblem, st, t)
 
         scalargrowth = growthrate(CryProblem.kinetics_growthfunction, p.gr, S, CryProblem,
                                   temp, CryProblem.loading, numberdensity)
@@ -1658,7 +1668,7 @@ function _simulatecrystallisation(CryProblem::CrystallisationProblem{NuclF, GrF,
         return 0.9 * CryProblem.solver.cell_dL[1] /
                growthrate(CryProblem.kinetics_growthfunction,
                           p.gr,
-                          u[end] / CryProblem.saturation_concentration,
+                          supersaturation(CryProblem, u, t),
                           CryProblem, temperature(CryProblem.temp_profile, t),
                           CryProblem.loading,
                           @view u[1:(end - 1)])
