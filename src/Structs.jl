@@ -280,7 +280,7 @@ Fields:
 Base.@kwdef @concrete struct nucl_CNT <: AbstractFPNucleationFunction
     nparams::Int64 = 2
     string::String = "CNT"
-    symbols::Vector{Symbol} = [:Aj, :γ]
+    symbols::Vector{Symbol} = [:Aⱼ, :γ]
 end
 
 paramaxis(::nucl_CNT) = Axis(Aj = 1, γ = 2)
@@ -977,141 +977,97 @@ Base.@kwdef @concrete struct mae <: AbstractPELossFunction
     string::String = weighting == (1.0, 1.0) ? "MAE" : "MAE wgted $(weighting)"
 end
 
-"""
-    logMLE_mo <: AbstractPELossFunction
-
-Log Maximum Likelihood Estimation loss function with moment matching.
-
-Fields:
-- `weighting::Tuple{Float64,Float64}`: Weighting factors for different components (default: (1.0, 1.0))
-- `string::String`: String identifier
-"""
-Base.@kwdef @concrete struct logMLE_mo <: AbstractPELossFunction
-    weighting::Tuple{Float64, Float64} = (1.0, 1.0)
-    string::String = weighting == (1.0, 1.0) ? "Log MLE MO" :
-                     "Log MLE MO wgted $(weighting)"
-end
-
-"""
-    logMLE_Indiana <: AbstractPELossFunction
-
-Log Maximum Likelihood Estimation loss function with Indiana-style weighting.
-
-Fields:
-- `weighting::Tuple{Float64,Float64}`: Weighting factors (default: (1.0, 15.0))
-- `string::String`: String identifier
-- `symbols::Vector{Symbol}`: Parameter symbols [:logMLEIndiana]
-"""
-Base.@kwdef @concrete struct logMLE_Indiana <: AbstractPELossFunction
-    weighting::Tuple{Float64, Float64} = (1.0, 15.0)
-    string::String = "Log MLE Indiana $(Int(round(weighting[2], sigdigits = 2)))"
-    symbols::Vector{Symbol} = [:logMLEIndiana]
-end
-
-"""
-    logMLE_Han <: AbstractPELossFunction
-
-Log Maximum Likelihood Estimation loss function with Han-style weighting.
-
-Fields:
-- `weighting::Tuple{Float64,Float64}`: Weighting factors (default: (5.0, 1.0))
-- `string::String`: String identifier
-- `symbols::Vector{Symbol}`: Parameter symbols [:logMLEHan]
-"""
-Base.@kwdef @concrete struct logMLE_Han <: AbstractPELossFunction
-    weighting::Tuple{Float64, Float64} = (5.0, 1.0)
-    string::String = weighting == (1.0, 1.0) ? "Log MLE Han" :
-                     "Log MLE Han wgted $(weighting)"
-    symbols::Vector{Symbol} = [:logMLEHan]
-end
-
-"""
-    logMLE_Han_Indiana <: AbstractPELossFunction
-
-Log Maximum Likelihood Estimation loss function combining Han and Indiana weightings.
-
-Fields:
-- `weighting::Tuple{Float64,Float64}`: Weighting factors (default: (5.0, 15.0))
-- `string::String`: String identifier
-- `symbols::Vector{Symbol}`: Parameter symbols [:logMLEHanIndiana]
-"""
-Base.@kwdef @concrete struct logMLE_Han_Indiana <: AbstractPELossFunction
-    weighting::Tuple{Float64, Float64} = (5.0, 15.0)
-    string::String = weighting == (1.0, 1.0) ? "Log MLE Han Indiana" :
-                     "Log MLE Han Indiana wgted $(weighting)"
-    symbols::Vector{Symbol} = [:logMLEHanIndiana]
-end
 ## Measurements
-"""
-    AbstractMeasurements
-
-Abstract supertype for crystallization measurement data structures.
-"""
-abstract type AbstractMeasurements end
 
 """
-    CrystallisationRepeatMeasurements <: AbstractMeasurements
+    AbstractObservable
 
-Structure for storing repeated crystallization measurements with mean and variance.
+Abstract supertype for observable containers (see `SeriesObservable`,
+`ScalarObservable`).
+"""
+abstract type AbstractObservable end
+
+"""
+    SeriesObservable{Tt,Tμ,Tσ2} <: AbstractObservable
+
+An observable measured as a time series with its own (possibly irregular)
+time grid, carrying a per-point mean and variance.
 
 Fields:
-- `time::Vector{Float64}`: Time points
-- `concentrationmean::Vector{Float64}`: Mean concentration measurements
-- `concentrationvariance::Vector{Float64}`: Variance of concentration measurements
-- `quantilepercent::Float64`: Percentile for size distribution quantile
-- `quantilemean::Float64`: Mean of size distribution quantile
-- `quantilevariance::Float64`: Variance of size distribution quantile
-- `d10::Float64`: 10th percentile of crystal size distribution
-- `d10var::Float64`: Variance of d10
-- `d32::Float64`: Sauter mean diameter
-- `d32var::Float64`: Variance of d32
-- `d43::Float64`: Volume mean diameter
-- `d43var::Float64`: Variance of d43
-- `temperature::Float64`: Temperature of the experiment
-- `loading::Float64`: Loading value for the experiment
+- `time::Tt`: measurement times (minutes)
+- `mean::Tμ`: per-point mean, `length(mean) == length(time)`
+- `variance::Tσ2`: per-point variance; `nothing` when only a single
+  replicate was measured
 """
-@concrete struct CrystallisationRepeatMeasurements <: AbstractMeasurements
-    time::Vector{Float64}
-    concentrationmean::Vector{Float64}
-    concentrationvariance::Vector
+Base.@kwdef @concrete struct SeriesObservable{Tt <: AbstractVector{<:Real},
+                                              Tμ <: AbstractVector{<:Real},
+                                              Tσ2 <: Union{Nothing,
+                                                           AbstractVector{<:Real}}} <:
+                 AbstractObservable
+    time::Tt
+    mean::Tμ
+    variance::Tσ2 = nothing
+end
 
-    quantilemean::Float64
-    quantilevariance::Float64
+"""
+    ScalarObservable{T,Tσ2,Tt} <: AbstractObservable
 
-    d43::Float64
-    d43var::Float64
+An observable measured once (e.g. final particle size d43 or d50q),
+carrying a value and variance.
 
+Fields:
+- `value::T`: measured value
+- `variance::Tσ2`: measurement variance; `nothing` for a single replicate
+- `time::Tt`: time of measurement (defaults to `zero(T)`)
+"""
+Base.@kwdef @concrete struct ScalarObservable{T <: Real,
+                                              Tσ2 <: Union{Nothing, Real},
+                                              Tt <: Real} <: AbstractObservable
+    value::T
+    variance::Tσ2 = nothing
+    time::Tt = zero(value)
+end
+
+"""
+    AbstractExperiment
+
+Abstract supertype for a single experimental run (see `CrystallisationExperiment`).
+"""
+abstract type AbstractExperiment end
+
+"""
+    CrystallisationExperiment{O<:NamedTuple} <: AbstractExperiment
+
+A single crystallisation experiment: a typed `NamedTuple` of observables
+plus the run conditions.
+
+Fields:
+- `observables::O`: e.g. `(concentration = SeriesObservable(...), d43 = ScalarObservable(...), d50q = ScalarObservable(...))`.
+  The `concentration` observable is mandatory for loss evaluation.
+- `temperature::Float64`: run temperature in Kelvin
+- `loading::Float64`: loading (e.g. volumetric solids fraction)
+- `exp_id::Int`: experiment identifier
+
+The `NamedTuple` shape keeps the container type-stable and Tables.jl
+compatible; additional observables (pH, mass, PSD, ...) are added as new
+fields, not new container types.
+"""
+Base.@kwdef @concrete struct CrystallisationExperiment{O <: NamedTuple} <:
+                 AbstractExperiment
+    observables::O
     temperature::Float64
     loading::Float64
-
-    exp_id::Int64
+    exp_id::Int
 end
 
 """
-    CrystallisationSingleMeasurements <: AbstractMeasurements
+    initial_concentration(expt::CrystallisationExperiment) -> Real
 
-Structure for storing single crystallization measurements.
-
-Fields:
-- `time::Vector{Float64}`: Time points
-- `concentrationmean::Vector{Float64}`: Concentration measurements
-- `quantilepercent::Float64`: Percentile for size distribution quantile
-- `quantilemean::Float64`: Size distribution quantile value
-- `d10::Float64`: 10th percentile of crystal size distribution
-- `d32::Float64`: Sauter mean diameter
-- `d43::Float64`: Volume mean diameter
+Initial solute concentration of an experiment, read from the
+`concentration` series observable (first timepoint).
 """
-@concrete struct CrystallisationSingleMeasurements <: AbstractMeasurements
-    time::Vector{Float64}
-    concentrationmean::Vector{Float64}
-
-    quantilepercent::Float64
-    quantilemean::Float64
-
-    d10::Float64
-    d32::Float64
-    d43::Float64
-end
+initial_concentration(expt::CrystallisationExperiment) =
+    expt.observables.concentration.mean[1]
 
 ## Solver
 """

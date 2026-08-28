@@ -21,8 +21,10 @@ using Statistics
     γ  ~ TriangularDist(lb[2], ub[2], 0.5 * (lb[2] + ub[2]))
     Ag ~ TriangularDist(lb[3], ub[3], 0.5 * (lb[3] + ub[3]))
     g  ~ TriangularDist(lb[4], ub[4], 0.5 * (lb[4] + ub[4]))
-    L = CriSTool.parameterestimation_lossfunction(loss, [data], [Aj, γ, Ag, g],
-                                                   nucl, gr, agg, br, solver)
+    problem = CrystallisationProblem(; kinetics_nucleationfunction = nucl,
+                                                   kinetics_growthfunction = gr, kinetics_aggregationfunction = agg,
+                                                   kinetics_breakagefunction = br, solver = solver)
+                                                   L = loss(loss, problem, [Aj, γ, Ag, g], [data])
     Turing.@addlogprob!(-L)
 end
 
@@ -49,10 +51,13 @@ function main()
                             loading=loading)
     noisy_c = ref.concentration .* (1.0 .+ 0.05 .* randn(length(save_grid)))
     σ2      = (0.05 .* abs.(noisy_c) .+ 0.02) .^ 2
-    meas    = CriSTool.CrystallisationRepeatMeasurements(save_grid, noisy_c, σ2,
-                                                          ref.d43[end], 0.1,
-                                                          ref.d43[end], 0.1,
-                                                          T_K, loading, 1)
+    meas    = CrystallisationExperiment(;
+                                                          observables = (;
+                                                          concentration = SeriesObservable(; time = save_grid, mean = noisy_c,
+                                                          variance = σ2),
+                                                          d43 = ScalarObservable(; value = ref.d43[end], variance = 0.1),
+                                                          d50q = ScalarObservable(; value = ref.d43[end], variance = 0.1)),
+                                                          temperature = T_K, loading = loading, exp_id = 1)
 
     lb = [25.0, 0.30, 0.30, 2.0]
     ub = [50.0, 1.00, 3.00, 4.0]

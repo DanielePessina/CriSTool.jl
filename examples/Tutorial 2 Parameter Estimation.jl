@@ -9,7 +9,7 @@ Three steps on the same dataset:
 Reads `fake-experimental-dataset.xlsx` (5 unseeded experiments, generated
 from `[Aj=38, γ=0.6, Ag=1, g=3]` with 3% / 8% heteroscedastic noise).
 Swap `DATA_WORKBOOK` for your own .xlsx to fit real data; the workbook
-just needs the columns expected by `makerepeatmeasurements`.
+just needs the columns expected by `load_experiments`.
 """
 
 using CriSTool
@@ -26,8 +26,10 @@ const DATA_WORKBOOK = joinpath(@__DIR__, "fake-experimental-dataset.xlsx")
     γ  ~ TriangularDist(lb[2], ub[2], optpara[2])
     Ag ~ TriangularDist(lb[3], ub[3], optpara[3])
     g  ~ TriangularDist(lb[4], ub[4], optpara[4])
-    L = CriSTool.parameterestimation_lossfunction(loss, data, [Aj, γ, Ag, g],
-                                                   nucl, gr, agg, br, solver)
+    problem = CrystallisationProblem(; kinetics_nucleationfunction = nucl,
+                                                   kinetics_growthfunction = gr, kinetics_aggregationfunction = agg,
+                                                   kinetics_breakagefunction = br, solver = solver)
+                                                   L = loss(loss, problem, [Aj, γ, Ag, g], data)
     Turing.@addlogprob!(-L)
 end
 
@@ -37,7 +39,7 @@ function main()
     # 1. Load + variance-balance the experimental data. The balancer rescales
     #    concentration / PSD variance by the supplied factors so the loss
     #    function weights the two observation types more comparably.
-    raw          = CriSTool.makerepeatmeasurements(DATA_WORKBOOK, "Unseeded_PE", [0.0])
+    raw          = load_experiments(DATA_WORKBOOK, "Unseeded_PE", 0.0)
     measurements = CriSTool.psd_measurementbalancer(
                     CriSTool.repeatmeasurementbalancer(raw, 3), 4)
 

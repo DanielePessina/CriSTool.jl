@@ -73,21 +73,21 @@ function forwardsensitivity(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, 
                                            BrP <: AbstractVector{<:Real},
                                            AggP <: AbstractVector{<:Real}}
 
-    fluxlimiter_sb(r) = max(0, min(1, 2 * r), min(2, r))
-    fluxlimiter_vl(r) = (abs(r) + r) / (1 + abs(r))
     fluxlimiter_ospre(r) = (1.5(r^2) + r) / (r^2 + r + 1)
 
     function HRFV_FLWmodel(dstdt, st, p, t)
 
         numberdensity = @view st[1:(end - 1)]
+        sat_conc = _get_saturationconcentration(CryProblem.temp_profile, t)
+        temp = temperature(CryProblem.temp_profile, t)
 
         scalargrowth = growthrate(CryProblem.kinetics_growthfunction, p.gr,
-                                  st[end] / CryProblem.saturation_concentration, CryProblem,
-                                  numberdensity)
+                                  st[end] / sat_conc, CryProblem, temp,
+                                  CryProblem.loading, numberdensity)
 
         flux = vcat(nucleationrate(CryProblem.kinetics_nucleationfunction, p.nucl,
-                                   st[end] / CryProblem.saturation_concentration,
-                                   CryProblem, numberdensity), ## Inflow
+                                   st[end] / sat_conc, CryProblem, temp,
+                                   CryProblem.loading, numberdensity), ## Inflow
                     scalargrowth * 0.5 * (numberdensity[1] + numberdensity[2]),
                     [scalargrowth * (numberdensity[i-1] +
                       0.5 *
@@ -98,39 +98,25 @@ function forwardsensitivity(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, 
                     scalargrowth *
                     (numberdensity[end] + 0.5 * (numberdensity[end] - numberdensity[end-1])))
 
-        dstdt[1:(end - 1)] = -diff(flux) / CryProblem.solver.cell_dL[1]
+        dstdt[1:(end - 1)] = -diff(flux) / CryProblem.solver.cell_dL
         dstdt[end] = -CryProblem.kv * CryProblem.ρ *
                      (3 * sum(CryProblem.solver.cell_dL .* numberdensity .* scalargrowth .*
                           CryProblem.solver.cell_centre .^ 2))
 
     end
 
-    CFLcallback(c) = CryProblem.solver.cell_dL[1] /
-                     growthrate(CryProblem.kinetics_growthfunction,
-                                CryProblem.parameterset_growth,
-                                c / CryProblem.saturation_concentration, CryProblem,
-                                zeros(Float64, CryProblem.solver.meshsize))
-    CFLcallback!(u, integrator, p,
-                 t) = 0.7 * CryProblem.solver.cell_dL[1] /
-                      growthrate(CryProblem.kinetics_growthfunction, p.gr,
-                                 u[end] / CryProblem.saturation_concentration, CryProblem,
-                                 @view u[1:(end - 1)])
-
     θ = ComponentArray(nucl = CryProblem.parameterset_nucleation,
                        gr = CryProblem.parameterset_growth,
                        br = CryProblem.parameterset_breakage,
                        agg = CryProblem.parameterset_aggregation)
     ODEprob = ODEForwardSensitivityProblem(HRFV_FLWmodel,
-                                           convert(NuP,
-                                                   [zeros(Float64,
-                                                          CryProblem.solver.meshsize);
-                                                    CryProblem.initial_concentration]),
+                                           [zeros(Float64,
+                                                  CryProblem.solver.meshsize);
+                                            CryProblem.initial_concentration],
                                            (0.0, saveat[end]), θ)
 
-    ODEsol = solve(ODEprob,
-                   Tsit5(),
-                   # reltol=[ones(Float64, CryProblem.solver.meshsize) * 1e-1; 1e-3],
-                   # abstol=[ones(Float64, CryProblem.solver.meshsize) * 1e-4; 1e-6],
+    tstep_solver = _resolve_timestepping_algorithm(CryProblem.solver, :tsit5)
+    ODEsol = solve(ODEprob, tstep_solver;
                    saveat = saveat,
                    maxiters = 1e8)
 

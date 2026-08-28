@@ -215,7 +215,7 @@ end
 Compare experimental measurements against ensemble simulation results.
 
 # Arguments
-- `measurements::Vector{<:AbstractMeasurements}`: experimental datasets,
+- `measurements::Vector{<:AbstractExperiment}`: experimental datasets,
   one per batch.
 - `ensemble_results::Vector{<:Union{EnsembleFVSolution, EnsembleMoMSolution}}`:
   simulation outputs where each `concentration` field is a matrix of size
@@ -367,20 +367,15 @@ function build_simulation_thesis_table_data(measurements,
         if sol isa CrystallisationMoMSolution
             size_label = "d43"
             pred_text = string(round(get_characteristic_size(sol), sigdigits = 3))
-            if hasproperty(measurements[m], :d43) && !isempty(measurements[m].d43)
-                meas_text = format_plot_measurement_value(measurements[m].d43,
-                                                          measurements[m].d43var;
+                            meas_text = format_plot_measurement_value(measurements[m].observables.d43.value,
+                                                          measurements[m].observables.d43.variance;
                                                           show_uncertainty = show_measurement_uncertainty)
-            end
         elseif sol isa CrystallisationFVSolution
             size_label = "d50"
             pred_text = string(round(get_characteristic_size(sol), sigdigits = 3))
-            if hasproperty(measurements[m], :quantilemean) &&
-               !isempty(measurements[m].quantilemean)
-                meas_text = format_plot_measurement_value(measurements[m].quantilemean,
-                                                          measurements[m].quantilevariance;
+                            meas_text = format_plot_measurement_value(measurements[m].observables.d50q.value,
+                                                          measurements[m].observables.d50q.variance;
                                                           show_uncertainty = show_measurement_uncertainty)
-            end
         end
 
         loading_str = string(round(measurements[m].loading, sigdigits = 3))
@@ -400,7 +395,7 @@ optimal (best-fit) simulation trajectory and the ensemble uncertainty band for e
 experiment.
 
 # Arguments
-- `measurements::Vector{<:AbstractMeasurements}`: experimental measurement sets.
+- `measurements::Vector{<:AbstractExperiment}`: experimental measurement sets.
 - `ensemble_results::Vector{<:Union{EnsembleFVSolution, EnsembleMoMSolution}}`: ensemble
   simulation results (one per measurement), as returned by [`run_ensemble`](@ref).
 - `optimal_solutions`: optimal simulation solutions (one per measurement), typically
@@ -431,7 +426,7 @@ experiment.
 # Returns
 A `Makie.Figure` object. If `savename` is non-empty the figure is also saved as PNG.
 """
-function plot_measurements_vs_ensemble(measurements::Vector{<:AbstractMeasurements},
+function plot_measurements_vs_ensemble(measurements::Vector{<:AbstractExperiment},
                                        ensemble_results::Vector{<:Union{EnsembleFVSolution,
                                                                         EnsembleMoMSolution}},
                                        optimal_solutions; title = "", savename = "",
@@ -462,23 +457,18 @@ function plot_measurements_vs_ensemble(measurements::Vector{<:AbstractMeasuremen
                 std_pred_size = ensemble_sol.d43_std[end]
                 pred_text = "$(round(mean_pred_size, sigdigits=3)) ± $(round(std_pred_size, sigdigits=2))"
 
-                if hasproperty(measurements[m], :d43) && !isempty(measurements[m].d43)
-                    meas_mean = measurements[m].d43
-                    meas_std = sqrt(measurements[m].d43var)
+                                    meas_mean = measurements[m].observables.d43.value
+                    meas_std = sqrt(measurements[m].observables.d43.variance)
                     meas_text = "$(round(meas_mean, sigdigits=3)) ± $(round(meas_std, sigdigits=2))"
-                end
             elseif hasproperty(ensemble_sol, :d50q_mean)
                 pred_label = "D50"
                 mean_pred_size = ensemble_sol.d50q_mean[end]
                 std_pred_size = ensemble_sol.d50q_std[end]
                 pred_text = "$(round(mean_pred_size, sigdigits=3)) ± $(round(std_pred_size, sigdigits=2))"
 
-                if hasproperty(measurements[m], :quantilemean) &&
-                   !isempty(measurements[m].quantilemean)
-                    meas_mean = measurements[m].quantilemean
-                    meas_std = sqrt(measurements[m].quantilevariance)
+                                    meas_mean = measurements[m].observables.d50q.value
+                    meas_std = sqrt(measurements[m].observables.d50q.variance)
                     meas_text = "$(round(meas_mean, sigdigits=3)) ± $(round(meas_std, sigdigits=2))"
-                end
             end
 
             loading_str = string(round(measurements[m].loading, sigdigits=3))
@@ -552,7 +542,7 @@ function plot_measurements_vs_ensemble(measurements::Vector{<:AbstractMeasuremen
                            yminorticks = Makie.IntervalsBetween(4),
                            xminorticks = Makie.IntervalsBetween(4),
                            limits = ((0,
-                                      maximum([measurements[m].time[end]
+                                      maximum([measurements[m].observables.concentration.time[end]
                                                for m in eachindex(measurements)]) + 20),
                                      nothing))
         ax1 = Makie.Axis(figure[1, 1]; merge(axis_defaults, axis_kwargs)...)
@@ -586,13 +576,13 @@ function plot_measurements_vs_ensemble(measurements::Vector{<:AbstractMeasuremen
         size_info = String[]
 
         for m in eachindex(measurements)
-            Makie.errorbars!(ax1, measurements[m].time, measurements[m].concentrationmean,
-                             sqrt.(measurements[m].concentrationvariance),
+            Makie.errorbars!(ax1, measurements[m].observables.concentration.time, measurements[m].observables.concentration.mean,
+                             sqrt.(measurements[m].observables.concentration.variance),
                              color = :black,
                              whiskerwidth = ms_whiskerwidth,
                              linewidth = ms_linewidtheb)
 
-            p = Makie.scatter!(ax1, measurements[m].time, measurements[m].concentrationmean,
+            p = Makie.scatter!(ax1, measurements[m].observables.concentration.time, measurements[m].observables.concentration.mean,
                                color = resolve_experiment_color(colors, m, color_palette, colouroffset),
                                markersize = ms_markersize,
                                strokewidth = 2)
@@ -608,18 +598,13 @@ function plot_measurements_vs_ensemble(measurements::Vector{<:AbstractMeasuremen
                 std_pred_size = ensemble_sol.d43_std[end]
                 predicted_size_str = "T = $(round(measurements[m].temperature-273,digits = 2) )°C, Load = $(round(measurements[m].loading, sigdigits=2)) g/L, Pred. D43 = $(round(mean_pred_size, sigdigits=3)) ± $(round(std_pred_size, sigdigits=2)) μm"
 
-                if hasproperty(measurements[m], :d43) && !isempty(measurements[m].d43)
-                    measured_size_str = "Meas. = $(round(measurements[m].d43, sigdigits=3)) ± $(round(sqrt(measurements[m].d43var), sigdigits=2)) μm"
-                end
+                                    measured_size_str = "Meas. = $(round(measurements[m].observables.d43.value, sigdigits=3)) ± $(round(sqrt(measurements[m].observables.d43.variance), sigdigits=2)) μm"
             elseif hasproperty(ensemble_sol, :d50q_mean) # FV solution
                 mean_pred_size = ensemble_sol.d50q_mean[end]
                 std_pred_size = ensemble_sol.d50q_std[end]
                 predicted_size_str = "T = $(round(measurements[m].temperature-273,digits = 2) )°C, Load = $(round(measurements[m].loading, sigdigits=2)) g/L,Pred. D50 = $(round(mean_pred_size, sigdigits=3)) ± $(round(std_pred_size, sigdigits=2)) μm"
 
-                if hasproperty(measurements[m], :quantilemean) &&
-                   !isempty(measurements[m].quantilemean)
-                    measured_size_str = "Meas. = $(round(measurements[m].quantilemean, sigdigits=3)) ± $(round(sqrt(measurements[m].quantilevariance), sigdigits=2)) μm"
-                end
+                                    measured_size_str = "Meas. = $(round(measurements[m].observables.d50q.value, sigdigits=3)) ± $(round(sqrt(measurements[m].observables.d50q.variance), sigdigits=2)) μm"
             end
 
             # Get the actual experiment ID if available, otherwise use the loop index
@@ -649,8 +634,8 @@ function plot_measurements_vs_ensemble(measurements::Vector{<:AbstractMeasuremen
 
         # Add text box with all information if we have any
         if !isempty(param_string) && showtext
-            max_time = maximum([m.time[end] for m in measurements])
-            max_conc = maximum([m.concentrationmean[1] for m in measurements])
+            max_time = maximum([m.observables.concentration.time[end] for m in measurements])
+            max_conc = maximum([initial_concentration(m) for m in measurements])
 
             Makie.text!(ax1, max_time * 0.75, max_conc * 1.05, text = param_string,
                         align = (:center, :top),
@@ -733,7 +718,7 @@ end
 Compare measured particle sizes against ensemble simulation trajectories.
 
 # Arguments
-- `measurements::Vector{<:AbstractMeasurements}`: experimental datasets, one per
+- `measurements::Vector{<:AbstractExperiment}`: experimental datasets, one per
   batch.
 - `ensemble_results::Vector{<:Union{EnsembleFVSolution, EnsembleMoMSolution}}`:
   ensemble simulation outputs containing particle-size trajectories.
@@ -745,7 +730,7 @@ Compare measured particle sizes against ensemble simulation trajectories.
 A `Makie.Figure` showing particle-size ensembles, optimal simulations, and
 measurements. Saves to `Saved Plots` when `savename` is provided.
 """
-function plot_ps_measurements_vs_ensemble(measurements::Vector{<:AbstractMeasurements},
+function plot_ps_measurements_vs_ensemble(measurements::Vector{<:AbstractExperiment},
                                           ensemble_results::Vector{<:Union{EnsembleFVSolution,
                                                                            EnsembleMoMSolution}},
                                           optimal_solutions; title = "", savename = "",
@@ -794,7 +779,7 @@ function plot_ps_measurements_vs_ensemble(measurements::Vector{<:AbstractMeasure
                            yminorticks = Makie.IntervalsBetween(4),
                            xminorticks = Makie.IntervalsBetween(4),
                            limits = ((0,
-                                      maximum([measurements[m].time[end]
+                                      maximum([measurements[m].observables.concentration.time[end]
                                                for m in eachindex(measurements)]) + 20),
                                      nothing))
         ax1 = Makie.Axis(figure[1, 1]; merge(axis_defaults, axis_kwargs)...)
@@ -879,32 +864,21 @@ function plot_ps_measurements_vs_ensemble(measurements::Vector{<:AbstractMeasure
             ensemble_sol = ensemble_results[m]
             size_matrix, size_mean, size_std, label_symbol = get_size_fields(ensemble_sol)
 
-            # Measurement values (prefer d43; fallback to quantile)
-            if hasproperty(measurements[m], :d43) && !isnothing(measurements[m].d43)
-                meas_size = measurements[m].d43
-                meas_std = hasproperty(measurements[m], :d43var) ?
-                           sqrt.(measurements[m].d43var) : nothing
-            elseif hasproperty(measurements[m], :quantilemean) &&
-                   !isnothing(measurements[m].quantilemean)
-                meas_size = measurements[m].quantilemean
-                meas_std = hasproperty(measurements[m], :quantilevariance) ?
-                           sqrt.(measurements[m].quantilevariance) : nothing
-            else
-                meas_size = nothing
-                meas_std = nothing
-            end
+            # Measurement values (d43; all loaders also populate d50q with the same value)
+            meas_size = measurements[m].observables.d43.value
+            meas_std = sqrt.(measurements[m].observables.d43.variance)
 
             if !isnothing(meas_size)
                 push!(measured_sizes, meas_size)
                 if !isnothing(meas_std)
-                    Makie.errorbars!(ax1, [measurements[m].time[end]], [meas_size],
+                    Makie.errorbars!(ax1, [measurements[m].observables.concentration.time[end]], [meas_size],
                                      [meas_std],
                                      color = :black,
                                      whiskerwidth = ms_whiskerwidth,
                                      linewidth = ms_linewidtheb)
                 end
 
-                p = Makie.scatter!(ax1, measurements[m].time[end], meas_size,
+                p = Makie.scatter!(ax1, measurements[m].observables.concentration.time[end], meas_size,
                                    color = resolve_experiment_color(colors, m, color_palette, colouroffset),
                                    markersize = ms_markersize,
                                    strokewidth = 2)
@@ -947,7 +921,7 @@ function plot_ps_measurements_vs_ensemble(measurements::Vector{<:AbstractMeasure
 
         # Add text box with all information if desired
         if !isempty(param_string) && showtext
-            max_time = maximum([m.time[end] for m in measurements])
+            max_time = maximum([m.observables.concentration.time[end] for m in measurements])
             max_size = isempty(measured_sizes) ?
                        maximum([maximum(get_size_fields(ensemble_results[m])[2])
                                 for m in eachindex(ensemble_results)]) :
@@ -987,7 +961,7 @@ given kinetic parameters. Runs [`runsimulation`](@ref) internally for each measu
 and overlays the simulated trajectories on the experimental data.
 
 # Arguments
-- `measurements::Vector{<:AbstractMeasurements}`: experimental measurement sets.
+- `measurements::Vector{<:AbstractExperiment}`: experimental measurement sets.
 - `parameters::AbstractVector{<:Real}`: kinetic parameter vector.
 - `nucleationfunction::AbstractNucleationFunction`: nucleation kinetic model.
 - `growthfunction::AbstractGrowthFunction`: growth kinetic model.
@@ -1015,7 +989,7 @@ and overlays the simulated trajectories on the experimental data.
 # Returns
 A `Makie.Figure` object. If `savename` is non-empty the figure is also saved as PNG.
 """
-function plot_measurements_vs_simulation(measurements::Vector{<:AbstractMeasurements},
+function plot_measurements_vs_simulation(measurements::Vector{<:AbstractExperiment},
                                          parameters::AbstractVector{<:Real},
                                          nucleationfunction::AbstractNucleationFunction,
                                          growthfunction::AbstractGrowthFunction,
@@ -1039,9 +1013,9 @@ function plot_measurements_vs_simulation(measurements::Vector{<:AbstractMeasurem
                                   gr = growthfunction,
                                   agg = aggregationfunction,
                                   br = breakagefunction,
-                                  initial_concentration = measurements[m].concentrationmean[1],
-                                  save_idx = LinRange(measurements[m].time[1],
-                                                      measurements[m].time[end], 150),
+                                  initial_concentration = initial_concentration(measurements[m]),
+                                  save_idx = LinRange(measurements[m].observables.concentration.time[1],
+                                                      measurements[m].observables.concentration.time[end], 150),
                                   solver = solver,
                                   temp_profile = ConstantTemperature(measurements[m].temperature),
                                   loading = measurements[m].loading,
@@ -1116,7 +1090,7 @@ function plot_measurements_vs_simulation(measurements::Vector{<:AbstractMeasurem
                            yminorticks = Makie.IntervalsBetween(4),
                            xminorticks = Makie.IntervalsBetween(4),
                            limits = ((0,
-                                      maximum([measurements[m].time[end]
+                                      maximum([measurements[m].observables.concentration.time[end]
                                                for m in eachindex(measurements)]) + 20),
                                      nothing))
         ax1 = Makie.Axis(figure[1, 1]; merge(axis_defaults, axis_kwargs)...)
@@ -1162,13 +1136,13 @@ function plot_measurements_vs_simulation(measurements::Vector{<:AbstractMeasurem
                          linewidth = ms_linewidth,
                          linestyle = :dash)
 
-            Makie.errorbars!(ax1, measurements[m].time, measurements[m].concentrationmean,
-                             sqrt.(measurements[m].concentrationvariance),
+            Makie.errorbars!(ax1, measurements[m].observables.concentration.time, measurements[m].observables.concentration.mean,
+                             sqrt.(measurements[m].observables.concentration.variance),
                              color = :black,
                              whiskerwidth = ms_whiskerwidth,
                              linewidth = ms_linewidtheb)
 
-            p = Makie.scatter!(ax1, measurements[m].time, measurements[m].concentrationmean,
+            p = Makie.scatter!(ax1, measurements[m].observables.concentration.time, measurements[m].observables.concentration.mean,
                                color = resolve_experiment_color(colors, m, color_palette, colouroffset),
                                markersize = ms_markersize,
                                strokewidth = 2)
@@ -1182,23 +1156,14 @@ function plot_measurements_vs_simulation(measurements::Vector{<:AbstractMeasurem
             # Collect size information for text box
             if sol isa CrystallisationMoMSolution
                 pred_str = "Exp. $(exp_id) T = $(round(measurements[m].temperature-273,digits = 2) )°C, L = $(round(measurements[m].loading, sigdigits=2)) g/L, Pred. d43 = $(round(predicted_size, sigdigits=2)) μm"
-                if hasproperty(measurements[m], :d43) && !isempty(measurements[m].d43)
-                    meas_str = "Meas. = $(round(measurements[m].d43, sigdigits=3)) ± $(round(sqrt(measurements[m].d43var), sigdigits=2)) μm"
+                                    meas_str = "Meas. = $(round(measurements[m].observables.d43.value, sigdigits=3)) ± $(round(sqrt(measurements[m].observables.d43.variance), sigdigits=2)) μm"
                     combined_str = "$pred_str, $meas_str"
-                    push!(size_info, combined_str)
-                else
-                    push!(size_info, pred_str)
-                end
+                push!(size_info, combined_str)
             elseif sol isa CrystallisationFVSolution
                 pred_str = "Exp. $(exp_id) T = $(round(measurements[m].temperature-273,digits = 2) )°C, L = $(round(measurements[m].loading, sigdigits=2)) g/L, Pred. D50 = $(round(predicted_size, sigdigits=2)) μm"
-                if hasproperty(measurements[m], :quantilemean) &&
-                   !isempty(measurements[m].quantilemean)
-                    meas_str = "Meas. = $(round(measurements[m].quantilemean, sigdigits=3)) ± $(round(sqrt(measurements[m].quantilevariance), sigdigits=2)) μm"
+                                    meas_str = "Meas. = $(round(measurements[m].observables.d50q.value, sigdigits=3)) ± $(round(sqrt(measurements[m].observables.d50q.variance), sigdigits=2)) μm"
                     combined_str = "$pred_str, $meas_str"
                     push!(size_info, combined_str)
-                else
-                    push!(size_info, pred_str)
-                end
             end
             new_label = "Exp. $(exp_id)"
             push!(labels, new_label)
@@ -1209,8 +1174,8 @@ function plot_measurements_vs_simulation(measurements::Vector{<:AbstractMeasurem
             param_string *= "\nParticle Sizes:\n"
             param_string *= join(size_info, "\n")
 
-            max_time = maximum([m.time[end] for m in measurements])
-            max_conc = maximum([m.concentrationmean[1] for m in measurements])
+            max_time = maximum([m.observables.concentration.time[end] for m in measurements])
+            max_conc = maximum([initial_concentration(m) for m in measurements])
 
             Makie.text!(ax1, max_time * 0.75, max_conc, text = param_string,
                         align = (:center, :top),
@@ -1287,7 +1252,7 @@ function plot_measurements_vs_simulation(measurements::Vector{<:AbstractMeasurem
     end
 end
 
-function plot_ps_measurements_vs_simulation(measurements::Vector{<:AbstractMeasurements},
+function plot_ps_measurements_vs_simulation(measurements::Vector{<:AbstractExperiment},
                                             parameters::AbstractVector{<:Real},
                                             nucleationfunction::AbstractNucleationFunction,
                                             growthfunction::AbstractGrowthFunction,
@@ -1372,9 +1337,9 @@ function plot_ps_measurements_vs_simulation(measurements::Vector{<:AbstractMeasu
                                 gr = growthfunction,
                                 agg = aggregationfunction,
                                 br = breakagefunction,
-                                initial_concentration = measurements[m].concentrationmean[1],
-                                save_idx = LinRange(measurements[m].time[1],
-                                                    measurements[m].time[end], 150),
+                                initial_concentration = initial_concentration(measurements[m]),
+                                save_idx = LinRange(measurements[m].observables.concentration.time[1],
+                                                    measurements[m].observables.concentration.time[end], 150),
                                 solver = solver,
                                 temp_profile = ConstantTemperature(measurements[m].temperature),
                                 loading = measurements[m].loading,
@@ -1397,13 +1362,13 @@ function plot_ps_measurements_vs_simulation(measurements::Vector{<:AbstractMeasu
                          linewidth = ms_linewidth,
                          linestyle = :dash)
 
-            # Makie.errorbars!(ax1, measurements[m].time[end], measurements[m].d43,
-            #                  sqrt.(measurements[m].d43var),
+            # Makie.errorbars!(ax1, measurements[m].observables.concentration.time[end], measurements[m].observables.d43.value,
+            #                  sqrt.(measurements[m].observables.d43.variance),
             #                  color = :black,
             #                  whiskerwidth = ms_whiskerwidth,
             #                  linewidth = ms_linewidtheb)
 
-            p = Makie.scatter!(ax1, measurements[m].time[end], measurements[m].d43,
+            p = Makie.scatter!(ax1, measurements[m].observables.concentration.time[end], measurements[m].observables.d43.value,
                                color = resolve_experiment_color(colors, m, color_palette, colouroffset),
                                markersize = ms_markersize,
                                strokewidth = 2)
@@ -1420,23 +1385,14 @@ function plot_ps_measurements_vs_simulation(measurements::Vector{<:AbstractMeasu
             # Collect size information for text box
             if sol isa CrystallisationMoMSolution
                 pred_str = "Exp. $(exp_id) T = $(round(measurements[m].temperature-273,digits = 2) )°C, L = $(round(measurements[m].loading, sigdigits=2)) g/L, Pred. d43 = $(round(predicted_size, sigdigits=2)) μm"
-                if hasproperty(measurements[m], :d43) && !isempty(measurements[m].d43)
-                    meas_str = "Meas. = $(round(measurements[m].d43, sigdigits=3)) ± $(round(sqrt(measurements[m].d43var), sigdigits=2)) μm"
+                                    meas_str = "Meas. = $(round(measurements[m].observables.d43.value, sigdigits=3)) ± $(round(sqrt(measurements[m].observables.d43.variance), sigdigits=2)) μm"
                     combined_str = "$pred_str, $meas_str"
-                    push!(size_info, combined_str)
-                else
-                    push!(size_info, pred_str)
-                end
+                push!(size_info, combined_str)
             elseif sol isa CrystallisationFVSolution
                 pred_str = "Exp. $(exp_id) T = $(round(measurements[m].temperature-273,digits = 2) )°C, L = $(round(measurements[m].loading, sigdigits=2)) g/L, Pred. D50 = $(round(predicted_size, sigdigits=2)) μm"
-                if hasproperty(measurements[m], :quantilemean) &&
-                   !isempty(measurements[m].quantilemean)
-                    meas_str = "Meas. = $(round(measurements[m].quantilemean, sigdigits=3)) ± $(round(sqrt(measurements[m].quantilevariance), sigdigits=2)) μm"
+                                    meas_str = "Meas. = $(round(measurements[m].observables.d50q.value, sigdigits=3)) ± $(round(sqrt(measurements[m].observables.d50q.variance), sigdigits=2)) μm"
                     combined_str = "$pred_str, $meas_str"
                     push!(size_info, combined_str)
-                else
-                    push!(size_info, pred_str)
-                end
             end
             new_label = "Exp. $(exp_id)"
             push!(labels, new_label)
@@ -1450,8 +1406,8 @@ function plot_ps_measurements_vs_simulation(measurements::Vector{<:AbstractMeasu
 
         # Add text box with all information
 
-        max_time = maximum([m.time[end] for m in measurements])
-        max_conc = maximum([m.concentrationmean[1] for m in measurements])
+        max_time = maximum([m.observables.concentration.time[end] for m in measurements])
+        max_conc = maximum([initial_concentration(m) for m in measurements])
 
         Makie.text!(ax1, max_time * 0.75, max_conc, text = param_string,
                     align = (:center, :top),

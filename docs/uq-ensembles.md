@@ -11,7 +11,7 @@ using CriSTool
 using Distributions
 
 path = joinpath(pkgdir(CriSTool), "examples", "fake-experimental-dataset.xlsx")
-measurements = makerepeatmeasurements(path, "Unseeded_PE", [0.0])
+measurements = load_experiments(path, "Unseeded_PE", 0.0)
 
 nucl_f = nucl_CNT()
 growth_f = growth_energy()

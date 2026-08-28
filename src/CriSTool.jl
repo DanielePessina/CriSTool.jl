@@ -66,21 +66,22 @@ using PrettyTables
 using StaticArrays
 
 ## Export stuff
-export CrystallisationFVSolution, CrystallisationMoMSolution, CrystallisationProblem,
-       CrystallisationMeasurements, CrystallisationRepeatMeasurements,
-       CrystallisationSingleMeasurement
-export AbstractNucleationFunction, AbstractGrowthFunction, AbstractGrowthFunction, nucl_CNT,
+export CrystallisationFVSolution, CrystallisationMoMSolution, CrystallisationProblem
+export SeriesObservable, ScalarObservable, CrystallisationExperiment, AbstractExperiment,
+       initial_concentration
+export AbstractNucleationFunction, AbstractGrowthFunction, nucl_CNT,
        nucl_empirical, nucl_CNTnoS, growth_empirical, growth_BpS, growth_BCF
 export AbstractAggregationFunction, AbstractBreakageFunction, nobreakage,
        breakage_empirical, aggregation_empirical, noaggregation
 export runsimulation, paramaxis
-export AbstractPELossFunction, logMLE, mae, logMLE_d32, mae_d32, logMLE_Indiana
-export makerepeatmeasurements, makesinglemeasurements, bootstrap_repeatmeasurements
+export AbstractPELossFunction, logMLE, mae, loss
+export load_experiments, load_experiments_legacy, load_experiments_legacy_single,
+       bootstrap_repeatmeasurements, repeatmeasurementbalancer, psd_measurementbalancer
 export getmomentsizes
 export AbstractSolver, FiniteVol, MoM, WENO
 export run_abc, AbstractABCSampler, ABCDESampler, ABCDETurnerSampler
 export PE_Routine, ABCDE_Routine, ABCDE_Turner_Routine,
-       Factored, samplespace, generatedesignspace,
+       Factored,
        plot_posterior_pairplot, plot_measurements_vs_ensemble
 export chains_to_matrix, distribution_to_matrix, create_product_prior, prior_to_matrix
 export CRISTOOL_PALETTE

@@ -1,13 +1,13 @@
 """
 Generate a synthetic experimental crystallisation dataset for CriSTool's
-`makerepeatmeasurements(workbook, sheet_name, loading)` loader.
+`load_experiments(workbook, sheet_name, loading)` loader.
 
 Truth model:
     nucl = nucl_CNT(),         params = [Aj=38.0, γ=0.6]
     gr   = growth_empirical(), params = [Ag=1.0, g=3.0]
     agg  = noaggregation(), br = nobreakage(), solver = MoM()
 
-Workbook layout matches `CriSTool.makerepeatmeasurements(filepath, sheet_name, loading)`:
+Workbook layout matches `CriSTool.load_experiments(filepath, sheet_name, loading)`:
 sheet "Unseeded_PE" with columns
     Exp_ID | System | Temperature [°C] | Loading | Time [min]
     | Concentration [mg/mL] | Concentration_var | PS [μm] | PS_var
@@ -179,22 +179,23 @@ end
 @info "Wrote workbook" path = OUT_PATH
 
 # ----------------------------------------------------------------------
-# Verify by loading back through CriSTool.makerepeatmeasurements
+# Verify by loading back through CriSTool.load_experiments
 # ----------------------------------------------------------------------
 
-loaded = CriSTool.makerepeatmeasurements(OUT_PATH, SHEET_NAME, [0.0])
+loaded = CriSTool.load_experiments(OUT_PATH, SHEET_NAME, 0.0)
 
 println("\n========== VERIFICATION ==========")
 println("Number of measurement objects loaded: ", length(loaded))
 for (i, m) in enumerate(loaded)
+    conc = m.observables.concentration
     println("\n-- Experiment $(m.exp_id) --")
     println("  T (K)       = ", m.temperature)
     println("  Loading     = ", m.loading)
-    println("  N timepoints= ", length(m.time))
-    println("  time grid   = ", m.time)
-    println("  conc mean   = ", round.(m.concentrationmean, digits = 4))
-    println("  conc var    = ", round.(m.concentrationvariance, digits = 6))
-    println("  d43         = ", round(m.d43, digits = 4),
-            "  d43var = ", round(m.d43var, digits = 6))
+    println("  N timepoints= ", length(conc.time))
+    println("  time grid   = ", conc.time)
+    println("  conc mean   = ", round.(conc.mean, digits = 4))
+    println("  conc var    = ", round.(conc.variance, digits = 6))
+    println("  d43         = ", round(m.observables.d43.value, digits = 4),
+            "  d43var = ", round(m.observables.d43.variance, digits = 6))
 end
 println("===================================")

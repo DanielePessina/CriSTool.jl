@@ -16,5 +16,8 @@ import StaticArrays
     include("test_chainutilities.jl")
     include("test_uncertainty_quantification.jl")
     include("test_autodiff.jl")
+    include("test_sensitivity.jl")
+    include("test_measurements.jl")
+    include("test_gold_fixture.jl")
     include("test_plotting.jl")
 end

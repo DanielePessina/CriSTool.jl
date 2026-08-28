@@ -16,16 +16,15 @@
                              temp_profile = CriSTool.ConstantTemperature(temperature),
                              loading = loading)
 
-    measurement = CrystallisationRepeatMeasurements(save_idx,
-                                                    solution.concentration,
-                                                    fill(0.01, length(save_idx)),
-                                                    0.0,
-                                                    0.0,
-                                                    solution.d43[end],
-                                                    4.0,
-                                                    temperature,
-                                                    loading,
-                                                    42)
+    measurement = CrystallisationExperiment(;
+                                                    observables = (;
+                                                    concentration = SeriesObservable(; time = save_idx, mean = solution.concentration,
+                                                    variance = fill(0.01, length(save_idx))),
+                                                    d43 = ScalarObservable(; value = solution.d43[end], variance = 4.0),
+                                                    d50q = ScalarObservable(; value = solution.d43[end], variance = 4.0)),
+                                                    temperature = temperature,
+                                                    loading = loading,
+                                                    exp_id = 42)
 
     thesis_default = CriSTool.build_simulation_thesis_table_data([measurement], [solution])
     @test thesis_default.size_label == "d43"
@@ -39,7 +38,7 @@
                                                                        [solution];
                                                                        show_measurement_uncertainty = false)
     @test thesis_deterministic.size_label == "d43"
-    @test thesis_deterministic.rows[1][5] == string(round(measurement.d43, sigdigits = 3))
+    @test thesis_deterministic.rows[1][5] == string(round(measurement.observables.d43.value, sigdigits = 3))
     @test !occursin("±", thesis_deterministic.rows[1][5])
 
     param_symbols = vcat(nucl_CNT().symbols, growth_empirical().symbols)
@@ -69,16 +68,15 @@ end
                              temp_profile = CriSTool.ConstantTemperature(temperature),
                              loading = loading)
 
-    measurement = CrystallisationRepeatMeasurements(save_idx,
-                                                    solution.concentration,
-                                                    fill(0.01, length(save_idx)),
-                                                    0.0,
-                                                    0.0,
-                                                    solution.d43[end],
-                                                    4.0,
-                                                    temperature,
-                                                    loading,
-                                                    42)
+    measurement = CrystallisationExperiment(;
+                                                    observables = (;
+                                                    concentration = SeriesObservable(; time = save_idx, mean = solution.concentration,
+                                                    variance = fill(0.01, length(save_idx))),
+                                                    d43 = ScalarObservable(; value = solution.d43[end], variance = 4.0),
+                                                    d50q = ScalarObservable(; value = solution.d43[end], variance = 4.0)),
+                                                    temperature = temperature,
+                                                    loading = loading,
+                                                    exp_id = 42)
 
     mktempdir() do dir
         fig = CriSTool.plot_measurements_vs_simulation([measurement],

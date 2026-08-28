@@ -1,61 +1,75 @@
 # Measurements and data loading
 
-CriSTool provides helper constructors for experimental measurements,
-usually loaded from Excel files via `makerepeatmeasurements`.
+CriSTool represents each experimental run as a `CrystallisationExperiment`:
+a typed `NamedTuple` of per-observable containers (`SeriesObservable` for
+time series with their own grid, `ScalarObservable` for final-state scalars
+like d43) plus the run conditions (temperature, loading, `exp_id`). There is
+no `Dict{Symbol,Any}` anywhere; adding a new observable (pH, mass, PSD, ...)
+means adding a field to the `NamedTuple`, not a new container type.
 
-## Synthetic dataset (shipped with the package)
-
-A 5-experiment synthetic workbook lives at
-`CriSTool/examples/fake-experimental-dataset.xlsx` (sheet `Unseeded_PE`).
-It has irregular sampling and heteroscedastic 3 % / 8 % noise on
-concentration / particle size, generated from the same forward model
-used in Tutorial 5. Tutorials 2 and 5 load it directly:
+## Loading from the standard sheet format
 
 ```julia
 using CriSTool
 
 path = joinpath(@__DIR__, "fake-experimental-dataset.xlsx")
-measurements = makerepeatmeasurements(path, "Unseeded_PE", [0.0])
+experiments = load_experiments(path, "Unseeded_PE", 0.0)
 ```
 
-The third argument is the loading filter — pass either a scalar (`0.0`)
-or a vector of loadings (`[0.0]`, `[0.0, 0.5]`) to combine multiple
-loading levels into one `Vector{<:CrystallisationRepeatMeasurements}`.
+`load_experiments(path, sheet_name, loading)` expects a sheet where each
+experiment is grouped by `Exp_ID` (Python-importer long format) with columns
+such as `Time`, `Concentration`, `Concentration_var`, `Temperature`,
+`Loading`, and optional `PS`/`PS_var`. The third argument is the loading
+filter — pass a scalar (`0.0`) or a vector (`[0.0, 0.5]`) to combine multiple
+loading levels into one `Vector{CrystallisationExperiment}`.
 
-## Common pattern (with a real workbook)
+The particle size (last timepoint) is stored twice as `d43` and `d50q`
+scalar observables: the MoM-based losses compare against `d43`, the
+discretised-solver losses against `d50q` (matching the legacy behaviour).
+
+## Balancing repeated measurements and PSD variance
 
 ```julia
-using CriSTool
-
-measurements = makerepeatmeasurements(
-    "experimental_dataset.xlsx",
-    "Unseeded_PE",
-    0.0,
-    (nothing, 22),
-)
-
-# Balance repeated measurements and PSD variance
-measurements = repeatmeasurementbalancer(measurements, 3)
-measurements = psd_measurementbalancer(measurements, 8)
+experiments = repeatmeasurementbalancer(experiments, 3)   # concentration floor
+experiments = psd_measurementbalancer(experiments, 8)     # particle-size floor
 ```
 
-This form expects a sheet where each experiment is grouped by `Exp_ID`
-with columns such as `Time`, `Concentration`, `Temperature`, and `Loading`.
+## Accessing observables
+
+```julia
+expt = experiments[1]
+expt.observables.concentration.time    # measurement grid (minutes)
+expt.observables.concentration.mean    # mean concentration per timepoint
+expt.observables.concentration.variance
+expt.observables.d43.value             # final d43 scalar (µm)
+expt.observables.d43.variance
+initial_concentration(expt)            # first concentration timepoint
+expt.temperature                       # Kelvin
+expt.loading
+expt.exp_id
+```
 
 ## Alternative loaders
 
-If your workbook is organized by multiple sheets named `c i`, `q i`, `d i`,
-use the simpler overload:
+- `load_experiments_legacy(path, n_sheets)` / `(path, sheet_ids)`: thin
+  importers for legacy workbooks organized as `c i`/`q i`/`d i` sheets.
+- `load_experiments_legacy_single(path, n_sheets)`: same format, single
+  (unreplicated) traces; observables carry `variance = nothing`.
+
+## Resampling
+
+`bootstrap_repeatmeasurements(experiments, n_bootstrap, include_ps; seed)`
+samples pooled non-initial tuples with replacement and rebuilds
+`CrystallisationExperiment`s (used by the UQ workflows).
+
+## Loss evaluation
+
+All loss functions take a `CrystallisationProblem` (kinetics + solver), the
+parameter vector, and the experiments:
 
 ```julia
-measurements = makerepeatmeasurements("my_data.xlsx", 3)
+problem = CrystallisationProblem(; kinetics_nucleationfunction = nucl_CNT(),
+                                 kinetics_growthfunction = growth_empirical(),
+                                 solver = MoM())
+L = loss(logMLE(), problem, [38.0, 0.6, 1.0, 3.0], experiments)
 ```
-
-## Measurement types
-
-- `CrystallisationRepeatMeasurements`: mean and variance per timepoint,
-  used for parameter estimation and ABCDE.
-- `CrystallisationSingleMeasurements`: single-trace data.
-
-Most parameter estimation functions expect a
-`Vector{<:AbstractMeasurements}`.

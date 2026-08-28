@@ -273,7 +273,7 @@ end
 
 Create plots comparing ensemble simulations from chain samples against measurements.
 """
-function ChainMeasurementPlots(chain, measurements::Vector{<:AbstractMeasurements},
+function ChainMeasurementPlots(chain, measurements::Vector{<:AbstractExperiment},
                                params::Vector{Float64},
                                lossfunction::AbstractPELossFunction,
                                nucleationfunction::AbstractNucleationFunction,
@@ -304,7 +304,7 @@ function ChainMeasurementPlots(chain, measurements::Vector{<:AbstractMeasurement
                                                  gr = growthfunction,
                                                  agg = aggregationfunction,
                                                  br = breakagefunction,
-                                                 initial_concentration = measurements[m].concentrationmean[1],
+                                                 initial_concentration = initial_concentration(measurements[m]),
                                                  solver = solver,
                                                  save_idx = ensembleresults[m].time,
                                                  temp_profile = ConstantTemperature(measurements[m].temperature)))

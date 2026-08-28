@@ -13,7 +13,7 @@ using OptimizationOptimJL
 using Optim
 
 path = joinpath(pkgdir(CriSTool), "examples", "fake-experimental-dataset.xlsx")
-measurements = makerepeatmeasurements(path, "Unseeded_PE", [0.0])
+measurements = load_experiments(path, "Unseeded_PE", 0.0)
 
 nucl_f = nucl_CNT()
 growth_f = growth_energy()
@@ -43,7 +43,7 @@ res_lbfgs = PE_Routine_Optimisation(lossfn, measurements, PE_lb, PE_ub,
 ## Notes
 
 - `PE_Routine_Optimisation` internally builds an
-  `OptimizationFunction` around `parameterestimation_lossfunction`.
+  `OptimizationFunction` around `loss(lossfn, problem, x, experiments)`.
 - Use the same bounds and parameter ordering as in `PE_Routine`.
 - For large datasets, set `verbosity = 0` and consider `HPC = true` to
   reduce logging.

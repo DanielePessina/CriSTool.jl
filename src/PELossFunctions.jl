@@ -15,7 +15,7 @@ Estimate kinetic parameters by minimising `lossfunction` using a
 population-based metaheuristic search.
 
 # Arguments
-- `setofmeasurements::Vector{<:AbstractMeasurements}`: experimental data
+- `setofmeasurements::Vector{<:AbstractExperiment}`: experimental data
   sets used to evaluate the loss.
 - `lb`, `ub`: lower and upper bounds for the parameter vector. Both
   vectors must have length `nν + n_g + n_a + n_b` corresponding to the
@@ -33,7 +33,7 @@ The optimisation result from Metaheuristics.jl containing the best-fit
 parameters and loss value.
 """
 function PE_Routine(lossfunction::AbstractPELossFunction,
-                    setofmeasurements::Vector{<:AbstractMeasurements},
+                    setofmeasurements::Vector{<:AbstractExperiment},
                     lb::AbstractVector{Float64}, ub::AbstractVector{Float64},
                     nucleationfunction::AbstractNucleationFunction,
                     growthfunction::AbstractGrowthFunction,
@@ -65,9 +65,11 @@ function PE_Routine(lossfunction::AbstractPELossFunction,
     print_start_panel("Parameter Estimation (Metaheuristics)", start_content;
                       verbosity = verbosity)
 
-    results = _MHoptimise(MHAlgorithm, lossfunction, setofmeasurements, parameter_bounds,
-                          nucleationfunction, growthfunction, aggregationfunction,
-                          breakagefunction, solver, parameter_bounds, nparticles, MHOptions)
+    loss_problem = _build_loss_problem(nucleationfunction, growthfunction,
+                                       aggregationfunction, breakagefunction, solver)
+
+    results = _MHoptimise(MHAlgorithm, lossfunction, loss_problem, setofmeasurements,
+                          parameter_bounds, nparticles, MHOptions)
     #
 
     now_str::String = Dates.format(now(), "yy-m-d HH-MM")
@@ -112,7 +114,7 @@ Estimate kinetic parameters using gradient-based optimization.
 
 # Arguments
 - `lossfunction::AbstractPELossFunction`: Loss function to minimize
-- `setofmeasurements::Vector{<:AbstractMeasurements}`: Experimental data sets
+- `setofmeasurements::Vector{<:AbstractExperiment}`: Experimental data sets
 - `lb`, `ub`: Lower and upper bounds for parameter vector
 - `nucleationfunction`, `growthfunction`, `aggregationfunction`, `breakagefunction`: Kinetic models
 - `searchalgo`: Optimization algorithm from Optimization.jl
@@ -126,7 +128,7 @@ Estimate kinetic parameters using gradient-based optimization.
 - OptimizationResult containing optimal parameters and objective value
 """
 function PE_Routine_Optimisation(lossfunction::AbstractPELossFunction,
-                                 setofmeasurements::Vector{<:AbstractMeasurements},
+                                 setofmeasurements::Vector{<:AbstractExperiment},
                                  lb::AbstractVector{Float64}, ub::AbstractVector{Float64},
                                  nucleationfunction::AbstractNucleationFunction,
                                  growthfunction::AbstractGrowthFunction,
@@ -152,25 +154,21 @@ function PE_Routine_Optimisation(lossfunction::AbstractPELossFunction,
     print_start_panel("Parameter Estimation (Optimisation)", start_content;
                       verbosity = verbosity)
 
-    x0 = isnothing(x0) ? [lb[i] + (ub[i] - lb[i]) * rand() for i in eachindex(lb)] : x0
+x0 = isnothing(x0) ? [lb[i] + (ub[i] - lb[i]) * rand() for i in eachindex(lb)] : x0
+
+    loss_problem = _build_loss_problem(nucleationfunction, growthfunction,
+                                       aggregationfunction, breakagefunction, solver)
 
     searchf = OptimizationBase.OptimizationFunction((x,
-                                                     (lf, measurements, nucleationf,
-                                                      growthf, aggf, brf, solv)) -> CriSTool.parameterestimation_lossfunction(lf,
-                                                                                                                              measurements,
-                                                                                                                              x,
-                                                                                                                              nucleationf,
-                                                                                                                              growthf,
-                                                                                                                              aggf,
-                                                                                                                              brf,
-                                                                                                                              solv),
+                                                     (lf, problem, experiments)) -> loss(lf,
+                                                                                         problem,
+                                                                                         x,
+                                                                                         experiments),
                                                     adtype)
 
     optprob = OptimizationBase.OptimizationProblem(searchf, x0,
-                                                   (lossfunction, setofmeasurements,
-                                                    nucleationfunction, growthfunction,
-                                                    aggregationfunction, breakagefunction,
-                                                    solver), lb = lb, ub = ub)
+                                                   (lossfunction, loss_problem,
+                                                    setofmeasurements), lb = lb, ub = ub)
 
     results = OptimizationBase.solve(optprob, searchalgo;
                                      progress = (verbosity > 0 && !HPC), maxiters = 2e6,
@@ -232,97 +230,80 @@ function MH_minimizer(results)
 end
 
 """
-    batchLF_procSO(lossfunction, datasets, parameter_mat, nucleationfunction,
-                   growthfunction, aggregationfunction, breakagefunction; solver) -> Vector
+    _build_loss_problem(nucleationfunction, growthfunction, aggregationfunction,
+                        breakagefunction, solver) -> CrystallisationProblem
 
-Evaluate single-objective loss function for a batch of parameter sets in parallel.
+Build the `CrystallisationProblem` used by `loss` from kinetic models and a
+solver. The problem carries the kinetics and solver; per-experiment conditions
+(temperature, loading, initial concentration) are applied inside `loss`.
+"""
+function _build_loss_problem(nucleationfunction::AbstractNucleationFunction,
+                             growthfunction::AbstractGrowthFunction,
+                             aggregationfunction::AbstractAggregationFunction,
+                             breakagefunction::AbstractBreakageFunction,
+                             solver::AbstractSolver)
+    return CrystallisationProblem(;
+        kinetics_nucleationfunction = nucleationfunction,
+        kinetics_growthfunction = growthfunction,
+        kinetics_aggregationfunction = aggregationfunction,
+        kinetics_breakagefunction = breakagefunction,
+        solver = solver)
+end
 
-# Arguments
-- `lossfunction::AbstractPELossFunction`: Loss function to evaluate
-- `datasets::Vector{<:AbstractMeasurements}`: Experimental data
-- `parameter_mat::AbstractArray{Float64}`: Matrix of parameter sets (rows are samples)
-- `nucleationfunction`, `growthfunction`, `aggregationfunction`, `breakagefunction`: Kinetic models
-- `solver::AbstractSolver`: Numerical solver
+"""
+    batchLF_procSO(lossfunction, problem, parameter_mat, experiments) -> Vector
 
-# Returns
-- Vector of loss values for each parameter set
+Evaluate the single-objective loss function for a batch of parameter sets in
+parallel (rows of `parameter_mat` are parameter samples).
 """
 function batchLF_procSO(lossfunction::AbstractPELossFunction,
-                        datasets::Vector{<:AbstractMeasurements},
+                        problem::CrystallisationProblem,
                         parameter_mat::AbstractArray{Float64},
-                        nucleationfunction::AbstractNucleationFunction,
-                        growthfunction::AbstractGrowthFunction,
-                        aggregationfunction::AbstractAggregationFunction,
-                        breakagefunction::AbstractBreakageFunction;
-                        solver::AbstractSolver)
-
-    # parameter_mat_tp = transpose(parameter_mat)
+                        experiments::Vector{<:AbstractExperiment})
 
     fx = zeros(Float64, size(parameter_mat, 1))
 
     @floop for (i, θ) in enumerate(eachrow(parameter_mat))
-        fx[i] = parameterestimation_lossfunction(lossfunction, datasets, θ,
-                                                 nucleationfunction, growthfunction,
-                                                 aggregationfunction, breakagefunction,
-                                                 solver)
-
+        fx[i] = loss(lossfunction, problem, θ, experiments)
     end
 
     return fx
 
 end
+
 """
-    batchLF_procMO(lossfunction, datasets, parameter_mat, nucleationfunction,
-                   growthfunction, aggregationfunction, breakagefunction; solver) -> Matrix
+    batchLF_procMO(lossfunction, problem, parameter_mat, experiments) -> Matrix
 
-Evaluate multi-objective loss function for a batch of parameter sets in parallel.
-
-# Arguments
-- `lossfunction::AbstractPELossFunction`: Loss function to evaluate
-- `datasets::Vector{<:AbstractMeasurements}`: Experimental data
-- `parameter_mat::AbstractArray{Float64}`: Matrix of parameter sets (rows are samples)
-- `nucleationfunction`, `growthfunction`, `aggregationfunction`, `breakagefunction`: Kinetic models
-- `solver::AbstractSolver`: Numerical solver
-
-# Returns
-- Matrix of loss values (rows are samples, columns are objectives)
+Evaluate the multi-objective loss function for a batch of parameter sets in
+parallel (rows of `parameter_mat` are parameter samples, columns are the
+concentration and particle-size objectives).
 """
 function batchLF_procMO(lossfunction::AbstractPELossFunction,
-                        datasets::Vector{<:AbstractMeasurements},
+                        problem::CrystallisationProblem,
                         parameter_mat::AbstractArray{Float64},
-                        nucleationfunction::AbstractNucleationFunction,
-                        growthfunction::AbstractGrowthFunction,
-                        aggregationfunction::AbstractAggregationFunction,
-                        breakagefunction::AbstractBreakageFunction;
-                        solver::AbstractSolver)
+                        experiments::Vector{<:AbstractExperiment})
 
     Nt = size(parameter_mat, 1)
     fx = zeros(Nt, 2)
 
     @floop for i in 1:Nt
-        fx[i, :] = parameterestimation_lossfunction(lossfunction, datasets,
-                                                    parameter_mat[i, :], nucleationfunction,
-                                                    growthfunction, aggregationfunction,
-                                                    breakagefunction, solver)
-
+        fx[i, :] = _loss_objectives(lossfunction, problem, parameter_mat[i, :], experiments)
     end
 
     return fx
 
 end
+
 """
     _MHoptimise(algo::Algorithm{DE}, ...) -> OptimizationResult
 
 Run Differential Evolution optimization for parameter estimation.
 """
 function _MHoptimise(algo::Metaheuristics.Algorithm{Metaheuristics.DE}, lossfunction,
-                     setofmeasurements, x, nucleationfunction, growthfunction,
-                     aggregationfunction, breakagefunction, solver, parameter_bounds,
+                     problem::CrystallisationProblem, experiments, parameter_bounds,
                      nparticles, options)
-    return optimize((x) -> batchLF_procSO(lossfunction, setofmeasurements, x,
-                                          nucleationfunction, growthfunction,
-                                          aggregationfunction, breakagefunction,
-                                          solver = solver), parameter_bounds,
+    return optimize((x) -> batchLF_procSO(lossfunction, problem, x, experiments),
+                    parameter_bounds,
                     DE(;
                        N = nparticles,
                        strategy = :best1,
@@ -335,13 +316,10 @@ end
 Run NSGA-II multi-objective optimization for parameter estimation.
 """
 function _MHoptimise(algo::Metaheuristics.Algorithm{Metaheuristics.NSGA2}, lossfunction,
-                     setofmeasurements, x, nucleationfunction, growthfunction,
-                     aggregationfunction, breakagefunction, solver, parameter_bounds,
+                     problem::CrystallisationProblem, experiments, parameter_bounds,
                      nparticles, options)
-    return optimize((x) -> batchLF_procMO(lossfunction, setofmeasurements, x,
-                                          nucleationfunction, growthfunction,
-                                          aggregationfunction, breakagefunction,
-                                          solver = solver), parameter_bounds,
+    return optimize((x) -> batchLF_procMO(lossfunction, problem, x, experiments),
+                    parameter_bounds,
                     NSGA2(;
                           N = nparticles,
                           options = options))
@@ -353,13 +331,10 @@ end
 Run Simulated Annealing optimization for parameter estimation.
 """
 function _MHoptimise(algo::Metaheuristics.Algorithm{Metaheuristics.SA}, lossfunction,
-                     setofmeasurements, x, nucleationfunction, growthfunction,
-                     aggregationfunction, breakagefunction, solver, parameter_bounds,
+                     problem::CrystallisationProblem, experiments, parameter_bounds,
                      nparticles, options)
-    return optimize((x) -> batchLF_procSO(lossfunction, setofmeasurements, x,
-                                          nucleationfunction, growthfunction,
-                                          aggregationfunction, breakagefunction,
-                                          solver = solver), parameter_bounds,
+    return optimize((x) -> batchLF_procSO(lossfunction, problem, x, experiments),
+                    parameter_bounds,
                     SA(;
                        N = nparticles,
                        options = options))
@@ -370,204 +345,120 @@ end
 
 Run Particle Swarm Optimization for parameter estimation.
 """
-function _MHoptimise(algo::Metaheuristics.Algorithm{PSO}, lossfunction, setofmeasurements,
-                     x, nucleationfunction, growthfunction, aggregationfunction,
-                     breakagefunction, solver, parameter_bounds, nparticles, options)
-    return optimize((x) -> batchLF_procSO(lossfunction, setofmeasurements, x,
-                                          nucleationfunction, growthfunction,
-                                          aggregationfunction, breakagefunction,
-                                          solver = solver), parameter_bounds,
+function _MHoptimise(algo::Metaheuristics.Algorithm{Metaheuristics.PSO}, lossfunction,
+                     problem::CrystallisationProblem, experiments, parameter_bounds,
+                     nparticles, options)
+    return optimize((x) -> batchLF_procSO(lossfunction, problem, x, experiments),
+                    parameter_bounds,
                     PSO(;
                         N = nparticles,
                         options = options))
 end
 
-
-
-
-
-
 ##### Loss Functions
 
 """
-    parameterestimation_lossfunction(lf::logMLE, datasets, parameters,
-                                     nucleationfunction, growthfunction,
-                                     aggregationfunction, breakagefunction,
-                                     solver::AbstractDiscretisedSolver) -> Real
+    _solve_experiment(problem, params, expt) -> AbstractSolution
 
-Compute log Maximum Likelihood Estimation loss for discretised solvers.
-
-Evaluates the negative log-likelihood over all datasets, combining concentration
-trajectory and final particle size (d50q) errors with Gaussian likelihood.
-
-# Arguments
-- `lf::logMLE`: Loss function with weighting factors
-- `datasets::Vector{CrystallisationRepeatMeasurements}`: Experimental data
-- `parameters::AbstractArray{<:Real}`: Parameter vector to evaluate
-- `nucleationfunction`, `growthfunction`, `aggregationfunction`, `breakagefunction`: Kinetic models
-- `solver::AbstractDiscretisedSolver`: Finite volume or WENO solver
-
-# Returns
-- Total weighted log-likelihood loss value
+Simulate one experiment with `params` under the experiment's conditions
+(initial concentration from the `concentration` series observable, constant
+temperature profile, loading), saving at the measurement time grid.
 """
-function parameterestimation_lossfunction(lf::logMLE,
-                                          datasets::Vector{CrystallisationRepeatMeasurements},
-                                          parameters::TArr,
-                                          nucleationfunction::AbstractNucleationFunction,
-                                          growthfunction::AbstractGrowthFunction,
-                                          aggregationfunction::AbstractAggregationFunction,
-                                          breakagefunction::AbstractBreakageFunction,
-                                          solver::AbstractDiscretisedSolver) where {TArr <:
-                                                                                    AbstractArray{<:Real}}
-    loss_values = map(m -> begin
-                          problem,
-                          solution = runsimulation(parameters,
-                                                   nucl = nucleationfunction,
-                                                   gr = growthfunction,
-                                                   agg = aggregationfunction,
-                                                   br = breakagefunction,
-                                                   initial_concentration = datasets[m].concentrationmean[1],
-                                                   save_idx = datasets[m].time,
-                                                   solver = solver,
-                                                   loading = datasets[m].loading,
-                                                   temp_profile = ConstantTemperature(datasets[m].temperature))
-
-                          loss1 = sum(log.(2π *
-                                           (datasets[m].concentrationvariance[2:end] .+
-                                            1e-6)) .+
-                                      ((solution.concentration[2:end] .-
-                                        datasets[m].concentrationmean[2:end]) .^ 2) ./
-                                      (datasets[m].concentrationvariance[2:end] .+ 1e-6))
-                          loss2 = (log(2π * (datasets[m].quantilevariance .+ 1e-6)) +
-                                   ((solution.d50q[end] .- datasets[m].quantilemean) .^ 2) ./
-                                   (datasets[m].quantilevariance .+ 1e-6))
-                          loss3 = sum(lf.weighting[1] * 0.5 * loss1 +
-                                      lf.weighting[2] * 0.5 * loss2)
-
-
-                          return (loss1, loss2, loss3)
-                      end, eachindex(datasets))
-
-    total_loss = sum(map(x -> x[3], loss_values))
-
-    return total_loss
-end
-"""
-    parameterestimation_lossfunction(lf::logMLE, datasets, parameters,
-                                     nucleationfunction, growthfunction,
-                                     aggregationfunction, breakagefunction,
-                                     solver::MoM) -> Real
-
-Compute log Maximum Likelihood Estimation loss for Method of Moments solver.
-
-Uses d43 instead of d50q for particle size comparison since MoM doesn't compute quantiles.
-
-# Arguments
-- `lf::logMLE`: Loss function with weighting factors
-- `datasets::Vector{CrystallisationRepeatMeasurements}`: Experimental data
-- `parameters::AbstractVector{<:Real}`: Parameter vector to evaluate
-- `nucleationfunction`, `growthfunction`, `aggregationfunction`, `breakagefunction`: Kinetic models
-- `solver::MoM`: Method of Moments solver
-
-# Returns
-- Total weighted log-likelihood loss value
-"""
-function parameterestimation_lossfunction(lf::logMLE,
-                                          datasets::Vector{CrystallisationRepeatMeasurements},
-                                          parameters::TArr,
-                                          nucleationfunction::AbstractNucleationFunction,
-                                          growthfunction::AbstractGrowthFunction,
-                                          aggregationfunction::AbstractAggregationFunction,
-                                          breakagefunction::AbstractBreakageFunction,
-                                          solver::MoM) where {TArr <:
-                                                              AbstractVector{<:Real}}
-
-    loss_values = map(m -> begin
-                          problem,
-                          solution = runsimulation(parameters,
-                                                   nucl = nucleationfunction,
-                                                   gr = growthfunction,
-                                                   agg = aggregationfunction,
-                                                   br = breakagefunction,
-                                                   initial_concentration = datasets[m].concentrationmean[1],
-                                                   save_idx = datasets[m].time,
-                                                   solver = solver,
-                                                   loading = datasets[m].loading,
-                                                   temp_profile = ConstantTemperature(datasets[m].temperature))
-
-                          loss1 = sum(log.(2π *
-                                           (datasets[m].concentrationvariance[2:end] .+
-                                            1e-6)) .+
-                                      ((solution.concentration[2:end] .-
-                                        datasets[m].concentrationmean[2:end]) .^ 2) ./
-                                      (datasets[m].concentrationvariance[2:end] .+ 1e-6))
-                          loss2 = (log(2π * (datasets[m].d43var .+ 1e-6)) +
-                                   ((solution.d43[end] .- datasets[m].d43) .^ 2) ./
-                                   (datasets[m].d43var .+ 1e-6))
-                          loss3 = sum(lf.weighting[1] * 0.5 * loss1 +
-                                      lf.weighting[2] * 0.5 * loss2)
-
-                          return (loss1, loss2, loss3)
-                      end, eachindex(datasets))
-
-    total_loss = sum(map(x -> x[3], loss_values))
-
-    return total_loss
+function _solve_experiment(problem::CrystallisationProblem, params,
+                           expt::CrystallisationExperiment)
+    obs = expt.observables
+    p, solution = runsimulation(params;
+                                nucl = problem.kinetics_nucleationfunction,
+                                gr = problem.kinetics_growthfunction,
+                                agg = problem.kinetics_aggregationfunction,
+                                br = problem.kinetics_breakagefunction,
+                                initial_concentration = initial_concentration(expt),
+                                save_idx = obs.concentration.time,
+                                solver = problem.solver,
+                                loading = expt.loading,
+                                temp_profile = ConstantTemperature(expt.temperature))
+    return solution
 end
 
 """
-    parameterestimation_lossfunction(lf::mae, datasets, parameters,
-                                     nucleationfunction, growthfunction,
-                                     aggregationfunction, breakagefunction,
-                                     solver::AbstractDiscretisedSolver) -> Real
+    _size_pair(problem, observables, solution) -> (ScalarObservable, AbstractVector)
 
-Compute Mean Absolute Error loss for discretised solvers.
-
-# Arguments
-- `lf::mae`: Loss function with weighting factors
-- `datasets::Vector{<:AbstractMeasurements}`: Experimental data
-- `parameters::AbstractVector{<:Real}`: Parameter vector to evaluate
-- `nucleationfunction`, `growthfunction`, `aggregationfunction`, `breakagefunction`: Kinetic models
-- `solver::AbstractDiscretisedSolver`: Finite volume or WENO solver
-
-# Returns
-- Weighted sum of concentration MAE and particle size MAE
+Return the particle-size observable and simulated size trajectory used by
+losses: `d43` for the MoM solver, `d50q` for discretised solvers (matching the
+legacy loss behaviour).
 """
-function parameterestimation_lossfunction(lf::mae, datasets::Vector{<:AbstractMeasurements},
-                                          parameters::AbstractVector{TPara},
-                                          nucleationfunction::AbstractNucleationFunction,
-                                          growthfunction::AbstractGrowthFunction,
-                                          aggregationfunction::AbstractAggregationFunction,
-                                          breakagefunction::AbstractBreakageFunction,
-                                          solver::AbstractDiscretisedSolver) where {TPara <:
-                                                                                    Real}
+_size_pair(problem::CrystallisationProblem, observables, solution) =
+    problem.solver isa MoM ? (observables.d43, solution.d43) :
+    (observables.d50q, solution.d50q)
 
-    error_values = map(datasets) do dataset
-        problem,
-        solution = runsimulation(parameters,
-                                 nucl = nucleationfunction,
-                                 gr = growthfunction,
-                                 agg = aggregationfunction,
-                                 br = breakagefunction,
-                                 initial_concentration = dataset.concentrationmean[1],
-                                 save_idx = dataset.time,
-                                 solver = solver,
-                                 loading = dataset.loading,
-                                 temp_profile = ConstantTemperature(dataset.temperature))
+"""
+    _loss_objectives(lf::AbstractPELossFunction, problem, params, experiments) -> (Float64, Float64)
+
+Per-experiment (concentration, particle-size) objective contributions, summed
+over experiments, with the legacy weighting semantics
+(`weighting[i] * 0.5 * objective_i`).
+"""
+function _loss_objectives(lf::AbstractPELossFunction, problem::CrystallisationProblem,
+                          params, experiments::Vector{<:AbstractExperiment})
+    conc_contrib = 0.0
+    size_contrib = 0.0
+    for expt in experiments
+        obs = expt.observables
+        conc = obs.concentration
+        solution = _solve_experiment(problem, params, expt)
+        size_obs, size_sim = _size_pair(problem, obs, solution)
+
+        conc_contrib += sum(log.(2π .* (conc.variance[2:end] .+ 1e-6)) .+
+                            ((solution.concentration[2:end] .- conc.mean[2:end]) .^ 2) ./
+                            (conc.variance[2:end] .+ 1e-6))
+        size_contrib += log(2π * (size_obs.variance + 1e-6)) +
+                        ((size_sim[end] - size_obs.value)^2) / (size_obs.variance + 1e-6)
+    end
+    return (lf.weighting[1] * 0.5 * conc_contrib, lf.weighting[2] * 0.5 * size_contrib)
+end
+
+"""
+    loss(lf::logMLE, problem::CrystallisationProblem, params,
+         experiments::Vector{CrystallisationExperiment}) -> Real
+
+Log Maximum Likelihood Estimation loss over all experiments.
+
+Evaluates the negative log-likelihood combining concentration trajectory
+(measured times, first timepoint excluded) and final particle size
+(`d43` for MoM, `d50q` for discretised solvers), with a `1e-6` variance floor,
+matching the legacy `parameterestimation_lossfunction` semantics.
+"""
+function loss(lf::logMLE, problem::CrystallisationProblem, params,
+              experiments::Vector{<:AbstractExperiment})
+    return sum(_loss_objectives(lf, problem, params, experiments))
+end
+
+"""
+    loss(lf::mae, problem::CrystallisationProblem, params,
+         experiments::Vector{CrystallisationExperiment}) -> Real
+
+Mean Absolute Error loss over all experiments: mean absolute concentration
+error over all timepoints plus mean absolute final particle-size error
+(`d43` for MoM, `d50q` for discretised solvers). Failed simulations
+contribute a `1e6` penalty per timepoint.
+"""
+function loss(lf::mae, problem::CrystallisationProblem, params,
+              experiments::Vector{<:AbstractExperiment})
+
+    error_values = map(experiments) do expt
+        obs = expt.observables
+        conc = obs.concentration
+        solution = _solve_experiment(problem, params, expt)
+        size_obs, size_sim = _size_pair(problem, obs, solution)
 
         if solution.success
-            conc_errors = abs.(solution.concentration .- dataset.concentrationmean)
-            q_errors = [abs(solution.d50q[end] - dataset.quantilemean)]
-            (conc_errors, q_errors)
+            (abs.(solution.concentration .- conc.mean),
+             [abs(size_sim[end] - size_obs.value)])
         else
-            # Penalty values for failed simulations
-            penalty_conc = fill(1e6, length(dataset.concentrationmean))
-            penalty_q = [1e6]
-            (penalty_conc, penalty_q)
+            (fill(1e6, length(conc.mean)), [1e6])
         end
     end
 
-    # Concatenate all errors into single vectors
     all_conc_errors = vcat(map(x -> x[1], error_values)...)
     all_q_errors = vcat(map(x -> x[2], error_values)...)
 
@@ -575,255 +466,4 @@ function parameterestimation_lossfunction(lf::mae, datasets::Vector{<:AbstractMe
     total_q_mae = mean(all_q_errors)
 
     return lf.weighting[1] * total_conc_mae + lf.weighting[2] * total_q_mae
-end
-
-"""
-    parameterestimation_lossfunction(lf::mae, datasets, parameters,
-                                     nucleationfunction, growthfunction,
-                                     aggregationfunction, breakagefunction,
-                                     solver::MoM) -> Real
-
-Compute Mean Absolute Error loss for Method of Moments solver.
-
-Uses d43 instead of d50q for particle size comparison.
-
-# Arguments
-- `lf::mae`: Loss function with weighting factors
-- `datasets::Vector{<:AbstractMeasurements}`: Experimental data
-- `parameters::AbstractVector{<:Real}`: Parameter vector to evaluate
-- `nucleationfunction`, `growthfunction`, `aggregationfunction`, `breakagefunction`: Kinetic models
-- `solver::MoM`: Method of Moments solver
-
-# Returns
-- Weighted sum of concentration MAE and particle size MAE
-"""
-function parameterestimation_lossfunction(lf::mae, datasets::Vector{<:AbstractMeasurements},
-                                          parameters::AbstractVector{TPara},
-                                          nucleationfunction::AbstractNucleationFunction,
-                                          growthfunction::AbstractGrowthFunction,
-                                          aggregationfunction::AbstractAggregationFunction,
-                                          breakagefunction::AbstractBreakageFunction,
-                                          solver::MoM) where {TPara <: Real}
-
-    error_values = map(datasets) do dataset
-        problem,
-        solution = runsimulation(parameters,
-                                 nucl = nucleationfunction,
-                                 gr = growthfunction,
-                                 agg = aggregationfunction,
-                                 br = breakagefunction,
-                                 initial_concentration = dataset.concentrationmean[1],
-                                 save_idx = dataset.time,
-                                 solver = solver,
-                                 loading = dataset.loading,
-                                 temp_profile = ConstantTemperature(dataset.temperature))
-
-        if solution.success
-            conc_errors = abs.(solution.concentration .- dataset.concentrationmean)
-            q_errors = [abs(solution.d43[end] - dataset.d43)]
-            (conc_errors, q_errors)
-        else
-            # Penalty values for failed simulations
-            penalty_conc = fill(1e6, length(dataset.concentrationmean))
-            penalty_q = [1e6]
-            (penalty_conc, penalty_q)
-        end
-    end
-
-    # Concatenate all errors into single vectors
-    all_conc_errors = vcat(map(x -> x[1], error_values)...)
-    all_q_errors = vcat(map(x -> x[2], error_values)...)
-
-    total_conc_mae = mean(all_conc_errors)
-    total_q_mae = mean(all_q_errors)
-
-    return lf.weighting[1] * total_conc_mae + lf.weighting[2] * total_q_mae
-end
-
-
-"""
-    parameterestimation_lossfunction(lf::logMLE_Indiana, datasets, parameters,
-                                     nucleationfunction, growthfunction,
-                                     aggregationfunction, breakagefunction,
-                                     solver::AbstractDiscretisedSolver) -> Real
-
-Compute log MLE loss with Indiana-style relative variance weighting for particle size.
-
-Uses a percentage-based variance for particle size instead of measured variance.
-
-# Arguments
-- `lf::logMLE_Indiana`: Loss function with percentage-based size weighting
-- `datasets::Vector{CrystallisationRepeatMeasurements}`: Experimental data
-- `parameters::AbstractArray{<:Real}`: Parameter vector to evaluate
-- `nucleationfunction`, `growthfunction`, `aggregationfunction`, `breakagefunction`: Kinetic models
-- `solver::AbstractDiscretisedSolver`: Finite volume or WENO solver
-
-# Returns
-- Total weighted log-likelihood loss value
-"""
-function parameterestimation_lossfunction(lf::logMLE_Indiana,
-                                          datasets::Vector{CrystallisationRepeatMeasurements},
-                                          parameters::TArr,
-                                          nucleationfunction::AbstractNucleationFunction,
-                                          growthfunction::AbstractGrowthFunction,
-                                          aggregationfunction::AbstractAggregationFunction,
-                                          breakagefunction::AbstractBreakageFunction,
-                                          solver::AbstractDiscretisedSolver) where {TArr <:
-                                                                                    AbstractArray{<:Real}}
-    loss_values = map(m -> begin
-                          problem,
-                          solution = runsimulation(parameters,
-                                                   nucl = nucleationfunction,
-                                                   gr = growthfunction,
-                                                   agg = aggregationfunction,
-                                                   br = breakagefunction,
-                                                   initial_concentration = datasets[m].concentrationmean[1],
-                                                   save_idx = datasets[m].time,
-                                                   solver = solver,
-                                                   loading = datasets[m].loading,
-                                                   temp_profile = ConstantTemperature(datasets[m].temperature))
-
-                          loss1 = sum(log.(2π *
-                                           (datasets[m].concentrationvariance[2:end] .+
-                                            1e-6)) .+
-                                      ((solution.concentration[2:end] .-
-                                        datasets[m].concentrationmean[2:end]) .^ 2) ./
-                                      (datasets[m].concentrationvariance[2:end] .+ 1e-6))
-                          loss2 = (log(2π *
-                                       ((datasets[m].quantilemean * lf.weighting[2] * 1e-2)^2 .+
-                                        1e-6)) +
-                                   ((solution.d50q[end] .- datasets[m].quantilemean) .^ 2) ./
-                                   ((datasets[m].quantilemean * lf.weighting[2] * 1e-2)^2 .+
-                                    1e-6))
-                          loss3 = sum(lf.weighting[1] * 0.5 * loss1 + 0.5 * loss2)
-
-                          return (loss1, loss2, loss3)
-                      end, eachindex(datasets))
-
-    total_loss = sum(map(x -> x[3], loss_values))
-
-    return total_loss
-end
-"""
-    parameterestimation_lossfunction(lf::logMLE_Indiana, datasets, parameters,
-                                     nucleationfunction, growthfunction,
-                                     aggregationfunction, breakagefunction,
-                                     solver::MoM) -> Real
-
-Compute log MLE loss with Indiana-style weighting for MoM solver.
-
-Uses d43 instead of d50q and percentage-based variance for particle size.
-
-# Arguments
-- `lf::logMLE_Indiana`: Loss function with percentage-based size weighting
-- `datasets::Vector{CrystallisationRepeatMeasurements}`: Experimental data
-- `parameters::AbstractVector{<:Real}`: Parameter vector to evaluate
-- `nucleationfunction`, `growthfunction`, `aggregationfunction`, `breakagefunction`: Kinetic models
-- `solver::MoM`: Method of Moments solver
-
-# Returns
-- Total weighted log-likelihood loss value
-"""
-function parameterestimation_lossfunction(lf::logMLE_Indiana,
-                                          datasets::Vector{CrystallisationRepeatMeasurements},
-                                          parameters::TArr,
-                                          nucleationfunction::AbstractNucleationFunction,
-                                          growthfunction::AbstractGrowthFunction,
-                                          aggregationfunction::AbstractAggregationFunction,
-                                          breakagefunction::AbstractBreakageFunction,
-                                          solver::MoM) where {TArr <:
-                                                              AbstractVector{<:Real}}
-
-    loss_values = map(m -> begin
-                          problem,
-                          solution = runsimulation(parameters,
-                                                   nucl = nucleationfunction,
-                                                   gr = growthfunction,
-                                                   agg = aggregationfunction,
-                                                   br = breakagefunction,
-                                                   initial_concentration = datasets[m].concentrationmean[1],
-                                                   save_idx = datasets[m].time,
-                                                   solver = solver,
-                                                   loading = datasets[m].loading,
-                                                   temp_profile = ConstantTemperature(datasets[m].temperature))
-
-                          loss1 = sum(log.(2π *
-                                           (datasets[m].concentrationvariance[2:end] .+
-                                            1e-6)) .+
-                                      ((solution.concentration[2:end] .-
-                                        datasets[m].concentrationmean[2:end]) .^ 2) ./
-                                      (datasets[m].concentrationvariance[2:end] .+ 1e-6))
-                          loss2 = (log(2π *
-                                       ((datasets[m].d43 * lf.weighting[2] * 1e-2)^2 .+
-                                        1e-6)) +
-                                   ((solution.d43[end] .- datasets[m].d43) .^ 2) ./
-                                   ((datasets[m].d43 * lf.weighting[2] * 1e-2)^2 .+ 1e-6))
-                          loss3 = sum(0.5 * loss1 + 1 / (lf.weighting[1]) * 0.5 * loss2)
-
-                          return (loss1, loss2, loss3)
-                      end, eachindex(datasets))
-
-    total_loss = sum(map(x -> x[3], loss_values))
-
-    return total_loss
-end
-
-"""
-    parameterestimation_lossfunction(lf::logMLE_Han, datasets, parameters,
-                                     nucleationfunction, growthfunction,
-                                     aggregationfunction, breakagefunction,
-                                     solver::AbstractDiscretisedSolver) -> Real
-
-Compute log MLE loss with Han-style relative variance weighting for concentration.
-
-Uses a percentage-based variance for concentration instead of measured variance.
-
-# Arguments
-- `lf::logMLE_Han`: Loss function with percentage-based concentration weighting
-- `datasets::Vector{CrystallisationRepeatMeasurements}`: Experimental data
-- `parameters::AbstractArray{<:Real}`: Parameter vector to evaluate
-- `nucleationfunction`, `growthfunction`, `aggregationfunction`, `breakagefunction`: Kinetic models
-- `solver::AbstractDiscretisedSolver`: Finite volume or WENO solver
-
-# Returns
-- Total weighted log-likelihood loss value
-"""
-function parameterestimation_lossfunction(lf::logMLE_Han,
-                                          datasets::Vector{CrystallisationRepeatMeasurements},
-                                          parameters::TArr,
-                                          nucleationfunction::AbstractNucleationFunction,
-                                          growthfunction::AbstractGrowthFunction,
-                                          aggregationfunction::AbstractAggregationFunction,
-                                          breakagefunction::AbstractBreakageFunction,
-                                          solver::AbstractDiscretisedSolver) where {TArr <:
-                                                                                    AbstractArray{<:Real}}
-    loss_values = map(m -> begin
-                          problem,
-                          solution = runsimulation(parameters,
-                                                   nucl = nucleationfunction,
-                                                   gr = growthfunction,
-                                                   agg = aggregationfunction,
-                                                   br = breakagefunction,
-                                                   initial_concentration = datasets[m].concentrationmean[1],
-                                                   save_idx = datasets[m].time,
-                                                   solver = solver,
-                                                   temp_profile = ConstantTemperature(datasets[m].temperature))
-
-                          newconcvariance = (datasets[m].concentrationmean .*
-                                             lf.weighting[1] .* 1e-2) .^ 2
-                          loss1 = sum(log.(2π * (newconcvariance .+ 1e-6)) .+
-                                      ((solution.concentration .-
-                                        datasets[m].concentrationmean) .^ 2) ./
-                                      (newconcvariance .+ 1e-6))
-                          loss2 = (log(2π * (datasets[m].quantilevariance .+ 1e-6)) +
-                                   ((solution.d50q[end] .- datasets[m].quantilemean) .^ 2) ./
-                                   (datasets[m].quantilevariance .+ 1e-6))
-                          loss3 = sum(0.5 * loss1 + 0.5 * loss2)
-
-                          return (loss1, loss2, loss3)
-                      end, eachindex(datasets))
-
-    total_loss = sum(map(x -> x[3], loss_values))
-
-    return total_loss
 end

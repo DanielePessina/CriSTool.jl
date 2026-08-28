@@ -184,7 +184,7 @@ function _create_ensemble_solution(time, concentration, d43, d32, _, solver::MoM
 end
 
 """
-    _run_ensemble_internal(samples::Matrix{Float64}, measurements::Vector{<:AbstractMeasurements},
+    _run_ensemble_internal(samples::Matrix{Float64}, measurements::Vector{<:AbstractExperiment},
                            nucleationfunction, growthfunction, aggregationfunction, breakagefunction,
                            solver; time_idx::T=0:5:305, verbosity::Int64=1, HPC::Bool=false,
                            temp_profile=nothing, initial_concentration=nothing,
@@ -196,7 +196,7 @@ Internal function to run ensemble simulations across multiple measurements.
 
 # Arguments
 - `samples::Matrix{Float64}`: Parameter matrix of size (n_params, n_samples)
-- `measurements::Vector{<:AbstractMeasurements}`: Vector of measurement conditions
+- `measurements::Vector{<:AbstractExperiment}`: Vector of measurement conditions
 - `nucleationfunction::AbstractNucleationFunction`: Nucleation kinetic model
 - `growthfunction::AbstractGrowthFunction`: Growth kinetic model
 - `aggregationfunction::AbstractAggregationFunction`: Aggregation kinetic model
@@ -213,7 +213,7 @@ Internal function to run ensemble simulations across multiple measurements.
 - `Vector{Union{EnsembleFVSolution, EnsembleMoMSolution}}`: Ensemble solutions
 """
 function _run_ensemble_internal(samples::Matrix{Float64},
-                                measurements::Vector{<:AbstractMeasurements},
+                                measurements::Vector{<:AbstractExperiment},
                                 nucleationfunction::AbstractNucleationFunction,
                                 growthfunction::AbstractGrowthFunction,
                                 aggregationfunction::AbstractAggregationFunction,
@@ -243,7 +243,7 @@ function _run_ensemble_internal(samples::Matrix{Float64},
 
     for m in 1:n_measurements
         time = if use_measurement_time
-            range(measurements[m].time[1], measurements[m].time[end], n_timepoints)
+            range(measurements[m].observables.concentration.time[1], measurements[m].observables.concentration.time[end], n_timepoints)
         else
             time_idx
         end
@@ -251,7 +251,7 @@ function _run_ensemble_internal(samples::Matrix{Float64},
                            ConstantTemperature(measurements[m].temperature) :
                            temp_profile
         run_initial_concentration = isnothing(initial_concentration) ?
-                                    measurements[m].concentrationmean[1] :
+                                    initial_concentration(measurements[m]) :
                                     initial_concentration
         concentration = Matrix{Float64}(undef, n_timepoints, n_samples)
         d43 = Matrix{Float64}(undef, n_timepoints, n_samples)

@@ -1,8 +1,8 @@
 """
 Approximate Bayesian computation routines for parameter inference in crystallisation models. Implements the ABCDE algorithm and related plotting helpers.
 """
-function _dofcalculator(::AbstractPELossFunction, datasets::Vector{<:AbstractMeasurements})
-    return sum([length(set.time) + 1 for set in datasets]) #length(datasets) * (length(datasets[1].time) + 1)
+function _dofcalculator(::AbstractPELossFunction, datasets::Vector{<:AbstractExperiment})
+    return sum([length(set.observables.concentration.time) + 1 for set in datasets]) #length(datasets) * (length(datasets[1].time) + 1)
 end
 
 function _abcde_target(optimallossfunction::Real, dof::Integer, nparams::Integer,
@@ -138,7 +138,7 @@ the optimal-loss target, posterior summaries, prior, and any sampler-specific
 metadata (e.g. K, kernel for Turner).
 """
 function run_abc(lossfunction::AbstractPELossFunction,
-                 measurement::Vector{<:AbstractMeasurements},
+                 measurement::Vector{<:AbstractExperiment},
                  optimalpara::Vector{Float64}, prior,
                  nucleationfunction::AbstractNucleationFunction,
                  growthfunction::AbstractGrowthFunction,
@@ -146,7 +146,7 @@ function run_abc(lossfunction::AbstractPELossFunction,
                  breakagefunction::AbstractBreakageFunction;
                  solver::AbstractSolver,
                  sampler::AbstractABCSampler = ABCDESampler(),
-                 validation::Union{Nothing, Vector{<:AbstractMeasurements}} = nothing,
+                 validation::Union{Nothing, Vector{<:AbstractExperiment}} = nothing,
                  extrastring::String = "Empty", nparticles::Int64 = 1024,
                  generations::Int64 = 128, saveplot::Bool = true,
                  confidenceinterval::Float64 = 0.95, HPC::Bool = false,
@@ -155,11 +155,10 @@ function run_abc(lossfunction::AbstractPELossFunction,
 
     dof = _dofcalculator(lossfunction, measurement) - length(optimalpara)
 
-    optimallossfunction = parameterestimation_lossfunction(lossfunction, measurement,
-                                                           optimalpara, nucleationfunction,
-                                                           growthfunction,
-                                                           aggregationfunction,
-                                                           breakagefunction, solver)
+    loss_problem = _build_loss_problem(nucleationfunction, growthfunction,
+                                       aggregationfunction, breakagefunction, solver)
+
+    optimallossfunction = loss(lossfunction, loss_problem, optimalpara, measurement)
 
     target = _abcde_target(optimallossfunction, dof, length(optimalpara),
                            confidenceinterval; test = test)
@@ -182,10 +181,7 @@ function run_abc(lossfunction::AbstractPELossFunction,
 
     print_start_panel(label, start_content; verbosity = verbosity)
 
-    lossfn = x -> parameterestimation_lossfunction(lossfunction, measurement, collect(x),
-                                                   nucleationfunction, growthfunction,
-                                                   aggregationfunction, breakagefunction,
-                                                   solver)[1]
+    lossfn = x -> loss(lossfunction, loss_problem, collect(x), measurement)
 
     res, reached_ϵ = _runsampler(sampler, prior, lossfn, target, optimallossfunction;
                                  nparticles = nparticles, generations = generations,
@@ -269,14 +265,14 @@ Backward-compatible shim over `run_abc` that selects the standard
 `ABCDESampler`. See `run_abc` for the full argument list.
 """
 function ABCDE_Routine(lossfunction::AbstractPELossFunction,
-                       measurement::Vector{<:AbstractMeasurements},
+                       measurement::Vector{<:AbstractExperiment},
                        optimalpara::Vector{Float64}, prior,
                        nucleationfunction::AbstractNucleationFunction,
                        growthfunction::AbstractGrowthFunction,
                        aggregationfunction::AbstractAggregationFunction,
                        breakagefunction::AbstractBreakageFunction;
                        solver::AbstractSolver,
-                       validation::Union{Nothing, Vector{<:AbstractMeasurements}} = nothing,
+                       validation::Union{Nothing, Vector{<:AbstractExperiment}} = nothing,
                        extrastring::String = "Empty", nparticles::Int64 = 1024,
                        generations::Int64 = 128, alpha::Int64 = 0, saveplot::Bool = true,
                        confidenceinterval::Float64 = 0.95, HPC::Bool = false,
@@ -300,14 +296,14 @@ Backward-compatible shim over `run_abc` that selects `ABCDETurnerSampler` with
 the supplied Turner-specific kwargs. See `run_abc` for the full argument list.
 """
 function ABCDE_Turner_Routine(lossfunction::AbstractPELossFunction,
-                              measurement::Vector{<:AbstractMeasurements},
+                              measurement::Vector{<:AbstractExperiment},
                               optimalpara::Vector{Float64}, prior,
                               nucleationfunction::AbstractNucleationFunction,
                               growthfunction::AbstractGrowthFunction,
                               aggregationfunction::AbstractAggregationFunction,
                               breakagefunction::AbstractBreakageFunction;
                               solver::AbstractSolver,
-                              validation::Union{Nothing, Vector{<:AbstractMeasurements}} = nothing,
+                              validation::Union{Nothing, Vector{<:AbstractExperiment}} = nothing,
                               extrastring::String = "Empty",
                               nparticles::Int64 = 1024,
                               generations::Int64 = 128,
@@ -441,7 +437,7 @@ function ABCplot(abcres, params::Vector{Float64}, lossfunction::AbstractPELossFu
 end
 
 function _ABCmeasurementplot(abcres, lossfunction::AbstractPELossFunction,
-                             measurements::Vector{<:AbstractMeasurements},
+                             measurements::Vector{<:AbstractExperiment},
                              optimalparameters::Vector{Float64},
                              nucleationfunction::AbstractNucleationFunction,
                              growthfunction::AbstractGrowthFunction,
@@ -466,7 +462,7 @@ function _ABCmeasurementplot(abcres, lossfunction::AbstractPELossFunction,
                                                  gr = growthfunction,
                                                  agg = aggregationfunction,
                                                  br = breakagefunction,
-                                                 initial_concentration = measurements[m].concentrationmean[1],
+                                                 initial_concentration = initial_concentration(measurements[m]),
                                                  solver = solver,
                                                  save_idx = ensembleresults[m].time,
                                                  temp_profile = ConstantTemperature(measurements[m].temperature),
@@ -487,7 +483,7 @@ function _ABCmeasurementplot(abcres, lossfunction::AbstractPELossFunction,
 end
 
 function _ABCmeasurementplot_ps(abcres, lossfunction::AbstractPELossFunction,
-                                measurements::Vector{<:AbstractMeasurements},
+                                measurements::Vector{<:AbstractExperiment},
                                 optimalparameters::Vector{Float64},
                                 nucleationfunction::AbstractNucleationFunction,
                                 growthfunction::AbstractGrowthFunction,
@@ -512,7 +508,7 @@ function _ABCmeasurementplot_ps(abcres, lossfunction::AbstractPELossFunction,
                                                  gr = growthfunction,
                                                  agg = aggregationfunction,
                                                  br = breakagefunction,
-                                                 initial_concentration = measurements[m].concentrationmean[1],
+                                                 initial_concentration = initial_concentration(measurements[m]),
                                                  solver = solver,
                                                  save_idx = ensembleresults[m].time,
                                                  temp_profile = ConstantTemperature(measurements[m].temperature),
