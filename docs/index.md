@@ -39,6 +39,7 @@ end
 - [Measurements and data loading](measurements.md)
 - [Temperature profiles](temperature-profiles.md)
 - [Saturation models and supersaturation](saturation-models.md)
+- [Bringing your own system](bring-your-own-system.md)
 - [Ensembles and uncertainty](uq-ensembles.md)
 
 ## Tutorials

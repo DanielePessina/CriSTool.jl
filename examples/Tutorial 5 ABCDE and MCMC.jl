@@ -64,7 +64,7 @@ function main()
 
     # 1. ABCDE.
     println("ABCDE...")
-    abc_prior = Factored([Uniform(lb[i], ub[i]) for i in eachindex(lb)]...)
+    abc_prior = product_distribution([Uniform(lb[i], ub[i]) for i in eachindex(lb)]...)
     t = time()
     _, abc_meta = run_abc(loss, [meas], collect(truth), abc_prior, nucl, gr, agg, br;
                            solver = solver,

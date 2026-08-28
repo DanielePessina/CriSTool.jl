@@ -1,3 +1,4 @@
+using Random
 @testset "Uncertainty Quantification Utilities" begin
 
     @testset "distribution_to_matrix" begin
@@ -85,33 +86,19 @@
         end
     end
 
-    @testset "Factored Backward Compatibility" begin
-        # Test that Factored still works (with deprecation warning)
-        @testset "Factored Construction" begin
-            # Suppress deprecation warning for test
-            prior = @test_logs (:warn, r"Factored is deprecated") CriSTool.Factored(Normal(0,
-                                                                                           1),
-                                                                                    Uniform(-1,
-                                                                                            1))
-            @test length(prior) == 2
-            @test prior.p[1] isa Normal
-            @test prior.p[2] isa Uniform
-        end
-
-        @testset "Factored pdf/logpdf" begin
-            prior = @test_logs (:warn,) CriSTool.Factored(Normal(0, 1), Normal(0, 1))
-            x = (0.5, 0.5)
-            # Should be able to compute pdf/logpdf
-            @test Distributions.pdf(prior, x) > 0
-            @test isfinite(Distributions.logpdf(prior, x))
-        end
-
-        @testset "Factored Sampling" begin
-            prior = @test_logs (:warn,) CriSTool.Factored(Normal(0, 1), Uniform(-1, 1))
-            sample = rand(prior)
-            @test length(sample) == 2
-        end
+    @testset "Product prior helpers" begin
+        # product_distribution replaces the deprecated Factored type
+        prior = Distributions.product_distribution([Normal(0, 1), Uniform(-1, 1)])
+        @test prior isa Distributions.Product
+        x = [0.5, 0.5]
+        @test Distributions.pdf(prior, x) > 0
+        @test isfinite(Distributions.logpdf(prior, x))
+        # prior_to_matrix draws (n_params, n_samples)
+        mat = prior_to_matrix(prior, 50; rng = Random.Xoshiro(1))
+        @test size(mat) == (2, 50)
+        @test all(-1 .<= mat[2, :] .<= 1)
     end
+
 
     @testset "ABCDE_Turner Helpers" begin
         @testset "logsumexp_stable" begin

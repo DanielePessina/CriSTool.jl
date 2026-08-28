@@ -129,7 +129,6 @@ end
     create_product_prior(distributions::Vector{<:UnivariateDistribution}) -> Product
 
 Create a multivariate prior from independent univariate distributions.
-This is the recommended replacement for the deprecated `Factored` type.
 
 # Arguments
 - `distributions`: Vector of univariate distributions
@@ -160,11 +159,10 @@ end
 """
     prior_to_matrix(prior, n_samples::Int; rng=Random.GLOBAL_RNG) -> Matrix{Float64}
 
-Convert any prior type (Factored, Product, or vector of distributions) to a sample matrix.
-Handles backward compatibility with the deprecated `Factored` type.
+Convert any prior type (Product, Distribution, or vector of distributions) to a sample matrix.
 
 # Arguments
-- `prior`: Prior distribution (Factored, Product, Distribution, or Vector of UnivariateDistribution)
+- `prior`: Prior distribution (Product, Distribution, or Vector of UnivariateDistribution)
 - `n_samples`: Number of samples to draw
 
 # Returns

@@ -6,7 +6,7 @@ Support code for ABC sampling and related distributions. Defines mixed priors,
 kernels and implementation details used by the ABCDE algorithm.
 
 !!! warning "Deprecation Notice"
-    The `Factored` type is deprecated. Use `Distributions.product_distribution()` instead.
+
 """
 module KissABC
 
@@ -22,7 +22,6 @@ import Base.length
 # Public exports
 export ABCDE, smc, AIS
 export ApproxPosterior, ApproxKernelizedPosterior, CommonLogDensity
-export Factored  # Deprecated, kept for backward compatibility
 
 ## priors.jl
 
@@ -30,56 +29,6 @@ import Distributions.pdf, Distributions.logpdf, Random.rand, Base.length
 
 struct MixedSupport <: ValueSupport end
 
-"""
-    Factored{N} <: Distribution{Multivariate, MixedSupport}
-a `Distribution` type that can be used to combine multiple `UnivariateDistribution`'s and sample from them.
-Example: it can be used as `prior = Factored(Normal(0,1), Uniform(-1,1))`
-"""
-struct Factored{N} <: Distribution{Multivariate, MixedSupport}
-    p::NTuple{N, UnivariateDistribution}
-    function Factored(args::UnivariateDistribution...)
-        Base.depwarn("Factored is deprecated. Use `Distributions.product_distribution([...])` instead.",
-                     :Factored)
-        new{length(args)}(args)
-    end
-end
-"""
-    pdf(d::Factored, x) = begin
-Function to evaluate the pdf of a `Factored` distribution object
-"""
-function pdf(d::Factored{N}, x) where {N}
-    s = pdf(d.p[1], x[1])
-    for i in 2:N
-        s *= pdf(d.p[i], x[i])
-    end
-    s
-end
-
-"""
-    logpdf(d::Factored, x) = begin
-Function to evaluate the logpdf of a `Factored` distribution object
-"""
-function logpdf(d::Factored{N}, x) where {N}
-    s = logpdf(d.p[1], x[1])
-    for i in 2:N
-        s += logpdf(d.p[i], x[i])
-    end
-    s
-end
-
-"""
-    rand(rng::AbstractRNG, factoreddist::Factored)
-function to sample one element from a `Factored` object
-"""
-function rand(rng::AbstractRNG, factoreddist::Factored{N}) where {N}
-    ntuple(i -> rand(rng, factoreddist.p[i]), Val(N))
-end
-
-"""
-    length(p::Factored) = begin
-returns the number of distributions contained in `p`.
-"""
-length(p::Factored{N}) where {N} = N
 
 
 
@@ -112,7 +61,6 @@ op(f, args...) = foldl((x, y) -> op(f, x, y), args)
 
 push_p(density::AbstractDensity, p::Particle) = p
 push_p(density::AbstractApproxPosterior, p::Particle) = Particle(push_p(density.prior, p.x))
-push_p(density::Factored, p) = push_p.(density.p, p)
 push_p(density::Distribution, p) = push_p.(Ref(density), p)
 push_p(density::ContinuousDistribution, p::Number) = float(p)
 push_p(density::DiscreteDistribution, p::Number) = round(Int, p)
@@ -745,7 +693,7 @@ function smc(
 
 ```Julia
 using KissABC
-prior=Factored(Normal(0,5), Normal(0,5))
+prior=product_distribution([Normal(0,5), Normal(0,5)])
 cost((x,y)) = 50*(x+randn()*0.01-y^2)^2+(y-1+randn()*0.01)^2
 results = smc(prior, cost, alpha=0.5, nparticles=5000).P
 ```

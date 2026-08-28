@@ -194,43 +194,7 @@ function ChainPairPlots(samples::AbstractMatrix, params::Vector{Float64};
                             showplot = showplot)
 end
 
-"""
-    ChainPairPlots(chain, params::Vector{Float64}, prior::KissABC.Factored{N};
-                   burnin::Int=0, title="", saveplot::Bool=false, savestring::String="",
-                   symbols=nothing, showplot::Bool=true) where {N}
 
-Create pair plots with a KissABC.Factored prior (deprecated, for backward compatibility).
-
-# Arguments
-- `chain`: MCMCChains.Chains object or distribution
-- `params::Vector{Float64}`: Reference parameter values
-- `prior::KissABC.Factored{N}`: Factored prior distribution (converted to Product internally)
-- `burnin::Int=0`: Number of initial samples to discard
-- `title=""`: Plot title
-- `saveplot::Bool=false`: Whether to save the plot
-- `savestring::String=""`: Filename for saving
-- `symbols::Union{Vector{Symbol}, Nothing}=nothing`: Parameter names
-- `showplot::Bool=true`: Whether to display the plot
-
-Note: This method is deprecated. Use `product_distribution` instead of `Factored`.
-"""
-function ChainPairPlots(chain, params::Vector{Float64},
-                        prior::KissABC.Factored{N};
-                        burnin::Int = 0,
-                        title = "",
-                        show_title::Bool = true,
-                        saveplot::Bool = false,
-                        savestring::String = "",
-                        savedir::Union{Nothing, AbstractString} = nothing,
-                        symbols::Union{Vector{Symbol}, Nothing} = nothing,
-                        showplot::Bool = true) where {N}
-    prod_prior = Distributions.product_distribution([prior.p[i] for i in 1:N])
-    return ChainPairPlots(chain, params; prior = prod_prior, burnin = burnin,
-                          title = title, show_title = show_title,
-                          saveplot = saveplot, savestring = savestring,
-                          savedir = savedir,
-                          symbols = symbols, showplot = showplot)
-end
 
 """
     ChainStatsPlots(chain; burnin=0, title="", show_title=true, saveplot=false, savestring="")

@@ -74,7 +74,7 @@ Calculate nucleation rate using Classical Nucleation Theory (CNT).
 # Returns
 - Nucleation rate (number/m³/s) if S > 1.001, otherwise 0
 """
-function nucleationrate(nf::nucl_CNT, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector, K <: Real}
+function nucleationrate(nf::nucl_CNT, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     p = _named_params(nf, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
@@ -106,7 +106,7 @@ Calculate nucleation rate using an empirical power law model.
 # Returns
 - Nucleation rate (number/m³/s) if S > 1.001, otherwise 0
 """
-function nucleationrate(nf::nucl_empirical, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector, K <: Real}
+function nucleationrate(nf::nucl_empirical, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     p = _named_params(nf, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
@@ -130,7 +130,7 @@ Calculate nucleation rate using empirical model with activation energy.
 # Returns
 - Nucleation rate (number/m³/s) if S > 1.001, otherwise 0
 """
-function nucleationrate(nf::nucl_empirical_energy, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector, K <: Real}
+function nucleationrate(nf::nucl_empirical_energy, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     p = _named_params(nf, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
@@ -157,8 +157,7 @@ Calculate nucleation rate using Classical Nucleation Theory (CNT) without S fact
 # Returns
 - Nucleation rate (number/m³/s) if S > 1.001, otherwise 0
 """
-function nucleationrate(nf::nucl_CNTnoS, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector, K <: Real,
-                                                 V <: AbstractVector}
+function nucleationrate(nf::nucl_CNTnoS, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     p = _named_params(nf, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
@@ -189,8 +188,7 @@ Calculate secondary nucleation rate proportional to third moment (crystal mass).
 # Returns
 - Secondary nucleation rate (number/m³/s) if S > 1.001, otherwise 0
 """
-function nucleationrate(nf::nucl_secondary, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector, K <: Real,
-                                                 V <: AbstractVector}
+function nucleationrate(nf::nucl_secondary, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     p = _named_params(nf, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
@@ -222,8 +220,7 @@ Calculate combined primary (empirical) and secondary nucleation rate.
 # Returns
 - Combined nucleation rate (number/m³/s)
 """
-function nucleationrate(nf::nucl_prim_plus_second, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector, K <: Real,
-                                                 V <: AbstractVector}
+function nucleationrate(nf::nucl_prim_plus_second, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     p = _named_params(nf, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
@@ -252,8 +249,7 @@ Calculate combined CNT primary and secondary nucleation rate.
 # Returns
 - Combined nucleation rate (number/m³/s)
 """
-function nucleationrate(nf::nucl_CNT_plus_second, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector, K <: Real,
-                                                 V <: AbstractVector}
+function nucleationrate(nf::nucl_CNT_plus_second, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     p = _named_params(nf, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
@@ -283,8 +279,7 @@ Calculate CNT nucleation rate using pre-fixed parameters embedded in the struct.
 # Returns
 - Nucleation rate (number/m³/s) if S > 1.001, otherwise 0
 """
-function nucleationrate(NuF::nucl_CNT_fixed, parameters::T, prob::CrystallisationProblem, state, t) where {K <: Real, T <: AbstractVector,
-                                                 V <: AbstractVector}
+function nucleationrate(NuF::nucl_CNT_fixed, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     return if S > 1.001
         (60 * exp(NuF.Aj)) *
         S *
@@ -314,8 +309,7 @@ Calculate empirical nucleation rate using pre-fixed parameters embedded in the s
 # Returns
 - Nucleation rate (number/m³/s) if S > 1.001, otherwise 0
 """
-function nucleationrate(NuF::nucl_empirical_fixed, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector, K <: Real,
-                                                 V <: AbstractVector}
+function nucleationrate(NuF::nucl_empirical_fixed, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     return S > 1.001 ? (60 * 10^(NuF.Aj)) * (S - 1)^NuF.j : 0.0
 end
 
@@ -336,7 +330,7 @@ Calculate nucleation rate using Classical Nucleation Theory (CNT) with loading-d
 # Returns
 - Nucleation rate (number/m³/s) using the parameters corresponding to the current loading
 """
-function nucleationrate(nucl_func::nucl_CNT_multiloading, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector, K <: Real}
+function nucleationrate(nucl_func::nucl_CNT_multiloading, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     # Find which prob.loading corresponds to the current prob.loading value
     loading_idx = findfirst(==(prob.loading), nucl_func.unique_loadings)
 
@@ -391,7 +385,7 @@ Calculate crystal growth rate using an empirical power law model.
 # Returns
 - Growth rate (m/s) if S > 1.001, otherwise 0
 """
-function growthrate(gf::growth_empirical, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector, K <: Real}
+function growthrate(gf::growth_empirical, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     p = _named_params(gf, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
@@ -415,7 +409,7 @@ Calculate growth rate with Arrhenius temperature dependence using fixed activati
 # Returns
 - Growth rate (m/s) if S > 1.001, otherwise 0
 """
-function growthrate(gf::growth_energy, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector, K <: Real}
+function growthrate(gf::growth_energy, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     p = _named_params(gf, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
@@ -444,7 +438,7 @@ Calculate growth rate with Arrhenius temperature dependence and estimated activa
 # Returns
 - Growth rate (m/s) if S > 1.001, otherwise 0
 """
-function growthrate(gf::growth_energy_est, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector, K <: Real}
+function growthrate(gf::growth_energy_est, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     p = _named_params(gf, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
@@ -523,7 +517,7 @@ Calculate crystal growth rate using Burton-Cabrera-Frank (BCF) surface diffusion
 - Assumes surface diffusion of adsorbed species is rate-limiting
 - Alternative to Birth and Spread model for low supersaturation conditions
 """
-function growthrate(gf::growth_BCF, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector, K <: Real}
+function growthrate(gf::growth_BCF, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     p = _named_params(gf, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
@@ -560,7 +554,7 @@ Calculate crystal growth rate using Birth and Spread (B+S) model based on nuclea
 - Assumes smooth crystal surface at high supersaturations
 - May deviate from measured values at low supersaturations
 """
-function growthrate(gf::growth_BpS, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector, K <: Real}
+function growthrate(gf::growth_BpS, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     p = _named_params(gf, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
@@ -595,8 +589,7 @@ Calculate length-dependent dissolution rate (negative growth).
 # Returns
 - Vector of dissolution rates (m/s) at each mesh point, zero vector if supersaturated
 """
-function growthrate(gf::growth_dissolution_length, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector, K <: Real,
-                                          M <: AbstractVector}
+function growthrate(gf::growth_dissolution_length, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     pn = _named_params(gf, parameters)
     sat_concentration = saturation_concentration(lysozyme_saturation(), CriSTool.ConstantTemperature(temp))
     concentration = S * sat_concentration
@@ -636,7 +629,7 @@ Calculate scalar dissolution rate (negative growth) with Arrhenius temperature d
 # Returns
 - Dissolution rate (negative m/s) if undersaturated, 0 otherwise
 """
-function growthrate(gf::growth_dissolution, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector, K <: Real}
+function growthrate(gf::growth_dissolution, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     p = _named_params(gf, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
@@ -682,7 +675,7 @@ Uses `growth_energy` for supersaturated conditions (S > 1.001) and
 # Returns
 - Growth rate (m/s) if supersaturated, dissolution rate if undersaturated
 """
-function growthrate(gf::growth_energy_dissolution, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector, K <: Real}
+function growthrate(gf::growth_energy_dissolution, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     return S > 1.001 ?
            growthrate(growth_energy(), parameters, S, prob, temp, prob.loading,
                       crystal_state(state)) :
@@ -710,7 +703,7 @@ Calculate empirical growth rate using pre-fixed parameters embedded in the struc
 # Returns
 - Growth rate (m/s) if S > 1.001, otherwise 0
 """
-function growthrate(grf::growth_empirical_fixed, parameters, prob::CrystallisationProblem, state, t) where {K <: Real}
+function growthrate(grf::growth_empirical_fixed, parameters, prob::CrystallisationProblem, state, t) 
     return S > 1.001 ? (grf.Ag * 1e-9) * ((S - 1)^grf.g) : 0.0
 end
 
@@ -725,8 +718,7 @@ Return zero aggregation rate (placeholder for no aggregation).
 # Returns
 - 0.0
 """
-function aggregationrate(::noaggregation, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector, V <: AbstractVector,
-                                                  W <: AbstractVector}
+function aggregationrate(::noaggregation, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     return 0.0
 end
 
@@ -744,9 +736,7 @@ Calculate size-independent (scalar) aggregation rate.
 # Returns
 - Vector of aggregation rates at each cell
 """
-function aggregationrate(af::aggr_scalar, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector,
-                                                      V <: AbstractVector,
-                                                      W <: AbstractVector}
+function aggregationrate(af::aggr_scalar, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     p = _named_params(af, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
@@ -771,9 +761,7 @@ Calculate linear size-dependent aggregation rate (kernel proportional to sum of 
 # Returns
 - Vector of aggregation rates at each cell
 """
-function aggregationrate(af::aggr_linear, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector,
-                                                      V <: AbstractVector,
-                                                      W <: AbstractVector}
+function aggregationrate(af::aggr_linear, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     p = _named_params(af, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
@@ -799,9 +787,7 @@ Calculate linear volume-dependent aggregation rate (kernel proportional to sum o
 # Returns
 - Vector of aggregation rates at each cell
 """
-function aggregationrate(af::aggr_linearvol, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector,
-                                                      V <: AbstractVector,
-                                                      W <: AbstractVector}
+function aggregationrate(af::aggr_linearvol, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     p = _named_params(af, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
@@ -822,8 +808,7 @@ Return zero breakage rate (placeholder for no breakage).
 # Returns
 - 0.0
 """
-function breakagerate(::nobreakage, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector, V <: AbstractVector,
-                                                   W <: AbstractVector}
+function breakagerate(::nobreakage, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     return 0.0
 end
 
@@ -841,8 +826,7 @@ Calculate empirical breakage rate.
 # Returns
 - Breakage rate contribution
 """
-function breakagerate(bf::breakage_empirical, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector, V <: AbstractVector,
-                                               W <: AbstractVector}
+function breakagerate(bf::breakage_empirical, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     p = _named_params(bf, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
@@ -867,8 +851,7 @@ Calculate uniform breakage rate (daughter fragments uniformly distributed).
 # Returns
 - Vector of breakage rates at each cell
 """
-function breakagerate(bf::breakage_uniform, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector, V <: AbstractVector,
-                                                   W <: AbstractVector}
+function breakagerate(bf::breakage_uniform, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     p = _named_params(bf, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
@@ -1105,7 +1088,7 @@ function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, Gr
                                                    AbstractVector{<:Real},
                                                    TP <:
                                                    AbstractTemperature}
-    function MoM_model!(du, u, p, t)
+    function MoM_model(u, p, t)
         scalargrowth = growthrate(CryProblem.kinetics_growthfunction, p.gr,
                                   CryProblem, u, t)
         B = nucleationrate(CryProblem.kinetics_nucleationfunction, p.nucl,
@@ -1113,24 +1096,29 @@ function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, Gr
 
         n_mom = CryProblem.solver.nmoments
         @assert n_mom >= 2 "MoM solver requires nmoments >= 2 (concentration closure uses µ2)"
-        du.n[1] = B
-        for k in 2:(n_mom + 1)
-            du.n[k] = (k - 1) * scalargrowth * u.n[k - 1]
+        n_states = n_mom + 2
+        return if n_states == 6
+            SVector(B, scalargrowth * u[1], 2 * scalargrowth * u[2],
+                    3 * scalargrowth * u[3], 4 * scalargrowth * u[4],
+                    -3 * CryProblem.kv * CryProblem.ρ * scalargrowth * u[3])
+        else
+            SVector(ntuple(Val(n_states)) do k
+                k == 1 ? B :
+                k == n_states ? -3 * CryProblem.kv * CryProblem.ρ * scalargrowth * u[3] :
+                (k - 1) * scalargrowth * u[k - 1]
+            end)
         end
-        du.C = -3 * CryProblem.kv * CryProblem.ρ * scalargrowth * u.n[3]
-
-        return nothing
     end
 
-    θ = (;
+    θ = ComponentArray(;
                        nucl = CryProblem.parameterset_nucleation,
                        gr = CryProblem.parameterset_growth)
 
     ET = eltype(CryProblem.parameterset_nucleation)
     n_mom = CryProblem.solver.nmoments
     u0_vec = ET.(_get_initial_state(CryProblem))
-    u0_typed = ComponentVector(n = u0_vec[1:(n_mom + 1)], C = u0_vec[end])
-    ODEprob = ODEProblem(MoM_model!, u0_typed, (saveat[1], saveat[end]), θ)
+    u0_typed = SVector(ntuple(k -> u0_vec[k], Val(n_mom + 2)))
+    ODEprob = ODEProblem(MoM_model, u0_typed, (saveat[1], saveat[end]), θ)
 
     tstep_solver = _resolve_timestepping_algorithm(CryProblem.solver, :tsit5)
     return (ODEprob, tstep_solver)
@@ -1160,7 +1148,7 @@ function _wrap_solution(CryProblem::CrystallisationProblem{NuclF, GrF, nobreakag
     mu2 = n_mom >= 2 ? sol[3, :] : fill(NaN, length(sol.t))
 
     return CrystallisationMoMSolution(sol.t,
-                                      sol[n_states, :],
+                                      sol[end, :],  # concentration = last state
                                       1e6 * (sol[2, :]) ./ (sol[1, :] .+ 1e-6),
                                       d32,
                                       d43,

@@ -107,10 +107,10 @@ end
 
     mktempdir() do dir
         Random.seed!(1234)
-        prior = CriSTool.Factored(TriangularDist(30.0, 45.0, params[1]),
-                                  TriangularDist(0.2, 1.2, params[2]),
-                                  TriangularDist(0.5, 2.0, params[3]),
-                                  TriangularDist(2.0, 4.0, params[4]))
+        prior = Distributions.product_distribution([TriangularDist(30.0, 45.0, params[1]),
+                                                    TriangularDist(0.2, 1.2, params[2]),
+                                                    TriangularDist(0.5, 2.0, params[3]),
+                                                    TriangularDist(2.0, 4.0, params[4])])
         res, _ = CriSTool.ABCDE_Turner_Routine(
             CriSTool.logMLE(weighting = (1.0, 1.0)),
             [measurement],

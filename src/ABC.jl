@@ -124,7 +124,7 @@ choice of sampler (ABCDE, Turner ABCDE, …) is selected via `sampler`.
 # Arguments
 - `measurement`: experimental datasets used to compute the discrepancy.
 - `optimalpara`: reference parameter vector of length nν+ng+na+nb.
-- `prior`: prior distribution (typically a `Distributions.Factored`).
+- `prior`: prior distribution (e.g. `Distributions.product_distribution([...])`).
 - `solver`: numerical solver used by the loss function.
 - `sampler`: which ABC algorithm to run. Defaults to `ABCDESampler()`.
 - `nparticles`, `generations`: ABC population size and iteration count.
@@ -412,29 +412,6 @@ function ABCplot(abcres, params::Vector{Float64}, lossfunction::AbstractPELossFu
                             savedir = savedir,
                             lossfunction_string = lossfunction.string,
                             showplot = showplot)
-end
-
-# Backward compatibility: accept Factored type (deprecated)
-function ABCplot(abcres, params::Vector{Float64}, lossfunction::AbstractPELossFunction,
-                 prior::KissABC.Factored{N}; title = "",
-                 show_title::Bool = true,
-                 saveplot::Bool = false, savestring::String = "",
-                 savedir::Union{Nothing, AbstractString} = nothing,
-                 nucleationfunction::Union{AbstractNucleationFunction, Nothing} = nothing,
-                 growthfunction::Union{AbstractGrowthFunction, Nothing} = nothing,
-                 aggregationfunction::Union{AbstractAggregationFunction, Nothing} = nothing,
-                 breakagefunction::Union{AbstractBreakageFunction, Nothing} = nothing,
-                 showplot::Bool = true) where {N}
-    # Convert Factored to Product distribution
-    prod_prior = Distributions.product_distribution([prior.p[i] for i in 1:N])
-    return ABCplot(abcres, params, lossfunction;
-                   prior = prod_prior, title = title, show_title = show_title,
-                   saveplot = saveplot, savestring = savestring,
-                   savedir = savedir,
-                   nucleationfunction = nucleationfunction, growthfunction = growthfunction,
-                   aggregationfunction = aggregationfunction,
-                   breakagefunction = breakagefunction,
-                   showplot = showplot)
 end
 
 function _ABCmeasurementplot(abcres, lossfunction::AbstractPELossFunction,

@@ -1,0 +1,27 @@
+# JETLS configuration for CriSTool
+# See https://aviatesk.github.io/JETLS.jl/ for the full option reference.
+
+# Reuse Julia's native inference results for calls into dependencies (Turing,
+# OrdinaryDiffEq, Makie, ...) instead of re-analyzing them recursively. Speeds
+# up full analysis substantially for packages with large dependency trees.
+[initialization_options]
+reuse_native_inference = true
+
+# Wait a bit longer after save before running the expensive full analysis.
+[full_analysis]
+debounce = 2.0
+
+# Test files carry many toplevel/inference warnings that aren't worth the noise.
+[[diagnostic.patterns]]
+pattern = "(toplevel|inference)/.*"
+match_by = "code"
+match_type = "regex"
+severity = "off"
+path = "test/**/*.jl"
+
+# Downgrade unused-argument diagnostics to hints rather than warnings.
+[[diagnostic.patterns]]
+pattern = "lowering/unused-argument"
+match_by = "code"
+match_type = "literal"
+severity = "hint"

@@ -111,7 +111,7 @@ res, meta = ABCDE_Routine(lossfn, measurements, optimal_params, prior,
 ## Notes
 
 - Use `test = :f` or `test = :wilks` to select the ABCDE threshold.
-- `Factored` is deprecated; prefer `product_distribution` or
+- Prefer `product_distribution` or
   `create_product_prior`.
 - Use `validation = ...` to run posterior predictive checks on extra data.
 - Pass `savedir = ...` to override the default `R - ABCDE Plots/` output

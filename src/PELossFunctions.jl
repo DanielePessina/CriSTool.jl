@@ -452,14 +452,10 @@ the template's `p` exactly for the same parameter element type, so `remake`
 keeps the problem type stable across evaluations.
 """
 function _params_to_p(prob::CrystallisationProblem, params)
-    nν = prob.kinetics_nucleationfunction.nparams
-    ng = prob.kinetics_growthfunction.nparams
-    na = prob.kinetics_aggregationfunction.nparams
-    nb = prob.kinetics_breakagefunction.nparams
-    return (nucl = params[1:nν],
-            gr = params[(nν + 1):(nν + ng)],
-            agg = params[(nν + ng + 1):(nν + ng + na)],
-            br = params[(nν + ng + na + 1):(nν + ng + na + nb)])
+    # ComponentArray with the composite kinetic axis: `p.nucl`/`p.gr` are
+    # views, so the rate functions' `_named_params` short-circuits without
+    # rebuilding the parameter container on every ODE step.
+    return ComponentArray(params, paramaxis(prob))
 end
 
 _solve_kwargs(solver::MoM) = (reltol = solver.reltol, abstol = solver.abstol)

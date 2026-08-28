@@ -62,7 +62,7 @@ function main()
     println("MLE optimum: ", round.(optimal, digits = 3))
 
     # 3. ABCDE posterior around the MLE.
-    prior = Factored([TriangularDist(lb[i], ub[i], optimal[i])
+    prior = product_distribution([TriangularDist(lb[i], ub[i], optimal[i])
                        for i in eachindex(optimal)]...)
     _, abc_meta = run_abc(loss, measurements, optimal, prior, nucl, gr, agg, br;
                            solver = solver,
