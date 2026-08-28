@@ -1,0 +1,14 @@
+Manifest.toml
+.DS_Store
+.agents/
+.claude/
+R - PE Logs/
+R - ABCDE Plots/
+R - MCMC Results/
+R - Surrogate Datasets/
+R - Hybrid Model Datasets/
+R - DS Data/
+Generated Datasets/
+Saved Plots/
+*.jld2
+!test/test_chain.jld2
