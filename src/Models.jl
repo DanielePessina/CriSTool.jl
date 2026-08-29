@@ -1918,180 +1918,37 @@ A tuple `(problem, solution)` where `problem` is a
 `solver`.
 """
 function runsimulation(parameters::AbstractArray{TPara},
-                       nucleationfunction::AbstractFPNucleationFunction,
-                       growthfunction::AbstractFPGrowthFunction,
+                       nucleationfunction::AbstractNucleationFunction,
+                       growthfunction::AbstractGrowthFunction,
                        aggregationfunction::AbstractAggregationFunction,
                        breakagefunction::AbstractBreakageFunction,
                        initialconc::Float64;
-                       save_idx::S = 0:5.0:480.0,
+                       save_idx = 0:5.0:480.0,
                        solver::AbstractSolver = FiniteVol(; meshsize = 500, lmax = 50e-6),
-                       initial_state::Union{Nothing, AbstractArray{<:Real}} = nothing,) where {TPara <:
-                                                                                               Real,
-                                                                                               S <:
-                                                                                               AbstractArray{<:Real}}
-
-    ## Parameter vector length validation
+                       initial_state::Union{Nothing, AbstractVector} = nothing) where {TPara <: Real}
+    flat_parameters = vec(parameters)
     expected_nparams = nucleationfunction.nparams + growthfunction.nparams +
                        aggregationfunction.nparams + breakagefunction.nparams
-    if length(parameters) != expected_nparams
-        throw(ArgumentError("Parameter vector has length $(length(parameters)) but expected $expected_nparams " *
+    if length(flat_parameters) != expected_nparams
+        throw(ArgumentError("Parameter vector has length $(length(flat_parameters)) but expected $expected_nparams " *
                             "(nucleation: $(nucleationfunction.nparams), growth: $(growthfunction.nparams), " *
                             "aggregation: $(aggregationfunction.nparams), breakage: $(breakagefunction.nparams))"))
     end
 
-    ## New convention for parameter arrays will be: [nucleation, growth, aggregation, breakage]
-
-    crproblem = CrystallisationProblem(;
-                                       kinetics_nucleationfunction = nucleationfunction,
-                                       kinetics_growthfunction = growthfunction,
-                                       parameterset_nucleation = if nucleationfunction.nparams >
-                                                                    1
-                                           parameters[1:(nucleationfunction.nparams)]
-                                       else
-                                           TPara[0.0] # Use TPara for fixed value
-                                       end,
-                                       parameterset_growth = parameters[(nucleationfunction.nparams + 1):(growthfunction.nparams + nucleationfunction.nparams)],
-                                       kinetics_aggregationfunction = aggregationfunction,
-                                       kinetics_breakagefunction = breakagefunction,
-                                       parameterset_aggregation = convert(Vector{eltype(parameters)},
-                                                                          parameters[(growthfunction.nparams + nucleationfunction.nparams + 1):(growthfunction.nparams + nucleationfunction.nparams + aggregationfunction.nparams)]),
-                                       parameterset_breakage = convert(Vector{eltype(parameters)},
-                                                                       parameters[(growthfunction.nparams + nucleationfunction.nparams + aggregationfunction.nparams + 1):(growthfunction.nparams + nucleationfunction.nparams + aggregationfunction.nparams + breakagefunction.nparams)]),
-                                       initial_concentration = initialconc,
-                                       solver = solver,
-                                       initial_state = initial_state,) # Allow passing an initial state
-    #
-
-    crsolution = _simulatecrystallisation(crproblem, save_idx)
-
-    return crproblem, crsolution
-end
-"""
-    runsimulation(parameters, nucleationfunction::AbstractDDNucleationFunction,
-                  growthfunction::AbstractFPGrowthFunction, ...) -> (problem, solution)
-
-Simulate with data-driven nucleation and first-principles growth.
-
-See main `runsimulation` docstring for full argument descriptions.
-"""
-function runsimulation(parameters::AbstractArray{TPara},
-                       nucleationfunction::AbstractDDNucleationFunction,
-                       growthfunction::AbstractFPGrowthFunction,
-                       aggregationfunction::AbstractAggregationFunction,
-                       breakagefunction::AbstractBreakageFunction,
-                       initialconc::Float64;
-                       save_idx::S = 0:5.0:480.0,
-                       solver::AbstractSolver = FiniteVol(; meshsize = 500, lmax = 50e-6),
-                       initial_state::Union{Nothing, AbstractArray{<:Real}} = nothing) where {TPara <:
-                                                                                              Real,
-                                                                                              S <:
-                                                                                              AbstractArray{<:Real}}
-
-    ## New convention for parameter arrays will be: [nucleation, growth, aggregation, breakage]
-
-    crproblem = CrystallisationProblem(;
-                                       kinetics_nucleationfunction = nucleationfunction,
-                                       kinetics_growthfunction = growthfunction,
-                                       parameterset_nucleation = TPara[0.0], # Use TPara for fixed value
-                                       parameterset_growth = parameters[1:(growthfunction.nparams)],
-                                       kinetics_aggregationfunction = aggregationfunction,
-                                       kinetics_breakagefunction = breakagefunction,
-                                       parameterset_aggregation = convert(Vector{eltype(parameters)},
-                                                                          parameters[(growthfunction.nparams + 1):(growthfunction.nparams + aggregationfunction.nparams)]),
-                                       parameterset_breakage = convert(Vector{eltype(parameters)},
-                                                                       parameters[(growthfunction.nparams + aggregationfunction.nparams + 1):(growthfunction.nparams + aggregationfunction.nparams + breakagefunction.nparams)]),
-                                       initial_concentration = initialconc,
-                                       solver = solver,
-                                       initial_state = initial_state,) # Allow passing an initial state
-    #
-
-    crsolution = _simulatecrystallisation(crproblem, save_idx)
-
-    return crproblem, crsolution
-end
-"""
-    runsimulation(parameters, nucleationfunction::AbstractFPNucleationFunction,
-                  growthfunction::AbstractDDGrowthFunction, ...) -> (problem, solution)
-
-Simulate with first-principles nucleation and data-driven growth.
-
-See main `runsimulation` docstring for full argument descriptions.
-"""
-function runsimulation(parameters::AbstractArray{TPara},
-                       nucleationfunction::AbstractFPNucleationFunction,
-                       growthfunction::AbstractDDGrowthFunction,
-                       aggregationfunction::AbstractAggregationFunction,
-                       breakagefunction::AbstractBreakageFunction,
-                       initialconc::Float64;
-                       save_idx::S = 0:5.0:480.0,
-                       solver::AbstractSolver = FiniteVol(; meshsize = 500, lmax = 50e-6),
-                       initial_state::Union{Nothing, AbstractArray{<:Real}} = nothing) where {TPara <:
-                                                                                              Real,
-                                                                                              S <:
-                                                                                              AbstractArray{<:Real}}
-
-    ## New convention for parameter arrays will be: [nucleation, growth, aggregation, breakage]
-
-    crproblem = CrystallisationProblem(;
-                                       kinetics_nucleationfunction = nucleationfunction,
-                                       kinetics_growthfunction = growthfunction,
-                                       parameterset_nucleation = parameters[1:(nucleationfunction.nparams)],
-                                       parameterset_growth = TPara[0.0], # Use TPara for fixed value
-                                       kinetics_aggregationfunction = aggregationfunction,
-                                       kinetics_breakagefunction = breakagefunction,
-                                       parameterset_aggregation = convert(Vector{eltype(parameters)},
-                                                                          parameters[(nucleationfunction.nparams + 1):(nucleationfunction.nparams + aggregationfunction.nparams)]),
-                                       parameterset_breakage = convert(Vector{eltype(parameters)},
-                                                                       parameters[(nucleationfunction.nparams + aggregationfunction.nparams + 1):(nucleationfunction.nparams + aggregationfunction.nparams + breakagefunction.nparams)]),
-                                       initial_concentration = initialconc,
-                                       solver = solver,
-                                       initial_state = initial_state,) # Allow passing an initial state
-    #
-
-    crsolution = _simulatecrystallisation(crproblem, save_idx)
-
-    return crproblem, crsolution
-end
-"""
-    runsimulation(parameters, nucleationfunction::AbstractDDNucleationFunction,
-                  growthfunction::AbstractDDGrowthFunction, ...) -> (problem, solution)
-
-Simulate with data-driven nucleation and data-driven growth.
-
-See main `runsimulation` docstring for full argument descriptions.
-"""
-function runsimulation(parameters::AbstractArray{TPara},
-                       nucleationfunction::AbstractDDNucleationFunction,
-                       growthfunction::AbstractDDGrowthFunction,
-                       aggregationfunction::AbstractAggregationFunction,
-                       breakagefunction::AbstractBreakageFunction,
-                       initialconc::Float64;
-                       save_idx::S = 0:5.0:480.0,
-                       solver::AbstractSolver = FiniteVol(; meshsize = 500, lmax = 50e-6),
-                       initial_state::Union{Nothing, AbstractArray{<:Real}} = nothing) where {TPara <:
-                                                                                              Real,
-                                                                                              S <:
-                                                                                              AbstractArray{<:Real}}
-
-    ## New convention for parameter arrays will be: [nucleation, growth, aggregation, breakage]
-
-    crproblem = CrystallisationProblem(;
-                                       kinetics_nucleationfunction = nucleationfunction,
-                                       kinetics_growthfunction = growthfunction,
-                                       parameterset_nucleation = TPara[0.0], # Use TPara for fixed value
-                                       parameterset_growth = TPara[0.0], # Use TPara for fixed value
-                                       kinetics_aggregationfunction = aggregationfunction,
-                                       kinetics_breakagefunction = breakagefunction,
-                                       parameterset_aggregation = parameters[1:(aggregationfunction.nparams)],
-                                       parameterset_breakage = parameters[(aggregationfunction.nparams + 1):(aggregationfunction.nparams + breakagefunction.nparams)],
-                                       initial_concentration = initialconc,
-                                       solver = solver,
-                                       initial_state = initial_state,) # Allow passing an initial state
-    #
-
-    crsolution = _simulatecrystallisation(crproblem, save_idx)
-
-    return crproblem, crsolution
+    structured_parameters = ComponentArray(flat_parameters,
+                                           paramaxis(nucleationfunction,
+                                                     growthfunction,
+                                                     aggregationfunction,
+                                                     breakagefunction))
+    return runsimulation(structured_parameters;
+                         nucl = nucleationfunction,
+                         gr = growthfunction,
+                         agg = aggregationfunction,
+                         br = breakagefunction,
+                         solver = solver,
+                         initial_concentration = initialconc,
+                         initial_state = initial_state,
+                         save_idx = save_idx)
 end
 """
     runsimulation(nucleationfunction::AbstractDDNucleationFunction,
@@ -2112,23 +1969,15 @@ function runsimulation(nucleationfunction::AbstractDDNucleationFunction,
                        initial_state::Union{Nothing, AbstractArray{<:Real}} = nothing) where {S <:
                                                                                               AbstractArray{<:Real}}
 
-    ## New convention for parameter arrays will be: [nucleation, growth, aggregation, breakage]
-
-    crproblem = CrystallisationProblem(;
-                                       kinetics_nucleationfunction = nucleationfunction,
-                                       kinetics_growthfunction = growthfunction,
-                                       parameterset_nucleation = [0.0],
-                                       parameterset_growth = [0.0],
-                                       kinetics_aggregationfunction = aggregationfunction,
-                                       kinetics_breakagefunction = breakagefunction,
-                                       initial_concentration = initialconc,
-                                       solver = solver,
-                                       initial_state = initial_state,) # Allow passing an initial state
-    #
-
-    crsolution = _simulatecrystallisation(crproblem, save_idx)
-
-    return crproblem, crsolution
+    return runsimulation(Float64[],
+                         nucleationfunction,
+                         growthfunction,
+                         aggregationfunction,
+                         breakagefunction,
+                         initialconc;
+                         save_idx = save_idx,
+                         solver = solver,
+                         initial_state = initial_state)
 end
 """
     runsimulation(parameters, nucleationfunction::AbstractFPNucleationFunction,
@@ -2140,16 +1989,13 @@ Calls the full runsimulation with noaggregation() and nobreakage().
 
 See main `runsimulation` docstring for full argument descriptions.
 """
-function runsimulation(parameters::AbstractArray{TPara},
+function runsimulation(parameters::AbstractVector{TPara},
                        nucleationfunction::AbstractFPNucleationFunction,
                        growthfunction::AbstractFPGrowthFunction,
                        initialconc::Float64;
-                       save_idx::S = 0:5.0:480.0,
+                       save_idx = 0:5.0:480.0,
                        solver::AbstractSolver = MoM(),
-                       initial_state::Union{Nothing, AbstractArray{<:Real}} = nothing) where {TPara <:
-                                                                                              Real,
-                                                                                              S <:
-                                                                                              AbstractArray{<:Real}}
+                       initial_state::Union{Nothing, AbstractVector} = nothing) where {TPara <: Real}
     return runsimulation(parameters,
                          nucleationfunction,
                          growthfunction,
