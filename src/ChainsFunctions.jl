@@ -429,7 +429,7 @@ end
                  adtype = AutoForwardDiff(chunksize = 4)), n_samples = 1000,
                  n_chains = 4, burnin = 0, extrastring = "Empty",
                  symbols = nothing, outputdir = nothing, saveplot = true,
-                 verbosity = 1) -> Chains
+                 showplot = false, verbosity = 1) -> Chains
 
 Full Bayesian inference routine mirroring `run_abc`: builds the model via
 [`nuts_model`](@ref), samples with `sampler` (default NUTS with ForwardDiff
