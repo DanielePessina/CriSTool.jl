@@ -49,7 +49,6 @@ using Metaheuristics
 using ConcreteStructs
 using Dates
 using MonteCarloMeasurements
-using Trapz
 import Term
 using PrettyTables
 using StaticArrays
@@ -82,7 +81,8 @@ export AbstractSolution, state_vars, size_metrics, observable_values, solvent_st
 export AbstractNucleationFunction, AbstractGrowthFunction, nucl_CNT,
        nucl_empirical, nucl_CNTnoS, growth_empirical, growth_BpS, growth_BCF
 export AbstractAggregationFunction, AbstractBreakageFunction, nobreakage,
-       breakage_empirical, noaggregation
+       breakage_empirical, breakage_uniform, noaggregation,
+       aggr_scalar, aggr_linear, aggr_linearvol, aggr_avg
 export runsimulation, paramaxis, crystallisation_odeproblem,
        get_characteristic_size, getmomentsizes
 export AbstractPELossFunction, AbstractVarianceModel, MeasuredVariance, RelativeVariance,

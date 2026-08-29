@@ -918,6 +918,8 @@ Base.@kwdef @concrete struct aggr_avg <: AbstractAggregationFunction
     string::String = "Average Aggr"
 end
 
+paramaxis(::aggr_avg) = ComponentArrays.Axis(logβ = 1)
+
 ## Loss-function structs
 """
     AbstractPELossFunction

@@ -234,12 +234,22 @@
         empirical = CriSTool.breakagerate(CriSTool.breakage_empirical(),
                                            [0.5, 1.0], problem, state, 0.0)
         @test length(empirical) == solver.meshsize
-        @test empirical[end] ≈ -0.5 * solver.cell_centre[end]^3
+        empirical_parent_length = solver.cell_centre[end]
+        empirical_parent_frequency = 0.5 * empirical_parent_length^3
+        empirical_same_cell_birth = empirical_parent_frequency *
+                                     2 * (empirical_parent_length^3 - solver.cell_face[end - 1]^3) /
+                                     empirical_parent_length^3
+        @test empirical[end] ≈ empirical_same_cell_birth - empirical_parent_frequency
 
         uniform = CriSTool.breakagerate(CriSTool.breakage_uniform(),
                                          [log(0.5), 1.0], problem, state, 0.0)
         @test length(uniform) == solver.meshsize
-        @test uniform[end] ≈ -0.5 * (1e6 * solver.cell_centre[end])^3
+        uniform_parent_length = solver.cell_centre[end]
+        uniform_parent_frequency = 0.5 * (1e6 * uniform_parent_length)^3
+        uniform_same_cell_birth = uniform_parent_frequency *
+                                  2 * (uniform_parent_length^3 - solver.cell_face[end - 1]^3) /
+                                  uniform_parent_length^3
+        @test uniform[end] ≈ uniform_same_cell_birth - uniform_parent_frequency
     end
 
 end

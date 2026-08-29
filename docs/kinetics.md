@@ -130,3 +130,48 @@ each new struct. For most runs you can use the provided no-op models:
 agg = noaggregation()  # paramaxis = Axis() (no parameters)
 br  = nobreakage()     # paramaxis = Axis()
 ```
+
+### Built-in aggregation kernels
+
+The finite-volume population balance uses crystal length `L` as its grid
+coordinate, but aggregation adds crystal volume. A collision between lengths
+`L1` and `L2` therefore produces a particle with representative volume
+`L1^3 + L2^3`. The aggregation operator uses the standard binary
+Smoluchowski convention: unequal-size pairs are counted once, and equal-size
+pairs carry a factor of one half.
+
+The available kernels are:
+
+| Type | Kernel | `logβ` prefactor convention |
+| --- | --- | --- |
+| `aggr_scalar` | `β` | `β = 10^logβ` |
+| `aggr_linear` | `β * (L1 + L2)` | `L` is in metres |
+| `aggr_linearvol` | `β * kv * (L1^3 + L2^3)` | `kv` is the problem volume shape factor |
+| `aggr_avg` | `β * (L1 + L2) / 2` | arithmetic mean of the two lengths |
+
+The aggregation prefactor is dimensional. Its units depend on the selected
+kernel, so fitted values must not be moved between kernels without converting
+their units. `aggr_linearvol` uses physical crystal volume
+`v = kv * L^3`.
+
+### Built-in breakage kernels
+
+`breakage_empirical` and `breakage_uniform` use binary breakage with a
+daughter-number distribution uniform in crystal volume. For a parent of
+length `λ`, the equivalent distribution on the length coordinate is
+`b(L | λ) = 6L^2 / λ^3` for `0 ≤ L ≤ λ`. It produces two daughters and
+conserves the third length moment, which represents crystal volume.
+
+The selection-rate conventions are different for compatibility with existing
+fitted parameters:
+
+| Type | Parent selection rate |
+| --- | --- |
+| `breakage_empirical` | `Γ(L) = b * L^(3n)` with `L` in metres |
+| `breakage_uniform` | `Γ(L) = exp(logb) * (L / 1μm)^(3n)` |
+
+Both models use `breakagerate` to return daughter birth minus parent death.
+Fragments outside the finite length mesh are not represented; mesh-refinement
+tests are therefore required when checking crystal-volume conservation. The
+coordinate and moment conventions follow the size-based crystallisation PBE
+formulation in [Zhang et al. (2025)](https://doi.org/10.1016/j.compchemeng.2024.108860).
