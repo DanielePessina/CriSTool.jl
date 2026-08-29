@@ -15,6 +15,8 @@ import StaticArrays
     include("test_staticarrays.jl")
     include("test_input_validation.jl")
     include("test_chainutilities.jl")
+    include("test_bayesian.jl")
+    include("test_generalization.jl")
     include("test_uncertainty_quantification.jl")
     include("test_autodiff.jl")
     include("test_gradients.jl")

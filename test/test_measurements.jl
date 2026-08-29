@@ -53,6 +53,29 @@ end
     @test isempty(load_experiments(fixture, "Unseeded_PE", 999.0))
 end
 
+@testset "Table-driven measurement loader" begin
+    fixture = joinpath(@__DIR__, "fixtures", "real-experimental-dataset.xlsx")
+    measurements = load_measurements(
+        fixture,
+        "Unseeded_PE";
+        observables = (; concentration = (:Concentration, :Concentration_var),
+                       particle_size = (:PS, :PS_var)),
+        scalar_observables = (:particle_size,),
+        metadata_cols = (; temperature = :Temperature, loading = :Loading, system = :System),
+        temperature_transform = value -> value + 273.15,
+        filters = (; Loading = 0.0))
+
+    @test length(measurements) == 7
+    @test propertynames(measurements[1].observables) == (:concentration, :particle_size)
+    @test measurements[1].observables.concentration.time ==
+          [0.0, 30.0, 60.0, 90.0, 120.0, 150.0, 180.0, 225.0, 270.0]
+    @test measurements[1].observables.particle_size.time == 270.0
+    @test measurements[1].observables.particle_size.mean ≈ 9.2480539
+    @test measurements[1].temperature == 290.15
+    @test measurements[1].loading == 0.0
+    @test measurements[1].metadata.system == "Unseeded"
+end
+
 @testset "Balancers" begin
     fixture = joinpath(@__DIR__, "fixtures", "real-experimental-dataset.xlsx")
     ms = load_experiments(fixture, "Unseeded_PE", 0.0)
@@ -77,6 +100,12 @@ end
         @test m.observables.d43.variance >= (0.1 * m.observables.d43.mean)^2 - 1e-12
         @test m.observables.d50q.variance >= (0.1 * m.observables.d50q.mean)^2 - 1e-12
     end
+
+    custom = CrystallisationExperiment(;
+        observables = (; pH = Observable(; time = [0.0, 1.0], mean = [7.0, 7.5])),
+        temperature = 290.15, loading = 0.0, exp_id = 99)
+    custom_balanced = balance_variances([custom]; obs = :pH, min_rel_std_pc = 10)
+    @test custom_balanced[1].observables.pH.variance ≈ [0.49, 0.5625]
 end
 
 @testset "Bootstrap resampling" begin
@@ -111,6 +140,15 @@ end
     b3 = bootstrap_repeatmeasurements(ms, 2, true; seed = 1)
     @test length(b3) == 2
     @test all(isempty, b3) == false
+
+    generic1 = bootstrap_measurements(ms, 1; seed = 17)
+    generic2 = bootstrap_measurements(ms, 1; seed = 17)
+    @test length(generic1) == 1
+    @test length(generic1[1]) == length(ms)
+    @test generic1[1][1].observables.concentration.time ==
+          generic2[1][1].observables.concentration.time
+    @test generic1[1][1].observables.d43.mean == generic2[1][1].observables.d43.mean
+    @test generic1[1][1].metadata == ms[1].metadata
 end
 
 @testset "Legacy loaders" begin

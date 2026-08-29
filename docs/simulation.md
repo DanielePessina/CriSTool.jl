@@ -30,6 +30,11 @@ Both forms accept AD types (`Vector{Dual}` from ForwardDiff, etc.) and pass
 them through unchanged, so optimisers and PE routines that hand in flat
 vectors keep working without modification.
 
+For coupled solvent variables, provide `initial_solvent_state` and a
+`solvent_dynamics` callable. Solver states keep the population variables first
+and the named solvent variables last; `solution.solvent_state` exposes the
+resulting trajectories.
+
 To build a structured parameter vector explicitly — useful when you want to
 read or set a single field by name — use the composite axis:
 

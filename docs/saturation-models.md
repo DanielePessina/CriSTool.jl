@@ -40,7 +40,8 @@ supersaturation(prob, state, t)                         # state[end] / solubilit
 
 ## Notes
 
-- The liquid-phase concentration is the last component of both the MoM and
+- The solvent-phase concentration is the named `:concentration` component of
+  both the MoM and
   discretised solver states, so `supersaturation(prob, state, t)` is
   solver-agnostic.
 - The legacy `_get_saturationconcentration` helper has been removed; use the

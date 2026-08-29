@@ -44,15 +44,16 @@ paramaxis(prob::CrystallisationProblem) = paramaxis(prob.kinetics_nucleationfunc
 
 
 """
-    crystal_state(state) -> AbstractVector
+    crystal_state(problem, state) -> AbstractVector
 
 Crystal-population part of a solver state: the named `n` component for
-ComponentArray states (MoM moments), or `state[1:end-1]` for flat
-discretised states (mesh densities). The liquid-phase concentration is the
-last state component in both layouts.
+ComponentArray states (MoM moments), or the state prefix before the named
+solvent-state variables for flat discretised states (mesh densities).
 """
 crystal_state(state::ComponentArrays.ComponentVector) = state.n
 crystal_state(state::AbstractVector) = @view state[1:(end - 1)]
+crystal_state(problem::CrystallisationProblem, state) =
+    @view state[1:(end - length(propertynames(problem.initial_solvent_state)))]
 
 #### Kinetics
 ## Nucleation
@@ -196,7 +197,8 @@ function nucleationrate(nf::nucl_secondary, parameters::T, prob::Crystallisation
         base_rate = (60 * exp(p.Aj)) *
                     exp(-(p.Ea * 1e3) / (8.314 * temp)) *
                     (S - 1)^p.j
-        base_rate * _secondary_third_moment(prob.solver, prob, crystal_state(state))
+        base_rate * _secondary_third_moment(prob.solver, prob,
+                                            crystal_state(prob, state))
     else
         0.0
     end
@@ -222,12 +224,8 @@ Calculate combined primary (empirical) and secondary nucleation rate.
 """
 function nucleationrate(nf::nucl_prim_plus_second, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     p = _named_params(nf, parameters)
-    S = supersaturation(prob, state, t)
-    temp = temperature(prob.temp_profile, t)
-    prim_rate = nucleationrate(nucl_empirical_energy(), p.prim, S, prob, temp,
-                               prob.loading, crystal_state(state))
-    sec_rate = nucleationrate(nucl_secondary(), p.sec, S, prob, temp, prob.loading,
-                              crystal_state(state))
+    prim_rate = nucleationrate(nucl_empirical_energy(), p.prim, prob, state, t)
+    sec_rate = nucleationrate(nucl_secondary(), p.sec, prob, state, t)
     return prim_rate + sec_rate
 end
 
@@ -251,12 +249,8 @@ Calculate combined CNT primary and secondary nucleation rate.
 """
 function nucleationrate(nf::nucl_CNT_plus_second, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     p = _named_params(nf, parameters)
-    S = supersaturation(prob, state, t)
-    temp = temperature(prob.temp_profile, t)
-    cnt_rate = nucleationrate(nucl_CNT(), p.cnt, S, prob, temp, prob.loading,
-                              crystal_state(state))
-    sec_rate = nucleationrate(nucl_secondary(), p.sec, S, prob, temp, prob.loading,
-                              crystal_state(state))
+    cnt_rate = nucleationrate(nucl_CNT(), p.cnt, prob, state, t)
+    sec_rate = nucleationrate(nucl_secondary(), p.sec, prob, state, t)
     return cnt_rate + sec_rate
 end
 
@@ -280,6 +274,8 @@ Calculate CNT nucleation rate using pre-fixed parameters embedded in the struct.
 - Nucleation rate (number/m³/s) if S > 1.001, otherwise 0
 """
 function nucleationrate(NuF::nucl_CNT_fixed, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
+    S = supersaturation(prob, state, t)
+    temp = temperature(prob.temp_profile, t)
     return if S > 1.001
         (60 * exp(NuF.Aj)) *
         S *
@@ -310,6 +306,7 @@ Calculate empirical nucleation rate using pre-fixed parameters embedded in the s
 - Nucleation rate (number/m³/s) if S > 1.001, otherwise 0
 """
 function nucleationrate(NuF::nucl_empirical_fixed, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
+    S = supersaturation(prob, state, t)
     return S > 1.001 ? (60 * 10^(NuF.Aj)) * (S - 1)^NuF.j : 0.0
 end
 
@@ -331,6 +328,8 @@ Calculate nucleation rate using Classical Nucleation Theory (CNT) with loading-d
 - Nucleation rate (number/m³/s) using the parameters corresponding to the current loading
 """
 function nucleationrate(nucl_func::nucl_CNT_multiloading, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
+    S = supersaturation(prob, state, t)
+    temp = temperature(prob.temp_profile, t)
     # Find which prob.loading corresponds to the current prob.loading value
     loading_idx = findfirst(==(prob.loading), nucl_func.unique_loadings)
 
@@ -482,15 +481,12 @@ function growthrate(gf::growth_energy_multiloading, parameters, prob::Crystallis
     # Extract the relevant A and γ parameters for this prob.loading
     param_idx = 2 * (loading_idx - 1) + 1
     A_param::Real = parameters[param_idx]
-    γ_param::Real = parameters[param_idx + 1]
+    g_param::Real = parameters[param_idx + 1]
 
-    # Apply the standard CNT nucleation rate formula
-    return if S > 1.001
-        growthrate(growth_energy(), [A_param, γ_param], S, prob, temp, prob.loading,
-                   crystal_state(state))
-    else
-        0.0
-    end
+    return S > 1.001 ?
+           exp10(A_param) * exp(-gf.Ea / (8.314 * temp)) *
+           ((S - 1)^g_param) :
+           0.0
 end
 
 
@@ -591,24 +587,17 @@ Calculate length-dependent dissolution rate (negative growth).
 """
 function growthrate(gf::growth_dissolution_length, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     pn = _named_params(gf, parameters)
-    sat_concentration = saturation_concentration(lysozyme_saturation(), CriSTool.ConstantTemperature(temp))
+    S = supersaturation(prob, state, t)
+    temp = temperature(prob.temp_profile, t)
+    sat_concentration = saturation_concentration(prob, t)
     concentration = S * sat_concentration
 
-    try
-        return concentration < sat_concentration ?
-               -(pn.Ad * 1e-9) .*
-               exp(-(pn.Ead * 1e3) ./ (8.314 .* temp)) .*
-               ((sat_concentration - concentration) .^ pn.d) .*
-               (1 .+ pn.κ * 1e3 .* prob.solver.cell_centre) .^ pn.p :
-               zeros(size(prob.solver.cell_centre))
-    catch e
-        if e isa DomainError
-            println("DomainError in growthrate(growth_dissolution): S = $S, parameters = $parameters, temp = $temp")
-            rethrow(e)
-        else
-            rethrow(e)
-        end
-    end
+    return concentration < sat_concentration ?
+           -(pn.Ad * 1e-9) .*
+           exp(-(pn.Ead * 1e3) ./ (8.314 .* temp)) .*
+           ((sat_concentration - concentration) .^ pn.d) .*
+           (1 .+ pn.κ * 1e3 .* prob.solver.cell_centre) .^ pn.p :
+           zeros(size(prob.solver.cell_centre))
 end
 
 """
@@ -633,25 +622,14 @@ function growthrate(gf::growth_dissolution, parameters::T, prob::Crystallisation
     p = _named_params(gf, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
-    sat_concentration = saturation_concentration(lysozyme_saturation(), CriSTool.ConstantTemperature(temp))
+    sat_concentration = saturation_concentration(prob, t)
     concentration = S * sat_concentration
 
-    try
-        return concentration < sat_concentration ?
-               -(p.Ad * 1e-9) *
-               exp(-(p.Ead * 1e3) / (8.314 * temp)) *
-               ((1 - S)^p.d) : # Kind of works but not really:
-               # ((sat_concentration - concentration)^parameters[3]) : # Kind of works but not really:
-
-               0.0
-    catch e
-        if e isa DomainError
-            println("DomainError in growthrate(growth_dissolution): S = $S, parameters = $parameters, temp = $temp")
-            rethrow(e)
-        else
-            rethrow(e)
-        end
-    end
+    return concentration < sat_concentration ?
+           -(p.Ad * 1e-9) *
+           exp(-(p.Ead * 1e3) / (8.314 * temp)) *
+           ((1 - S)^p.d) :
+           0.0
 end
 
 """
@@ -676,11 +654,11 @@ Uses `growth_energy` for supersaturated conditions (S > 1.001) and
 - Growth rate (m/s) if supersaturated, dissolution rate if undersaturated
 """
 function growthrate(gf::growth_energy_dissolution, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
+    p = _named_params(gf, parameters)
+    S = supersaturation(prob, state, t)
     return S > 1.001 ?
-           growthrate(growth_energy(), parameters, S, prob, temp, prob.loading,
-                      crystal_state(state)) :
-           growthrate(growth_dissolution(), parameters, S, prob, temp, prob.loading,
-                      crystal_state(state))
+           growthrate(growth_energy(), p, prob, state, t) :
+           growthrate(growth_dissolution(), p, prob, state, t)
 end
 
 ###
@@ -704,6 +682,7 @@ Calculate empirical growth rate using pre-fixed parameters embedded in the struc
 - Growth rate (m/s) if S > 1.001, otherwise 0
 """
 function growthrate(grf::growth_empirical_fixed, parameters, prob::CrystallisationProblem, state, t) 
+    S = supersaturation(prob, state, t)
     return S > 1.001 ? (grf.Ag * 1e-9) * ((S - 1)^grf.g) : 0.0
 end
 
@@ -740,11 +719,11 @@ function aggregationrate(af::aggr_scalar, parameters::T, prob::CrystallisationPr
     p = _named_params(af, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
-    cumul_numberdensity = cumsum(reverse(crystal_state(state)))
-    return 10^(p.logβ) * 0.5 .* Base.step(prob.solver.cell_centre) .* crystal_state(state) .*
+    cumul_numberdensity = cumsum(reverse(crystal_state(prob, state)))
+    return 10^(p.logβ) * 0.5 .* Base.step(prob.solver.cell_centre) .* crystal_state(prob, state) .*
            cumul_numberdensity .-
-           10^(p.logβ) .* Base.step(prob.solver.cell_centre) .* crystal_state(state) *
-           sum(crystal_state(state))
+           10^(p.logβ) .* Base.step(prob.solver.cell_centre) .* crystal_state(prob, state) *
+           sum(crystal_state(prob, state))
 end
 
 """
@@ -765,12 +744,12 @@ function aggregationrate(af::aggr_linear, parameters::T, prob::CrystallisationPr
     p = _named_params(af, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
-    cumul_numberdensity = cumsum(reverse(crystal_state(state)))
+    cumul_numberdensity = cumsum(reverse(crystal_state(prob, state)))
     cumul_linear = cumsum(prob.solver.cell_centre)
-    return 10^(p.logβ) * 0.5 .* Base.step(prob.solver.cell_centre) .* crystal_state(state) .*
+    return 10^(p.logβ) * 0.5 .* Base.step(prob.solver.cell_centre) .* crystal_state(prob, state) .*
            cumul_numberdensity .* (prob.solver.cell_centre .+ cumul_linear) .-
-           10^(p.logβ) .* Base.step(prob.solver.cell_centre) .* crystal_state(state) *
-           sum(crystal_state(state)) .* (prob.solver.cell_centre .+ cumul_linear)
+           10^(p.logβ) .* Base.step(prob.solver.cell_centre) .* crystal_state(prob, state) *
+           sum(crystal_state(prob, state)) .* (prob.solver.cell_centre .+ cumul_linear)
 end
 
 """
@@ -791,12 +770,12 @@ function aggregationrate(af::aggr_linearvol, parameters::T, prob::Crystallisatio
     p = _named_params(af, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
-    cumul_numberdensity = cumsum(reverse(crystal_state(state)))
+    cumul_numberdensity = cumsum(reverse(crystal_state(prob, state)))
     cumul_linear = cumsum(prob.solver.cell_centre)
-    return 10 .^ (p.logβ) * 0.5 .* Base.step(prob.solver.cell_centre) .* crystal_state(state) .*
+    return 10 .^ (p.logβ) * 0.5 .* Base.step(prob.solver.cell_centre) .* crystal_state(prob, state) .*
            cumul_numberdensity .* (prob.solver.cell_centre .^ 3 .+ cumul_linear .^ 3) .-
-           10^(p.logβ) .* Base.step(prob.solver.cell_centre) .* crystal_state(state) *
-           sum(crystal_state(state)) .* (prob.solver.cell_centre .^ 3 .+ cumul_linear .^ 3)
+           10^(p.logβ) .* Base.step(prob.solver.cell_centre) .* crystal_state(prob, state) *
+           sum(crystal_state(prob, state)) .* (prob.solver.cell_centre .^ 3 .+ cumul_linear .^ 3)
 end
 
 """
@@ -828,13 +807,22 @@ Calculate empirical breakage rate.
 """
 function breakagerate(bf::breakage_empirical, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     p = _named_params(bf, parameters)
-    S = supersaturation(prob, state, t)
-    temp = temperature(prob.temp_profile, t)
-    return trapz(prob.solver.cell_centre[(idx + 1):end] .^ 3,
-                 2 ./ (mesh[(idx + 1):end] .^ 3) .* p.b .*
-                 (mesh[(idx + 1):end]) .^ (3 * p.n) .*
-                 numberdensity[(idx + 1):end]) -
-           p.b .* (mesh[idx]) .^ (3 * p.n) .* numberdensity[idx]
+    mesh = prob.solver.cell_centre
+    numberdensity = crystal_state(prob, state)
+    rates = zeros(promote_type(eltype(numberdensity), typeof(p.b)), length(mesh))
+    for idx in eachindex(mesh)
+        source = if idx < length(mesh)
+            larger_mesh = mesh[(idx + 1):end]
+            larger_density = numberdensity[(idx + 1):end]
+            trapz(larger_mesh .^ 3,
+                  2 ./ (larger_mesh .^ 3) .* p.b .* larger_mesh .^ (3 * p.n) .*
+                  larger_density)
+        else
+            zero(eltype(rates))
+        end
+        rates[idx] = source - p.b * mesh[idx]^(3 * p.n) * numberdensity[idx]
+    end
+    return rates
 end
 
 """
@@ -853,14 +841,14 @@ Calculate uniform breakage rate (daughter fragments uniformly distributed).
 """
 function breakagerate(bf::breakage_uniform, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     p = _named_params(bf, parameters)
-    S = supersaturation(prob, state, t)
-    temp = temperature(prob.temp_profile, t)
-    cumul_numberdensity = cumsum(reverse(crystal_state(state)))
+    cumul_numberdensity = cumsum(reverse(crystal_state(prob, state)))
     cumul_linear = cumsum(prob.solver.cell_centre)
+    fullmesh = prob.solver.cell_centre
+    fullnumberdensity = crystal_state(prob, state)
 
     cumul_integral = Base.step(1e6 * prob.solver.cell_centre) .^ 3 .*
                      cumsum(2 .* (1e6 .* prob.solver.cell_centre) .^ -3 .* exp(p.logb) .*
-                            (1e6 .* prob.solver.cell_centre) .^ (3p.n) .* crystal_state(state))
+                            (1e6 .* prob.solver.cell_centre) .^ (3p.n) .* crystal_state(prob, state))
     return (cumul_integral[end] .- cumul_integral) .-
            exp(p.logb) .* (1e6 .* fullmesh) .^ (3p.n) .* fullnumberdensity
 end
@@ -941,9 +929,9 @@ _get_initial_state(CryProblem) = isnothing(CryProblem.initial_state) ?
                                      CryProblem.initial_state
 
 _zero_state(solver::AbstractDiscretisedSolver, CryProblem) =
-    [zeros(solver.meshsize); CryProblem.initial_concentration]
+    [zeros(solver.meshsize); collect(values(CryProblem.initial_solvent_state))]
 _zero_state(solver::MoM, CryProblem) =
-    [zeros(solver.nmoments + 1); CryProblem.initial_concentration]
+    [zeros(solver.nmoments + 1); collect(values(CryProblem.initial_solvent_state))]
 
 """
     _build_timestepping_algorithm(algorithm_type; step_limiter=nothing, stage_limiter=nothing)
@@ -1078,19 +1066,65 @@ without aggregation or breakage.
 # Returns
 - `CrystallisationMoMSolution` containing time, concentration, and moment-derived sizes
 """
-@inline function _mom_rhs(CryProblem, scalargrowth, B, u::SVector{6})
+@inline function _mom_rhs(CryProblem, scalargrowth, B, solvent_rates, u::SVector{6})
     return SVector(B, scalargrowth * u[1], 2 * scalargrowth * u[2],
                    3 * scalargrowth * u[3], 4 * scalargrowth * u[4],
-                   -3 * CryProblem.kv * CryProblem.ρ * scalargrowth * u[3])
+                   solvent_rates[1])
 end
 
-@inline function _mom_rhs(CryProblem, scalargrowth, B, u::SVector{N}) where {N}
+@inline function _mom_rhs(CryProblem, scalargrowth, B, solvent_rates,
+                          u::SVector{N}) where {N}
     n_states = N
+    n_solvent = length(solvent_rates)
+    n_population = n_states - n_solvent
     return SVector(ntuple(Val(n_states)) do k
-        k == 1 ? B :
-        k == n_states ? -3 * CryProblem.kv * CryProblem.ρ * scalargrowth * u[3] :
-        (k - 1) * scalargrowth * u[k - 1]
+        k <= n_population ?
+            (k == 1 ? B : (k - 1) * scalargrowth * u[k - 1]) :
+            solvent_rates[k - n_population]
     end)
+end
+
+function _solvent_derivatives(problem::CrystallisationProblem, state, time, growth)
+    return _solvent_derivatives(problem, state, time, growth,
+                                problem.solvent_dynamics)
+end
+
+function _solvent_derivatives(problem::CrystallisationProblem, state, time, growth,
+                              solvent_dynamics)
+    rates = solvent_dynamics(problem, state, time, growth)
+    names = propertynames(problem.initial_solvent_state)
+    if rates isa NamedTuple
+        return ntuple(index -> begin
+            name = names[index]
+            hasproperty(rates, name) ? getproperty(rates, name) : zero(growth)
+        end, Val(length(names)))
+    end
+    length(rates) == length(names) ||
+        throw(ArgumentError("solvent_dynamics must return one rate per initial solvent variable."))
+    return rates
+end
+
+function _write_solvent_derivatives!(dst, problem::CrystallisationProblem, rates)
+    n_solvent = length(propertynames(problem.initial_solvent_state))
+    first_solvent = length(dst) - n_solvent + 1
+    @inbounds for index in 1:n_solvent
+        dst[first_solvent + index - 1] = rates[index]
+    end
+    return nothing
+end
+
+function _solvent_solution_state(problem::CrystallisationProblem, solution)
+    names = propertynames(problem.initial_solvent_state)
+    n_solvent = length(names)
+    first_solvent = size(solution, 1) - n_solvent + 1
+    values = ntuple(index -> solution[first_solvent + index - 1, :], Val(n_solvent))
+    return NamedTuple{names}(values)
+end
+
+function _solvent_solution_index(problem::CrystallisationProblem, solution, name::Symbol)
+    position = findfirst(==(name), propertynames(problem.initial_solvent_state))
+    position === nothing && throw(ArgumentError("Unknown solvent-state variable :$name."))
+    return size(solution, 1) - length(propertynames(problem.initial_solvent_state)) + position
 end
 
 function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, GrF, nobreakage,
@@ -1119,7 +1153,8 @@ function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, Gr
                                   CryProblem, u, t)
         B = nucleationrate(CryProblem.kinetics_nucleationfunction, p.nucl,
                            CryProblem, u, t)
-        return _mom_rhs(CryProblem, scalargrowth, B, u)
+        solvent_rates = _solvent_derivatives(CryProblem, u, t, scalargrowth)
+        return _mom_rhs(CryProblem, scalargrowth, B, solvent_rates, u)
     end
 
     θ = ComponentArray(;
@@ -1129,7 +1164,8 @@ function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, Gr
     ET = eltype(CryProblem.parameterset_nucleation)
     n_mom = CryProblem.solver.nmoments
     u0_vec = ET.(_get_initial_state(CryProblem))
-    u0_typed = SVector(ntuple(k -> u0_vec[k], Val(n_mom + 2)))
+    n_states = n_mom + 1 + length(propertynames(CryProblem.initial_solvent_state))
+    u0_typed = SVector(ntuple(k -> u0_vec[k], Val(n_states)))
     ODEprob = ODEProblem(MoM_model, u0_typed, (saveat[1], saveat[end]), θ)
 
     tstep_solver = _resolve_timestepping_algorithm(CryProblem.solver, :tsit5)
@@ -1150,7 +1186,7 @@ function _wrap_solution(CryProblem::CrystallisationProblem{NuclF, GrF, nobreakag
     final_state = collect(sol[:, end])
 
     n_mom = CryProblem.solver.nmoments
-    n_states = n_mom + 2
+    n_states = n_mom + 1 + length(propertynames(CryProblem.initial_solvent_state))
     # Fixed moment indices: state k holds µ_{k-1}; µ2 = state 3, µ3 = state 4,
     # µ4 = state 5. Higher moments (if any) do not change these metrics.
     d32 = n_mom >= 3 ? 1e6 .* sol[4, :] ./ (sol[3, :] .+ 1e-6) :
@@ -1158,15 +1194,17 @@ function _wrap_solution(CryProblem::CrystallisationProblem{NuclF, GrF, nobreakag
     d43 = n_mom >= 4 ? 1e6 .* sol[5, :] ./ (sol[4, :] .+ 1e-6) :
           fill(NaN, length(sol.t))
     mu2 = n_mom >= 2 ? sol[3, :] : fill(NaN, length(sol.t))
+    solvent_solution_state = _solvent_solution_state(CryProblem, sol)
 
     return CrystallisationMoMSolution(sol.t,
-                                      sol[end, :],  # concentration = last state
+                                      solvent_solution_state.concentration,
                                       1e6 * (sol[2, :]) ./ (sol[1, :] .+ 1e-6),
                                       d32,
                                       d43,
                                       mu2,
+                                      solvent_solution_state,
                                       final_state,
-                                      sol.destats,
+                                      sol.stats,
                                       OrdinaryDiffEq.SciMLBase.successful_retcode(sol.retcode))
 end
 
@@ -1242,7 +1280,7 @@ finite volume method with flux limiters.
         # Get properly-typed cache based on state vector type
         _flux_cache = get_tmp(_flux_cache_dc, st)
 
-        numberdensity = @view st[1:(end - 1)]
+    numberdensity = crystal_state(CryProblem, st)
 
         cell_centre = CryProblem.solver.cell_centre
 
@@ -1271,7 +1309,7 @@ finite volume method with flux limiters.
                                                     numberdensity[end - 1]))
 
         # Calculate dstdt for numberdensity part
-        dstdt_nd_view = @view dstdt[1:(end - 1)]
+        dstdt_nd_view = crystal_state(CryProblem, dstdt)
 
         for i in 1:length(dstdt_nd_view) # i is cell index
             dstdt_nd_view[i] = -(_flux_cache[i + 1] - _flux_cache[i]) /
@@ -1293,10 +1331,8 @@ finite volume method with flux limiters.
             dstdt_nd_view .+= br_rate
         end
 
-        # Calculate dstdt for concentration part
-        dstdt[end] = -CryProblem.kv * CryProblem.ρ * (3 *
-                      _concentration_depletion(CryProblem.solver.cell_dL, numberdensity,
-                                               scalargrowth, cell_centre))
+        solvent_rates = _solvent_derivatives(CryProblem, st, t, scalargrowth)
+        _write_solvent_derivatives!(dstdt, CryProblem, solvent_rates)
 
         return nothing
     end
@@ -1356,14 +1392,16 @@ function _wrap_solution(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF
                                                                               TP <:
                                                                               AbstractTemperature}
 
-    nd_matrix = sol[1:(end - 1), :]
+    n_solvent = length(propertynames(CryProblem.initial_solvent_state))
+    nd_matrix = sol[1:(end - n_solvent), :]
     vol_weighted_dens = volumeweighteddensity(CryProblem.solver.cell_centre,
                                               nd_matrix,
                                               CryProblem.kv)
     moments = _momentsizes(CryProblem.solver.cell_centre, nd_matrix)
+    solvent_solution_state = _solvent_solution_state(CryProblem, sol)
 
     return CrystallisationFVSolution(sol.t,
-                                     sol[end, :],
+                                     solvent_solution_state.concentration,
                                      nd_matrix,
                                      vol_weighted_dens,
                                      quantilecalculator(CryProblem.solver.cell_centre,
@@ -1379,8 +1417,9 @@ function _wrap_solution(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF
                                      moments.d32,
                                      moments.d43,
                                      moments.mu2,
+                                     solvent_solution_state,
                                      vec(sol[:, end]),
-                                     sol.destats,
+                                     sol.stats,
                                      OrdinaryDiffEq.SciMLBase.successful_retcode(sol.retcode))
 end
 function _simulatecrystallisation(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
@@ -1460,7 +1499,7 @@ finite volume method with size-dependent growth rates.
         # Get properly-typed cache based on state vector type
         _flux_cache = get_tmp(_flux_cache_dc, st)
 
-        numberdensity = @view st[1:(end - 1)]
+        numberdensity = crystal_state(CryProblem, st)
 
         cell_centre = CryProblem.solver.cell_centre
 
@@ -1496,7 +1535,7 @@ finite volume method with size-dependent growth rates.
                                                    numberdensity[end - 1]))
 
         # Calculate dstdt for numberdensity part
-        dstdt_nd_view = @view dstdt[1:(end - 1)]
+        dstdt_nd_view = crystal_state(CryProblem, dstdt)
 
         for i in 1:length(dstdt_nd_view) # i is cell index
             dstdt_nd_view[i] = -(_flux_cache[i + 1] - _flux_cache[i]) /
@@ -1518,23 +1557,16 @@ finite volume method with size-dependent growth rates.
             dstdt_nd_view .+= br_rate
         end
 
-        # Calculate dstdt for concentration part
-        dstdt[end] = -CryProblem.kv * CryProblem.ρ * (3 *
-                      _concentration_depletion(CryProblem.solver.cell_dL, numberdensity,
-                                               lengthbasedgrowth, cell_centre))
+        solvent_rates = _solvent_derivatives(CryProblem, st, t, lengthbasedgrowth)
+        _write_solvent_derivatives!(dstdt, CryProblem, solvent_rates)
 
         return nothing
     end
 
     function CFLcallback(u, integrator, p, t)
-        g_vec = growthrate(CryProblem.kinetics_growthfunction,
-                           p.gr,
-                           supersaturation(CryProblem, u, t),
-                           CryProblem.solver.cell_centre,
-                           temperature(CryProblem.temp_profile, t),
-                           CryProblem.loading,
-                           @view u[1:(end - 1)])
-        return 0.99 * CryProblem.solver.cell_dL[1] / maximum(g_vec)
+        g_vec = growthrate(CryProblem.kinetics_growthfunction, p.gr,
+                           CryProblem, u, t)
+        return 0.99 * CryProblem.solver.cell_dL / maximum(g_vec)
     end
 
     θ = (;
@@ -1576,14 +1608,16 @@ function _wrap_solution(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF
                                                                              TP <:
                                                                              AbstractTemperature}
 
-    nd_matrix = sol[1:(end - 1), :]
+    n_solvent = length(propertynames(CryProblem.initial_solvent_state))
+    nd_matrix = sol[1:(end - n_solvent), :]
     vol_weighted_dens = volumeweighteddensity(CryProblem.solver.cell_centre,
                                               nd_matrix,
                                               CryProblem.kv)
     moments = _momentsizes(CryProblem.solver.cell_centre, nd_matrix)
+    solvent_solution_state = _solvent_solution_state(CryProblem, sol)
 
     return CrystallisationFVSolution(sol.t,
-                                     sol[end, :],
+                                     solvent_solution_state.concentration,
                                      nd_matrix,
                                      vol_weighted_dens,
                                      quantilecalculator(CryProblem.solver.cell_centre,
@@ -1599,6 +1633,7 @@ function _wrap_solution(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF
                                      moments.d32,
                                      moments.d43,
                                      moments.mu2,
+                                     solvent_solution_state,
                                      vec(sol[:, end]),
                                      OrdinaryDiffEq.SciMLBase.successful_retcode(sol.retcode))
 end
@@ -1684,7 +1719,7 @@ function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, Gr
         _flux_cache = get_tmp(_flux_cache_dc, st)
         _ndens_pad_cache = get_tmp(_ndens_pad_cache_dc, st)
 
-        numberdensity = @view st[1:(end - 1)]
+        numberdensity = crystal_state(CryProblem, st)
         cell_centre = CryProblem.solver.cell_centre
         temp = temperature(CryProblem.temp_profile, t)
         S = supersaturation(CryProblem, st, t)
@@ -1711,7 +1746,7 @@ function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, Gr
                             0.5 * (numberdensity[end] - numberdensity[end - 1]))
 
         # Calculate dstdt for numberdensity part
-        dstdt_nd_view = @view dstdt[1:(end - 1)]
+        dstdt_nd_view = crystal_state(CryProblem, dstdt)
         for i in 1:length(dstdt_nd_view)
             dstdt_nd_view[i] = -(_flux_cache[i + 1] - _flux_cache[i]) /
                                CryProblem.solver.cell_dL
@@ -1730,10 +1765,8 @@ function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, Gr
             dstdt_nd_view .+= br_rate
         end
 
-        # Calculate dstdt for concentration part
-        dstdt[end] = -CryProblem.kv * CryProblem.ρ * (3 *
-                      _concentration_depletion(CryProblem.solver.cell_dL, numberdensity,
-                                               scalargrowth, cell_centre))
+        solvent_rates = _solvent_derivatives(CryProblem, st, t, scalargrowth)
+        _write_solvent_derivatives!(dstdt, CryProblem, solvent_rates)
 
         return nothing
     end
@@ -1785,13 +1818,15 @@ function _wrap_solution(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF
     _flux_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 1))
     _ndens_pad_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 4))
 
-    nd_matrix = sol[1:(end - 1), :]
+    n_solvent = length(propertynames(CryProblem.initial_solvent_state))
+    nd_matrix = sol[1:(end - n_solvent), :]
     vol_weighted_dens = volumeweighteddensity(CryProblem.solver.cell_centre, nd_matrix,
                                               CryProblem.kv)
     moments = _momentsizes(CryProblem.solver.cell_centre, nd_matrix)
+    solvent_solution_state = _solvent_solution_state(CryProblem, sol)
 
     return CrystallisationFVSolution(sol.t, ### Will eventually have to be changed to discretised solution
-                                     sol[end, :],
+                                     solvent_solution_state.concentration,
                                      nd_matrix,
                                      vol_weighted_dens,
                                      quantilecalculator(CryProblem.solver.cell_centre,
@@ -1804,8 +1839,9 @@ function _wrap_solution(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF
                                      moments.d32,
                                      moments.d43,
                                      moments.mu2,
+                                     solvent_solution_state,
                                      sol[:, end],
-                                     sol.destats,
+                                     sol.stats,
                                      OrdinaryDiffEq.SciMLBase.successful_retcode(sol.retcode))
 end
 function _simulatecrystallisation(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF,

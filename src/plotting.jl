@@ -5,7 +5,22 @@
 
 function _resolve_plot_savedir(savedir::Union{Nothing, AbstractString},
                                default_subdir::AbstractString)
-    return isnothing(savedir) ? joinpath(pwd(), default_subdir) : String(savedir)
+    return isnothing(savedir) ? nothing : String(savedir)
+end
+
+_palette(palette_name::Symbol; alpha::Real = 1.0) =
+    alpha == 1.0 ? Makie.to_colormap(palette_name) :
+    [Makie.RGBAf(c, alpha) for c in Makie.to_colormap(palette_name)]
+
+function _save_plot(figure, savename::AbstractString,
+                    savedir::Union{Nothing, AbstractString},
+                    suffix::AbstractString = "")
+    savename != "" || return nothing
+    output_dir = _resolve_plot_savedir(savedir, "Saved Plots")
+    output_dir === nothing && return nothing
+    mkpath(output_dir)
+    save(joinpath(output_dir, "$(savename)$(suffix).png"), figure, px_per_unit = 3)
+    return nothing
 end
 
 """
@@ -27,8 +42,8 @@ Plot pairwise parameter distributions from posterior samples. When a
 - `title`, `savename`, `lossfunction_string`: optional plot metadata.
 
 # Returns
-The generated `Makie.Figure`. If `savename` is non-empty the figure is
-saved to the `R - ABCDE Plots` directory.
+The generated `Makie.Figure`. If `savename` is non-empty and `savedir` is
+set the figure is saved to `savedir`.
 """
 function plot_posterior_pairplot(posterior_df::DataFrame, prior_df::DataFrame,
                                  truth_params::Dict, mean_params::Dict; title = "",
@@ -107,9 +122,7 @@ function plot_posterior_pairplot(posterior_df::DataFrame, prior_df::DataFrame,
         Makie.Label(figure[1, 1][0, :], title)
 
         if savename != ""
-            output_dir = _resolve_plot_savedir(savedir, "R - ABCDE Plots")
-            mkpath(output_dir)
-            save(joinpath(output_dir, "$(savename) Pairplot.png"), figure, px_per_unit = 3)
+            _save_plot(figure, savename, savedir, " Pairplot")
         end
 
         if showplot
@@ -132,8 +145,8 @@ function plot_posterior_pairplot(posterior_df::DataFrame,
     color_palette = :Set2_8
     fontfile = joinpath(@__DIR__, "..", "PaperMono-Regular.ttf")
     ms_cmap = Makie.cgrad([
-                              Plots.palette(color_palette, alpha = 0.1)[3],
-                              Plots.palette(color_palette, alpha = 0.9)[3]
+                              _palette(color_palette; alpha = 0.1)[3],
+                              _palette(color_palette; alpha = 0.9)[3]
                           ],
                           [minimum(posterior_df[!, end]), maximum(posterior_df[!, end])])
 
@@ -145,9 +158,9 @@ function plot_posterior_pairplot(posterior_df::DataFrame,
                            posterior_df => (PairPlots.Scatter(),
                                             PairPlots.HexBin(colormap = ms_cmap),
                                             PairPlots.Contour(),
-                                            PairPlots.MarginHist(color = (Plots.palette(color_palette,
+                                            PairPlots.MarginHist(color = (_palette(color_palette;
                                                                                         alpha = 0.4)[1])),
-                                            PairPlots.MarginDensity(color = Plots.palette(color_palette,
+                                            PairPlots.MarginDensity(color = _palette(color_palette;
                                                                                           alpha = 0.9)[1],
                                                                     linewidth = 3),
                                             PairPlots.MarginQuantileText(),
@@ -156,10 +169,10 @@ function plot_posterior_pairplot(posterior_df::DataFrame,
                            labels = Dict(name => string(name)
                                          for name in propertynames(posterior_df)),
                            PairPlots.Truth(truth_params,
-                                           color = Plots.palette(color_palette)[2],
+                                           color = _palette(color_palette)[2],
                                            linewidth = 3),
                            PairPlots.Truth(mean_params,
-                                           color = Plots.palette(color_palette)[4],
+                                           color = _palette(color_palette)[4],
                                            linewidth = 3), fullgrid = false,
                            bodyaxis = (; xgridvisible = true, ygridvisible = true,
                                        xminorgridvisible = true,))
@@ -175,11 +188,11 @@ function plot_posterior_pairplot(posterior_df::DataFrame,
                                 ]), width = 500, tellwidth = false)
         Makie.Legend(figure[2, 1],
                      [
-                         Makie.PolyElement(color = Plots.palette(color_palette)[1]),
-                         Makie.LineElement(color = Plots.palette(color_palette)[2],
+                         Makie.PolyElement(color = _palette(color_palette)[1]),
+                         Makie.LineElement(color = _palette(color_palette)[2],
                                            linestyle = :solid,
                                            linewidth = 3),
-                         Makie.LineElement(color = Plots.palette(color_palette)[4],
+                         Makie.LineElement(color = _palette(color_palette)[4],
                                            linestyle = :solid,
                                            linewidth = 3),
                          Makie.LineElement(color = :black, linestyle = :solid,
@@ -196,9 +209,7 @@ function plot_posterior_pairplot(posterior_df::DataFrame,
         Makie.Label(figure[1, 1][0, :], title)
 
         if savename != ""
-            output_dir = _resolve_plot_savedir(savedir, "R - ABCDE Plots")
-            mkpath(output_dir)
-            save(joinpath(output_dir, "$(savename) Pairplot.png"), figure, px_per_unit = 3)
+            _save_plot(figure, savename, savedir, " Pairplot")
         end
 
         if showplot
@@ -227,7 +238,8 @@ Compare experimental measurements against ensemble simulation results.
 
 # Returns
 A `Makie.Figure` with concentration and particle-size plots. If
-`savename` is provided the figure is saved to `R - ABCDE Plots`.
+`savename` is provided and `savedir` is set the figure is saved to
+`savedir`.
 """
 function linear_interpolate(x::AbstractVector, y::AbstractVector, t::Real)
     if t <= x[begin]
@@ -527,8 +539,7 @@ function plot_measurements_vs_ensemble(measurements::Vector{<:AbstractExperiment
         ms_whiskerwidth = 10
         ms_linewidtheb = 2
 
-        color_palette = Plots.palette(:Set2_8)
-        color_palette = repeat(collect(color_palette), 10)
+        color_palette = repeat(_palette(:Set2_8), 10)
 
         axis_defaults = (; xlabel = "Batch Time [min]",
                            ylabel = "Lysozyme concentration [mg/mL]",
@@ -698,9 +709,7 @@ function plot_measurements_vs_ensemble(measurements::Vector{<:AbstractExperiment
         end
 
         if savename != ""
-            output_dir = _resolve_plot_savedir(savedir, "Saved Plots")
-            mkpath(output_dir)
-            save(joinpath(output_dir, "$(savename).png"), figure, px_per_unit = 3)
+            _save_plot(figure, savename, savedir)
         end
 
         if showplot
@@ -764,8 +773,7 @@ function plot_ps_measurements_vs_ensemble(measurements::Vector{<:AbstractExperim
         ms_whiskerwidth = 10
         ms_linewidtheb = 2
 
-        color_palette = Plots.palette(:Set2_8)
-        color_palette = repeat(collect(color_palette), 10)
+        color_palette = repeat(_palette(:Set2_8), 10)
 
         axis_defaults = (; xlabel = "Batch Time [min]",
                            ylabel = "Particle size [μm]",
@@ -938,9 +946,7 @@ function plot_ps_measurements_vs_ensemble(measurements::Vector{<:AbstractExperim
         Makie.Label(figure[0, 1], (title), tellwidth = false)
 
         if savename != ""
-            output_dir = _resolve_plot_savedir(savedir, "Saved Plots")
-            mkpath(output_dir)
-            save(joinpath(output_dir, "$(savename).png"), figure, px_per_unit = 3)
+            _save_plot(figure, savename, savedir)
         end
 
         if showplot
@@ -1075,8 +1081,7 @@ function plot_measurements_vs_simulation(measurements::Vector{<:AbstractExperime
         ms_whiskerwidth = 10
         ms_linewidtheb = 2
 
-        color_palette = Plots.palette(:Set2_8)
-        color_palette = repeat(collect(color_palette), 10)
+        color_palette = repeat(_palette(:Set2_8), 10)
 
         axis_defaults = (; xlabel = "Batch Time [min]",
                            ylabel = "Lysozyme concentration [mg/mL]",
@@ -1239,9 +1244,7 @@ function plot_measurements_vs_simulation(measurements::Vector{<:AbstractExperime
         end
 
         if savename != ""
-            output_dir = _resolve_plot_savedir(savedir, "Saved Plots")
-            mkpath(output_dir)
-            save(joinpath(output_dir, "$(savename).png"), figure, px_per_unit = 3)
+            _save_plot(figure, savename, savedir)
         end
 
         if showplot
@@ -1284,8 +1287,7 @@ function plot_ps_measurements_vs_simulation(measurements::Vector{<:AbstractExper
         ms_whiskerwidth = 10
         ms_linewidtheb = 2
 
-        color_palette = Plots.palette(:Set2_8)
-        color_palette = repeat(collect(color_palette), 10)
+        color_palette = repeat(_palette(:Set2_8), 10)
 
         ax1 = Makie.Axis(figure[1, 1], xlabel = "Batch Time [min]",
                          ylabel = "Particle size [μm]",
@@ -1419,9 +1421,7 @@ function plot_ps_measurements_vs_simulation(measurements::Vector{<:AbstractExper
         # Makie.Label(figure[0, 1], (title), tellwidth = false)
 
         if savename != ""
-            output_dir = _resolve_plot_savedir(savedir, "Saved Plots")
-            mkpath(output_dir)
-            save(joinpath(output_dir, "$(savename).png"), figure, px_per_unit = 3)
+            _save_plot(figure, savename, savedir)
         end
 
         if showplot

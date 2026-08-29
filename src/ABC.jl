@@ -19,7 +19,7 @@ function _abcde_target(optimallossfunction::Real, dof::Integer, nparams::Integer
 end
 
 function _resolve_abc_savedir(savedir::Union{Nothing, AbstractString})
-    return isnothing(savedir) ? joinpath(pwd(), "R - ABCDE Plots") : String(savedir)
+    return isnothing(savedir) ? nothing : String(savedir)
 end
 
 function _abc_particles_matrix(particles)
@@ -115,7 +115,7 @@ _sampler_metadata(s::ABCDETurnerSampler) = (K = s.K, kernel = s.kernel)
             validation = nothing, extrastring = "Empty",
             nparticles = 1024, generations = 128, saveplot = true,
             confidenceinterval = 0.95, HPC = false, verbosity = 1,
-            earlystop = false, test = :f, savedir = nothing)
+            earlystop = false, test = :f, outputdir = nothing)
 
 Domain-level ABC inference for crystallisation kinetic parameters. Owns target
 computation, the loss-function lambda, posterior persistence and plotting; the
@@ -129,8 +129,12 @@ choice of sampler (ABCDE, Turner ABCDE, …) is selected via `sampler`.
 - `sampler`: which ABC algorithm to run. Defaults to `ABCDESampler()`.
 - `nparticles`, `generations`: ABC population size and iteration count.
 - `confidenceinterval`, `test`: stopping criterion (F-statistic or χ²).
-- `validation`, `saveplot`, `extrastring`, `HPC`, `earlystop`, `verbosity`,
-  `savedir`: output and execution controls.
+- `validation`, `saveplot`, `extrastring`, `HPC`, `earlystop`, `verbosity`:
+  output and execution controls.
+- `outputdir`: directory for posterior persistence and plots. `nothing`
+  (default) performs no filesystem writes; an explicit directory receives
+  the posterior object (`.jld2`) and — when `saveplot` is true — the ABC
+  and measurement plots.
 
 # Returns
 `(res, dict)` where `res` is the sampler-specific result and `dict` contains
@@ -139,7 +143,7 @@ metadata (e.g. K, kernel for Turner).
 """
 function run_abc(lossfunction::AbstractPELossFunction,
                  measurement::Vector{<:AbstractExperiment},
-                 optimalpara::Vector{Float64}, prior,
+                 optimalpara::AbstractVector{<:Real}, prior,
                  nucleationfunction::AbstractNucleationFunction,
                  growthfunction::AbstractGrowthFunction,
                  aggregationfunction::AbstractAggregationFunction,
@@ -151,7 +155,7 @@ function run_abc(lossfunction::AbstractPELossFunction,
                  generations::Int64 = 128, saveplot::Bool = true,
                  confidenceinterval::Float64 = 0.95, HPC::Bool = false,
                  verbosity::Int64 = 1, earlystop::Bool = false, test::Symbol = :f,
-                 savedir::Union{Nothing, AbstractString} = nothing)
+                 outputdir::Union{Nothing, AbstractString} = nothing)
 
     dof = _dofcalculator(lossfunction, measurement) - length(optimalpara)
 
@@ -200,16 +204,19 @@ function run_abc(lossfunction::AbstractPELossFunction,
                      round.(optimalpara, digits = 4)
 
     now_str = Dates.format(now(), "yy-m-d HH-MM")
-    output_dir = _resolve_abc_savedir(savedir)
-    objects_dir = joinpath(output_dir, "ABCDE Objects")
-    mkpath(objects_dir)
-
+    output_dir = _resolve_abc_savedir(outputdir)
     sampler_meta = _sampler_metadata(sampler)
-    jldsave(joinpath(objects_dir, "$(now_str) $(extrastring)$(save_suffix).jld2");
-            res = res, optmle = optimallossfunction, target = target,
-            optimalpara = optimalpara, prior = prior, sampler_meta...)
 
-    if has_particles && saveplot
+    if output_dir !== nothing
+        objects_dir = joinpath(output_dir, "ABCDE Objects")
+        mkpath(objects_dir)
+
+        jldsave(joinpath(objects_dir, "$(now_str) $(extrastring)$(save_suffix).jld2");
+                res = res, optmle = optimallossfunction, target = target,
+                optimalpara = optimalpara, prior = prior, sampler_meta...)
+    end
+
+    if has_particles && saveplot && output_dir !== nothing
         ABCplot(res, optimalpara, lossfunction, prior;
                 title = Makie.rich("$(now_str) $(extrastring)$(panel_suffix)\n MLE",
                                    Makie.subscript("minimum"), " = $optmle_round MLE",
@@ -267,7 +274,7 @@ Backward-compatible shim over `run_abc` that selects the standard
 """
 function ABCDE_Routine(lossfunction::AbstractPELossFunction,
                        measurement::Vector{<:AbstractExperiment},
-                       optimalpara::Vector{Float64}, prior,
+                       optimalpara::AbstractVector{<:Real}, prior,
                        nucleationfunction::AbstractNucleationFunction,
                        growthfunction::AbstractGrowthFunction,
                        aggregationfunction::AbstractAggregationFunction,
@@ -279,7 +286,7 @@ function ABCDE_Routine(lossfunction::AbstractPELossFunction,
                        confidenceinterval::Float64 = 0.95, HPC::Bool = false,
                        verbosity::Int64 = 1,
                        earlystop::Bool = false, test::Symbol = :f,
-                       savedir::Union{Nothing, AbstractString} = nothing)
+                       outputdir::Union{Nothing, AbstractString} = nothing)
     return run_abc(lossfunction, measurement, optimalpara, prior, nucleationfunction,
                    growthfunction, aggregationfunction, breakagefunction;
                    solver = solver, sampler = ABCDESampler(α = alpha),
@@ -287,7 +294,7 @@ function ABCDE_Routine(lossfunction::AbstractPELossFunction,
                    nparticles = nparticles, generations = generations, saveplot = saveplot,
                    confidenceinterval = confidenceinterval, HPC = HPC,
                    verbosity = verbosity, earlystop = earlystop, test = test,
-                   savedir = savedir)
+                   outputdir = outputdir)
 end
 
 """
@@ -298,7 +305,7 @@ the supplied Turner-specific kwargs. See `run_abc` for the full argument list.
 """
 function ABCDE_Turner_Routine(lossfunction::AbstractPELossFunction,
                               measurement::Vector{<:AbstractExperiment},
-                              optimalpara::Vector{Float64}, prior,
+                              optimalpara::AbstractVector{<:Real}, prior,
                               nucleationfunction::AbstractNucleationFunction,
                               growthfunction::AbstractGrowthFunction,
                               aggregationfunction::AbstractAggregationFunction,
@@ -321,7 +328,7 @@ function ABCDE_Turner_Routine(lossfunction::AbstractPELossFunction,
                               γ2_burnin::Float64 = 0.5,
                               kernel::Symbol = :gaussian,
                               burnin_frac::Float64 = 0.3,
-                              savedir::Union{Nothing, AbstractString} = nothing)
+                              outputdir::Union{Nothing, AbstractString} = nothing)
     sampler = ABCDETurnerSampler(K = K, p_migration = p_migration,
                                  p_crossover = p_crossover, κ = κ,
                                  γ2_burnin = γ2_burnin, kernel = kernel,
@@ -333,7 +340,7 @@ function ABCDE_Turner_Routine(lossfunction::AbstractPELossFunction,
                    nparticles = nparticles, generations = generations, saveplot = saveplot,
                    confidenceinterval = confidenceinterval, HPC = HPC,
                    verbosity = verbosity, earlystop = earlystop, test = test,
-                   savedir = savedir)
+                   outputdir = outputdir)
 end
 
 function _append_symbols!(names::Vector{Symbol}, fn, prefix::String)
@@ -349,8 +356,8 @@ function _append_symbols!(names::Vector{Symbol}, fn, prefix::String)
     end
 end
 
-function _kinetic_parameter_symbols(nucleationfunction, growthfunction,
-                                    aggregationfunction, breakagefunction)
+function kinetic_parameter_symbols(nucleationfunction, growthfunction,
+                                   aggregationfunction, breakagefunction)
     names = Symbol[]
     _append_symbols!(names, nucleationfunction, "nu")
     _append_symbols!(names, growthfunction, "gr")
@@ -381,8 +388,8 @@ function ABCplot(abcres, params::Vector{Float64}, lossfunction::AbstractPELossFu
 
     mle = abcres.C
     df = DataFrame([samples_mat;; Vector(mle)], :auto)
-    param_names = _kinetic_parameter_symbols(nucleationfunction, growthfunction,
-                                             aggregationfunction, breakagefunction)
+    param_names = kinetic_parameter_symbols(nucleationfunction, growthfunction,
+                                            aggregationfunction, breakagefunction)
     if length(param_names) < length(params)
         append!(param_names,
                 [Symbol("θ_$i") for i in (length(param_names) + 1):length(params)])
@@ -435,16 +442,16 @@ function _ABCmeasurementplot(abcres, lossfunction::AbstractPELossFunction,
                                    growthfunction, aggregationfunction, breakagefunction,
                                    solver, HPC = HPC)
 
-    optimal_solutions = [(CriSTool.runsimulation(optimalparameters,
-                                                 nucl = nucleationfunction,
-                                                 gr = growthfunction,
-                                                 agg = aggregationfunction,
-                                                 br = breakagefunction,
-                                                 initial_concentration = initial_concentration(measurements[m]),
-                                                 solver = solver,
-                                                 save_idx = ensembleresults[m].time,
-                                                 temp_profile = ConstantTemperature(measurements[m].temperature),
-                                                 loading = measurements[m].loading))
+    optimal_solutions = [(runsimulation(optimalparameters,
+                                         nucl = nucleationfunction,
+                                         gr = growthfunction,
+                                         agg = aggregationfunction,
+                                         br = breakagefunction,
+                                         initial_concentration = initial_concentration(measurements[m]),
+                                         solver = solver,
+                                         save_idx = ensembleresults[m].time,
+                                         temp_profile = ConstantTemperature(measurements[m].temperature),
+                                         loading = measurements[m].loading))
                          for m in eachindex(measurements)]
 
     plot_measurements_vs_ensemble(measurements, ensembleresults, optimal_solutions;
@@ -481,16 +488,16 @@ function _ABCmeasurementplot_ps(abcres, lossfunction::AbstractPELossFunction,
                                    growthfunction, aggregationfunction, breakagefunction,
                                    solver, HPC = HPC)
 
-    optimal_solutions = [(CriSTool.runsimulation(optimalparameters,
-                                                 nucl = nucleationfunction,
-                                                 gr = growthfunction,
-                                                 agg = aggregationfunction,
-                                                 br = breakagefunction,
-                                                 initial_concentration = initial_concentration(measurements[m]),
-                                                 solver = solver,
-                                                 save_idx = ensembleresults[m].time,
-                                                 temp_profile = ConstantTemperature(measurements[m].temperature),
-                                                 loading = measurements[m].loading))
+    optimal_solutions = [(runsimulation(optimalparameters,
+                                         nucl = nucleationfunction,
+                                         gr = growthfunction,
+                                         agg = aggregationfunction,
+                                         br = breakagefunction,
+                                         initial_concentration = initial_concentration(measurements[m]),
+                                         solver = solver,
+                                         save_idx = ensembleresults[m].time,
+                                         temp_profile = ConstantTemperature(measurements[m].temperature),
+                                         loading = measurements[m].loading))
                          for m in eachindex(measurements)]
 
     plot_ps_measurements_vs_ensemble(measurements, ensembleresults, optimal_solutions;

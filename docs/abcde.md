@@ -114,5 +114,6 @@ res, meta = ABCDE_Routine(lossfn, measurements, optimal_params, prior,
 - Prefer `product_distribution` or
   `create_product_prior`.
 - Use `validation = ...` to run posterior predictive checks on extra data.
-- Pass `savedir = ...` to override the default `R - ABCDE Plots/` output
-  location (e.g. for tests or scratch runs).
+- Pass `outputdir = ...` to persist the posterior object (`.jld2`) and
+  plots. With the default `outputdir = nothing` the routine performs no
+  filesystem writes (it never writes into the current working directory).

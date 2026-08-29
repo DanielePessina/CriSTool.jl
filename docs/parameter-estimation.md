@@ -28,7 +28,7 @@ PE_lb = [10.0, 0.15, -10.0, 1.0]
 PE_ub = [65.0, 2.5, 10.0, 3.5]
 
 solver = MoM()
-lossfn = logMLE(weighting = (1.0, 1.0))
+lossfn = logMLE(weighting = [1.0, 1.0])
 
 # Metaheuristic search
 optres = PE_Routine(lossfn, experiments, PE_lb, PE_ub,
@@ -44,9 +44,9 @@ optimal_params = minimizer(optres)
 
 Built-in loss function types (see `Structs.jl` and `PELossFunctions.jl`):
 
-- `logMLE`: weighted negative log-likelihood (concentration trajectory +
-  final particle size)
-- `mae`: weighted mean absolute error
+- `logMLE`: weighted Gaussian negative log-likelihood over the active
+  observables
+- `mae`: weighted mean absolute error over the active observables
 
 Each loss function is a struct subtype of `AbstractPELossFunction` and has
 methods of `loss`:
@@ -56,6 +56,16 @@ problem = CrystallisationProblem(; kinetics_nucleationfunction = nucl_f,
                                  kinetics_growthfunction = growth_f,
                                  solver = solver)
 L = loss(lossfn, problem, optimal_params, experiments)
+```
+
+Weights follow the observable field order. The default `[1.0, 1.0]` retains
+the concentration/size convention; additional observables receive weight 1.0
+unless explicit weights are supplied. `logMLE` uses measured variances by
+default, with `RelativeVariance(percent)` available for relative-error data:
+
+```julia
+lossfn = logMLE(weighting = [1.0, 0.5, 1.0],
+                variance_model = RelativeVariance(5.0))
 ```
 
 The `problem` carries kinetics and solver; per-experiment conditions
@@ -107,3 +117,44 @@ optres = PE_Routine(lossfn, experiments, PE_lb, PE_ub,
                     nucl_f, growth_f, noaggregation(), nobreakage();
                     solver = MoM())
 ```
+
+## MCMC posterior sampling (Turing NUTS)
+
+`nuts_model` builds a ready-to-sample Turing model from the same loss used
+by `PE_Routine`/`run_abc`. You provide one prior distribution per parameter
+(any `Distributions` distribution — triangular on the MLE is the usual
+choice):
+
+```julia
+prior = [TriangularDist(PE_lb[i], PE_ub[i], optimal_params[i])
+         for i in eachindex(optimal_params)]
+
+model = nuts_model(experiments, prior, nucl_f, growth_f,
+                   noaggregation(), nobreakage();
+                   solver = solver, lossfunction = lossfn)
+
+chain = Turing.sample(model, NUTS(1000, 0.65; adtype = AutoForwardDiff(chunksize = 4)),
+                      1000; progress = false)
+chain = rename_chain(chain, kinetic_parameter_symbols(nucl_f, growth_f,
+                                                      noaggregation(), nobreakage()))
+```
+
+Chain parameters are sampled as `θ[1]`, `θ[2]`, … and renamed afterwards
+with `rename_chain`; `kinetic_parameter_symbols` infers the names (`:Aⱼ`,
+`:γ`, `:Ag`, `:g`, …) from the kinetics' own symbols.
+
+`MCMC_Routine` wraps the whole flow (model build + sampling + rename +
+persistence) and mirrors `run_abc`:
+
+```julia
+chain = MCMC_Routine(experiments, prior, nucl_f, growth_f,
+                     noaggregation(), nobreakage();
+                     solver = solver, lossfunction = lossfn,
+                     sampler = NUTS(1000, 0.65; adtype = AutoForwardDiff(chunksize = 4)),
+                     n_samples = 1000, n_chains = 4,
+                     outputdir = "mcmc_results")  # nothing = no file writes
+```
+
+`MCMC_Routine` returns the named chain; with `outputdir` set it persists the
+chain (`.jld2`) and writes posterior pair, trace/density and
+measurements-vs-ensemble plots.

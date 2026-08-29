@@ -21,7 +21,7 @@ PE_lb = [10.0, 0.15, -10.0, 1.0]
 PE_ub = [65.0, 2.5, 10.0, 3.5]
 
 solver = MoM()
-lossfn = logMLE(weighting = (1.0, 1.0))
+lossfn = logMLE(weighting = [1.0, 1.0])
 
 # 1) BlackBoxOptim adaptive DE
 res_bbo = PE_Routine_Optimisation(lossfn, measurements, PE_lb, PE_ub,

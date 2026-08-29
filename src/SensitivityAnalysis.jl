@@ -26,7 +26,8 @@ function forwardsensitivity(CryProblem::CrystallisationProblem{NuclF, GrF, nobre
         for k in 2:(n_mom + 1)
             du[k] = (k - 1) * scalargrowth * u[k - 1]
         end
-        du[end] = -3 * CryProblem.kv * CryProblem.ρ * scalargrowth * u[3]
+        solvent_rates = _solvent_derivatives(CryProblem, u, t, scalargrowth)
+        _write_solvent_derivatives!(du, CryProblem, solvent_rates)
     end
 
     θ = ComponentArray(nucl = CryProblem.parameterset_nucleation,
@@ -67,7 +68,7 @@ function forwardsensitivity(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, 
 
     function HRFV_FLWmodel(dstdt, st, p, t)
 
-        numberdensity = @view st[1:(end - 1)]
+        numberdensity = crystal_state(CryProblem, st)
 
         scalargrowth = growthrate(CryProblem.kinetics_growthfunction, p.gr,
                                   CryProblem, st, t)
@@ -84,10 +85,9 @@ function forwardsensitivity(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, 
                     scalargrowth *
                     (numberdensity[end] + 0.5 * (numberdensity[end] - numberdensity[end-1])))
 
-        dstdt[1:(end - 1)] = -diff(flux) / CryProblem.solver.cell_dL
-        dstdt[end] = -CryProblem.kv * CryProblem.ρ *
-                     (3 * sum(CryProblem.solver.cell_dL .* numberdensity .* scalargrowth .*
-                          CryProblem.solver.cell_centre .^ 2))
+        dstdt[1:length(numberdensity)] = -diff(flux) / CryProblem.solver.cell_dL
+        solvent_rates = _solvent_derivatives(CryProblem, st, t, scalargrowth)
+        _write_solvent_derivatives!(dstdt, CryProblem, solvent_rates)
 
     end
 
@@ -96,9 +96,7 @@ function forwardsensitivity(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, 
                        br = CryProblem.parameterset_breakage,
                        agg = CryProblem.parameterset_aggregation)
     ODEprob = ODEForwardSensitivityProblem(HRFV_FLWmodel,
-                                           [zeros(Float64,
-                                                  CryProblem.solver.meshsize);
-                                            CryProblem.initial_concentration],
+                                           Float64.(_get_initial_state(CryProblem)),
                                            (0.0, saveat[end]), θ)
 
     tstep_solver = _resolve_timestepping_algorithm(CryProblem.solver, :tsit5)

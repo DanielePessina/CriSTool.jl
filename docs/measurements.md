@@ -16,6 +16,22 @@ path = joinpath(@__DIR__, "fake-experimental-dataset.xlsx")
 experiments = load_experiments(path, "Unseeded_PE", 0.0)
 ```
 
+For a different tabular layout, use the table-driven loader:
+
+```julia
+experiments = load_measurements(path, "Unseeded_PE";
+    observables = (; concentration = (:Concentration, :Concentration_var),
+                   particle_size = (:PS, :PS_var)),
+    scalar_observables = (:particle_size,),
+    metadata_cols = (; temperature = :Temperature, loading = :Loading,
+                     system = :System),
+    temperature_transform = T -> T + 273.15)
+```
+
+Each observable may have its own time grid. Series observables retain all
+usable rows; scalar observables use the final available row. Extra metadata is
+retained in `experiment.metadata`.
+
 `load_experiments(path, sheet_name, loading)` expects a sheet where each
 experiment is grouped by `Exp_ID` (Python-importer long format) with columns
 such as `Time`, `Concentration`, `Concentration_var`, `Temperature`,
@@ -32,6 +48,10 @@ discretised-solver losses against `d50q` (matching the legacy behaviour).
 ```julia
 experiments = repeatmeasurementbalancer(experiments, 3)   # concentration floor
 experiments = psd_measurementbalancer(experiments, 8)     # particle-size floor
+
+# Any named observable can be balanced directly.
+experiments = balance_variances(experiments; obs = :particle_size,
+                                min_rel_std_pc = 8)
 ```
 
 ## Accessing observables
@@ -58,11 +78,17 @@ expt.exp_id
 
 ## Resampling
 
-`bootstrap_repeatmeasurements(experiments, n_bootstrap, include_ps; seed)`
-samples pooled non-initial tuples with replacement and rebuilds
-`CrystallisationExperiment`s (used by the UQ workflows).
+`bootstrap_measurements(experiments, n_bootstrap; seed)` samples each named
+observable independently, retaining the first point of each series as its
+experiment anchor and preserving metadata. The legacy
+`bootstrap_repeatmeasurements` wrapper remains available for the concentration
+plus particle-size workflow.
 
 ## Loss evaluation
+
+Losses consume every supported observable in the experiment. The legacy loader
+still stores particle size under both `d43` and `d50q`; only the solver-relevant
+one is included to avoid double-counting.
 
 All loss functions take a `CrystallisationProblem` (kinetics + solver), the
 parameter vector, and the experiments:

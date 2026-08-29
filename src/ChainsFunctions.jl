@@ -196,38 +196,84 @@ end
 
 
 
-"""
-    ChainStatsPlots(chain; burnin=0, title="", show_title=true, saveplot=false, savestring="")
+function _mcmcchain_to_flexichain(chain::MCMCChains.Chains)
+    params = collect(names(chain, :parameters))
+    niters = size(chain.value, 1)
+    nchains = size(chain.value, 3)
+    dict = Dict{FlexiChains.ParameterOrExtra{Symbol}, Matrix{Float64}}()
+    for (j, p) in enumerate(params)
+        dict[FlexiChains.Parameter(p)] = chain.value[:, j, :]
+    end
+    return FlexiChains.FlexiChain{Symbol}(niters, nchains, dict)
+end
 
-Create trace and density plots for MCMC chain diagnostics.
 """
-function ChainStatsPlots(chain;
+    ChainStatsPlots(chain; burnin=0, title="", show_title=true, saveplot=false,
+                    savestring="", savedir=nothing, showplot=true)
+
+Create trace and density plots for MCMC chain diagnostics (Makie backend).
+
+# Arguments
+- `chain`: `MCMCChains.Chains` object.
+- `burnin`: number of initial iterations to discard.
+- `title`, `show_title`: figure title controls.
+- `saveplot`, `savestring`, `savedir`: save the figure to
+  `joinpath(savedir, savestring * " ChDensity.png")`. With `saveplot=true`
+  and `savedir=nothing` the figure is not saved.
+- `showplot`: display the figure.
+
+# Returns
+The generated `Makie.Figure`.
+"""
+function ChainStatsPlots(chain::MCMCChains.Chains;
                          burnin::Int = 0,
                          title = "",
                          show_title::Bool = true,
                          saveplot::Bool = false,
                          savestring::String = "",
+                         savedir::Union{Nothing, AbstractString} = nothing,
                          showplot::Bool = true)
 
-    # Apply burnin if specified
     chain_subset = burnin > 0 ? chain[(burnin + 1):end, :, :] : chain
+    fc = _mcmcchain_to_flexichain(chain_subset)
+    param_names = collect(names(chain_subset, :parameters))
+    n_params = length(param_names)
 
-    meanparameter = mean(chain_subset).nt.mean
-    paranames = mean(chain_subset).nt.parameters
+    fig = Makie.Figure(size = (1000, 260 * n_params))
+    if show_title && !isempty(title)
+        Makie.Label(fig[0, :], title)
+    end
 
-    statplot = StatsPlots.plot(chain_subset, plot_title = show_title ? title : "", plot_titlefontsize = 10)
+    for (i, param) in enumerate(param_names)
+        ax_trace = Makie.Axis(fig[i, 1])
+        FlexiChains.mtraceplot!(ax_trace, fc, param)
+        if i < n_params
+            Makie.hidexdecorations!(ax_trace; grid = false)
+        else
+            ax_trace.xlabel = "Iteration"
+        end
+
+        ax_density = Makie.Axis(fig[i, 2])
+        Makie.density!(ax_density, fc, param)
+        Makie.hideydecorations!(ax_density)
+        if i < n_params
+            Makie.hidexdecorations!(ax_density; grid = false)
+        else
+            ax_density.xlabel = "Parameter estimate"
+        end
+    end
+
+    if saveplot && savedir !== nothing
+        outdir = String(savedir)
+        mkpath(outdir)
+        Makie.save(joinpath(outdir, "$(savestring) ChDensity.png"), fig, px_per_unit = 3)
+    end
 
     if showplot
-        display(statplot)
+        display(fig)
     end
 
-    if saveplot
-        StatsPlots.savefig(statplot,
-                           joinpath(pwd(), "R - MCMC Results",
-                                    "$(savestring) ChDensity.png"))
-    end
-
-    return statplot
+    return fig
 end
 
 """
@@ -249,6 +295,7 @@ function ChainMeasurementPlots(chain, measurements::Vector{<:AbstractExperiment}
                                title = "",
                                saveplot::Bool = false,
                                savestring::String = "",
+                               savedir::Union{Nothing, AbstractString} = nothing,
                                colouroffset::Int = 0)
 
     # Apply burnin if specified
@@ -263,7 +310,7 @@ function ChainMeasurementPlots(chain, measurements::Vector{<:AbstractExperiment}
                                    growthfunction, aggregationfunction, breakagefunction,
                                    solver)
 
-    optimal_solutions = [(CriSTool.runsimulation(meanparameter,
+    optimal_solutions = [(runsimulation(meanparameter,
                                                  nucl = nucleationfunction,
                                                  gr = growthfunction,
                                                  agg = aggregationfunction,
@@ -276,6 +323,7 @@ function ChainMeasurementPlots(chain, measurements::Vector{<:AbstractExperiment}
 
     plot_measurements_vs_ensemble(measurements, ensembleresults, optimal_solutions;
                                   title = title, savename = savestring,
+                                  savedir = savedir,
                                   colouroffset = colouroffset,
                                   parameters = meanparameter,
                                   nucleationfunction = nucleationfunction,
@@ -284,3 +332,215 @@ function ChainMeasurementPlots(chain, measurements::Vector{<:AbstractExperiment}
                                   breakagefunction = breakagefunction, solver = solver,
                                   parameter_samples = samples_mat)
 end
+
+# ============================================================================ #
+#                    Bayesian inference entry points                           #
+# ============================================================================ #
+
+"""
+    nuts_model(experiments, prior, nucleationfunction, growthfunction,
+               aggregationfunction, breakagefunction;
+               solver, lossfunction) -> DynamicPPL.Model
+
+Build a ready-to-sample Turing `DynamicPPL.Model` for MCMC parameter
+inference. The model samples `θ[i] ~ prior[i]` for each parameter and
+adds the negative loss as the log-joint term, so
+
+    chain = Turing.sample(nuts_model(...), NUTS(1000, 0.65), 1000)
+
+runs NUTS over the same loss that `PE_Routine`/`run_abc` use.
+
+# Arguments
+- `experiments::Vector{<:AbstractExperiment}`: data the loss is evaluated on.
+- `prior::Vector{<:Distributions.Distribution}`: one prior per parameter
+  (e.g. `[TriangularDist(lb[i], ub[i], optpara[i]) ...]` or `Uniform`s).
+- `nucleationfunction`, `growthfunction`, `aggregationfunction`,
+  `breakagefunction`: kinetic models; their `paramaxis` order defines the
+  parameter vector layout.
+- `solver::AbstractSolver`: numerical solver used by the loss.
+- `lossfunction::AbstractPELossFunction`: loss used as the likelihood term.
+
+The `LossSetup` (per-experiment `ODEProblem` templates) is built once here
+and reused by every sampler evaluation. Chain parameter names are `θ[1]`,
+`θ[2]`, …; use [`rename_chain`](@ref) with [`kinetic_parameter_symbols`](@ref)
+to give them the kinetic symbols.
+"""
+function nuts_model(experiments::Vector{<:AbstractExperiment},
+                    prior::Vector{<:Distributions.Distribution},
+                    nucleationfunction::AbstractNucleationFunction,
+                    growthfunction::AbstractGrowthFunction,
+                    aggregationfunction::AbstractAggregationFunction,
+                    breakagefunction::AbstractBreakageFunction;
+                    solver::AbstractSolver,
+                    lossfunction::AbstractPELossFunction)
+    length(prior) == _total_nparams(nucleationfunction, growthfunction,
+                                    aggregationfunction, breakagefunction) ||
+        throw(ArgumentError("nuts_model: length(prior) = $(length(prior)) does not match " *
+                            "the total kinetic parameter count. Supply one prior per parameter."))
+    problem = _build_loss_problem(nucleationfunction, growthfunction,
+                                  aggregationfunction, breakagefunction, solver)
+    setup = prepare_loss(problem, experiments)
+    return _cristool_nuts_loss_model(prior, lossfunction, setup)
+end
+
+# Module-scope Turing model (DynamicPPL requirement). Generic over the
+# number of parameters; the loss setup is hoisted out of the model.
+Turing.@model function _cristool_nuts_loss_model(prior, lossfunction, loss_setup)
+    n = length(prior)
+    θ = Vector{Float64}(undef, n)
+    for i in 1:n
+        θ[i] ~ prior[i]
+    end
+    Turing.@addlogprob!(-loss(lossfunction, loss_setup, θ))
+end
+
+"""
+    kinetic_parameter_symbols(nucleationfunction, growthfunction,
+                              aggregationfunction, breakagefunction) -> Vector{Symbol}
+
+Parameter symbols for the combined kinetic models, in `paramaxis` order:
+the kinetics' own `symbols` where defined, else `:nu1`, `:gr1`, `:agg1`,
+`:br1`, … placeholders. Used to name MCMC chain columns.
+"""
+
+"""
+    rename_chain(chain::MCMCChains.Chains, symbols::Vector{Symbol}) -> Chains
+
+Rename the parameter columns of an MCMC chain in place of a new vector of
+symbols (e.g. from [`kinetic_parameter_symbols`](@ref)). The chain must
+contain exactly `length(symbols)` parameters.
+"""
+function rename_chain(chain::MCMCChains.Chains, symbols::Vector{Symbol})
+    old_names = collect(chain.name_map.parameters)
+    length(old_names) == length(symbols) ||
+        throw(ArgumentError("rename_chain: chain has $(length(old_names)) parameters but " *
+                            "$(length(symbols)) symbols were given."))
+    rename_dict = Dict(old_names[i] => symbols[i] for i in eachindex(old_names))
+    return MCMCChains.replacenames(chain, rename_dict)
+end
+
+"""
+    MCMC_Routine(measurements, prior, nucleationfunction, growthfunction,
+                 aggregationfunction, breakagefunction;
+                 solver, lossfunction, sampler = NUTS(1000, 0.65;
+                 adtype = AutoForwardDiff(chunksize = 4)), n_samples = 1000,
+                 n_chains = 4, burnin = 0, extrastring = "Empty",
+                 symbols = nothing, outputdir = nothing, saveplot = true,
+                 verbosity = 1) -> Chains
+
+Full Bayesian inference routine mirroring `run_abc`: builds the model via
+[`nuts_model`](@ref), samples with `sampler` (default NUTS with ForwardDiff
+AD), renames the chain with the inferred kinetic symbols, and returns the
+named chain.
+
+# Arguments
+- `measurements::Vector{<:AbstractExperiment}`: data used for the loss.
+- `prior::Vector{<:Distributions.Distribution}`: one prior per parameter.
+- `nucleationfunction`, `growthfunction`, `aggregationfunction`,
+  `breakagefunction`: kinetic models.
+- `solver::AbstractSolver`, `lossfunction::AbstractPELossFunction`:
+  forward model and discrepancy.
+- `sampler`: any AbstractMCMC sampler (default `NUTS(1000, 0.65;
+  adtype=AutoForwardDiff(chunksize=4))`; the first argument is the
+  adaptation length).
+- `n_samples`: retained samples per chain.
+- `n_chains`: number of parallel chains (via `MCMCThreads()`).
+- `burnin`: initial iterations discarded from plots/summaries.
+- `symbols`: optional parameter names; defaults to
+  `kinetic_parameter_symbols(...)` from the kinetics.
+- `outputdir`: where to persist results. `nothing` (default) performs no
+  filesystem writes; otherwise the named chain (`.jld2`), and — when
+  `saveplot` is true — posterior pair, trace/density and
+  measurements-vs-ensemble plots are written there.
+- `verbosity`: 0 silent, 1 normal, 2 verbose.
+
+# Returns
+The renamed `MCMCChains.Chains` (post-burnin when `burnin > 0`).
+"""
+function MCMC_Routine(measurements::Vector{<:AbstractExperiment},
+                      prior::Vector{<:Distributions.Distribution},
+                      nucleationfunction::AbstractNucleationFunction,
+                      growthfunction::AbstractGrowthFunction,
+                      aggregationfunction::AbstractAggregationFunction,
+                      breakagefunction::AbstractBreakageFunction;
+                      solver::AbstractSolver,
+                      lossfunction::AbstractPELossFunction,
+                      sampler = Turing.NUTS(1000, 0.65;
+                                            adtype = Turing.AutoForwardDiff(chunksize = 4)),
+                      n_samples::Int = 1000,
+                      n_chains::Int = 4,
+                      burnin::Int = 0,
+                      extrastring::String = "Empty",
+                      symbols::Union{Nothing, Vector{Symbol}} = nothing,
+                      outputdir::Union{Nothing, AbstractString} = nothing,
+                      saveplot::Bool = true,
+                      verbosity::Int = 1)
+    nparams = _total_nparams(nucleationfunction, growthfunction,
+                             aggregationfunction, breakagefunction)
+    length(prior) == nparams ||
+        throw(ArgumentError("MCMC_Routine: length(prior) = $(length(prior)) does not " *
+                            "match the total kinetic parameter count ($nparams)."))
+
+    inferred_symbols = isnothing(symbols) ?
+                       kinetic_parameter_symbols(nucleationfunction, growthfunction,
+                                                 aggregationfunction, breakagefunction) :
+                       symbols
+    length(inferred_symbols) == nparams ||
+        throw(ArgumentError("MCMC_Routine: $(length(inferred_symbols)) symbols given for " *
+                            "$nparams parameters."))
+
+    start_content = build_mcmc_start_content(prior, sampler, n_samples, n_chains,
+                                             lossfunction, solver, nucleationfunction,
+                                             growthfunction, aggregationfunction,
+                                             breakagefunction;
+                                             extrastring = extrastring,
+                                             symbols = inferred_symbols)
+    print_start_panel("MCMC (NUTS)", start_content; verbosity = verbosity)
+
+    model = nuts_model(measurements, prior, nucleationfunction, growthfunction,
+                       aggregationfunction, breakagefunction;
+                       solver = solver, lossfunction = lossfunction)
+
+    chain = Turing.sample(model, sampler, Turing.MCMCThreads(), n_samples, n_chains;
+                          progress = verbosity > 1)
+    named_chain = rename_chain(chain, inferred_symbols)
+    if burnin > 0
+        named_chain = named_chain[(burnin + 1):end, :, :]
+    end
+
+    end_content = build_mcmc_end_content(named_chain)
+    print_end_panel("MCMC (NUTS)", end_content; verbosity = verbosity)
+
+    if outputdir !== nothing
+        outdir = String(outputdir)
+        mkpath(outdir)
+        now_str = Dates.format(now(), "yy-m-d HH-MM")
+        jldsave(joinpath(outdir, "$(now_str) $(extrastring).jld2");
+                chain = named_chain, sampler = sampler, prior = prior)
+
+        if saveplot
+            meanparameter = mean(named_chain).nt.mean
+            ChainPairPlots(named_chain, meanparameter; prior = product_distribution(prior...),
+                           burnin = 0, title = "$(now_str) $(extrastring)\nMCMC posterior",
+                           saveplot = true, savestring = "$(now_str) $(extrastring)",
+                           savedir = outdir, symbols = inferred_symbols)
+            ChainStatsPlots(named_chain; title = "$(now_str) $(extrastring)",
+                            saveplot = true, savestring = "$(now_str) $(extrastring)",
+                            savedir = outdir)
+            ChainMeasurementPlots(named_chain, measurements, meanparameter,
+                                  lossfunction, nucleationfunction, growthfunction,
+                                  aggregationfunction, breakagefunction, solver;
+                                  burnin = 0, title = "$(now_str) $(extrastring)",
+                                  saveplot = true,
+                                  savestring = "$(now_str) $(extrastring)",
+                                  savedir = outdir)
+        end
+    end
+
+    return named_chain
+end
+
+_total_nparams(nucl, gr, agg, br) =
+    _nparams_of(nucl) + _nparams_of(gr) + _nparams_of(agg) + _nparams_of(br)
+
+_nparams_of(fn) = hasproperty(fn, :nparams) ? getproperty(fn, :nparams) : 0

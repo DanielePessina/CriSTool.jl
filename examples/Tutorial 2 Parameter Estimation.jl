@@ -4,7 +4,8 @@ Tutorial 2: Parameter estimation from experimental data.
 Three steps on the same dataset:
   1. MLE point estimate via Metaheuristics (`PE_Routine`).
   2. ABCDE posterior around the MLE via the unified `run_abc` entry.
-  3. Turing NUTS using the same loss function as the ABC discrepancy.
+  3. Turing NUTS using the same loss function as the ABC discrepancy, via
+     the `nuts_model` builder (triangular priors on the MLE).
 
 Reads `fake-experimental-dataset.xlsx` (5 unseeded experiments, generated
 from `[Aj=38, γ=0.6, Ag=1, g=3]` with 3% / 8% heteroscedastic noise).
@@ -18,20 +19,6 @@ using Turing, Distributions
 using Random
 
 const DATA_WORKBOOK = joinpath(@__DIR__, "fake-experimental-dataset.xlsx")
-
-# Turing model at module scope (Turing requires it). Triangular-prior +
-# loss-as-likelihood pattern, same as Tutorial 5.
-@model function nuts_model(data, lb, ub, optpara, nucl, gr, agg, br, solver, loss)
-    Aj ~ TriangularDist(lb[1], ub[1], optpara[1])
-    γ  ~ TriangularDist(lb[2], ub[2], optpara[2])
-    Ag ~ TriangularDist(lb[3], ub[3], optpara[3])
-    g  ~ TriangularDist(lb[4], ub[4], optpara[4])
-    problem = CrystallisationProblem(; kinetics_nucleationfunction = nucl,
-                                                   kinetics_growthfunction = gr, kinetics_aggregationfunction = agg,
-                                                   kinetics_breakagefunction = br, solver = solver)
-                                                   L = loss(loss, problem, [Aj, γ, Ag, g], data)
-    Turing.@addlogprob!(-L)
-end
 
 function main()
     Random.seed!(11)
@@ -48,7 +35,7 @@ function main()
     nucl, gr  = nucl_CNT(), growth_empirical()
     agg, br   = noaggregation(), nobreakage()
     solver    = MoM()
-    loss      = logMLE(weighting = (1.0, 1.0))
+    loss      = logMLE(weighting = [1.0, 1.0])
     lb        = [25.0, 0.30, 0.30, 2.0]   # [Aj, γ, Ag, g]
     ub        = [50.0, 1.00, 3.00, 4.0]
 
@@ -73,12 +60,17 @@ function main()
                            saveplot = false, verbosity = 0)
     println("ABCDE posterior mean: ", round.(abc_meta["meanparameters"], digits = 3))
 
-    # 4. NUTS using the same loss.
-    chain = Turing.sample(nuts_model(measurements, lb, ub, optimal,
-                                      nucl, gr, agg, br, solver, loss),
-                           NUTS(50, 0.65; adtype = AutoForwardDiff(chunksize = 4)),
-                           100; progress = false)
-    nuts_means = [mean(chain[:Aj]), mean(chain[:γ]), mean(chain[:Ag]), mean(chain[:g])]
+    # 4. NUTS using the same loss. `nuts_model` builds the Turing model
+    #    (one prior per parameter, triangular on the MLE); `rename_chain`
+    #    gives the chain the kinetic parameter names.
+    prior_list = [TriangularDist(lb[i], ub[i], optimal[i]) for i in eachindex(optimal)]
+    model = nuts_model(measurements, prior_list, nucl, gr, agg, br;
+                       solver = solver, lossfunction = loss)
+    chain = rename_chain(Turing.sample(model,
+                                       NUTS(50, 0.65; adtype = AutoForwardDiff(chunksize = 4)),
+                                       100; progress = false),
+                         kinetic_parameter_symbols(nucl, gr, agg, br))
+    nuts_means = [mean(chain[:Aⱼ]), mean(chain[:γ]), mean(chain[:Ag]), mean(chain[:g])]
     println("NUTS posterior mean:  ", round.(nuts_means, digits = 3))
 end
 

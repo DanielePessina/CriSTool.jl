@@ -99,11 +99,11 @@
     end
 
     @testset "Loss Function Constructors" begin
-        @test logMLE().weighting == (1.0, 1.0)
-        @test mae().weighting == (1.0, 1.0)
+        @test logMLE().weighting == [1.0, 1.0]
+        @test mae().weighting == [1.0, 1.0]
 
         # Custom weighting
-        weighted_mle = logMLE(weighting = (0.5, 2.0))
-        @test weighted_mle.weighting == (0.5, 2.0)
+        weighted_mle = logMLE(weighting = [0.5, 2.0])
+        @test weighted_mle.weighting == [0.5, 2.0]
     end
 end

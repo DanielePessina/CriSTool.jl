@@ -20,8 +20,8 @@
                                                     observables = (;
                                                     concentration = Observable(; time = save_idx, mean = solution.concentration,
                                                     variance = fill(0.01, length(save_idx))),
-                                                    d43 = Observable(; mean = solution.d43[end], variance = 4.0),
-                                                    d50q = Observable(; mean = solution.d43[end], variance = 4.0)),
+                                                    d43 = Observable(; time = save_idx[end], mean = solution.d43[end], variance = 4.0),
+                                                    d50q = Observable(; time = save_idx[end], mean = solution.d43[end], variance = 4.0)),
                                                     temperature = temperature,
                                                     loading = loading,
                                                     exp_id = 42)
@@ -72,8 +72,8 @@ end
                                                     observables = (;
                                                     concentration = Observable(; time = save_idx, mean = solution.concentration,
                                                     variance = fill(0.01, length(save_idx))),
-                                                    d43 = Observable(; mean = solution.d43[end], variance = 4.0),
-                                                    d50q = Observable(; mean = solution.d43[end], variance = 4.0)),
+                                                    d43 = Observable(; time = save_idx[end], mean = solution.d43[end], variance = 4.0),
+                                                    d50q = Observable(; time = save_idx[end], mean = solution.d43[end], variance = 4.0)),
                                                     temperature = temperature,
                                                     loading = loading,
                                                     exp_id = 42)
@@ -112,7 +112,7 @@ end
                                                     TriangularDist(0.5, 2.0, params[3]),
                                                     TriangularDist(2.0, 4.0, params[4])])
         res, _ = CriSTool.ABCDE_Turner_Routine(
-            CriSTool.logMLE(weighting = (1.0, 1.0)),
+            CriSTool.logMLE(weighting = [1.0, 1.0]),
             [measurement],
             params,
             prior,
@@ -130,7 +130,7 @@ end
             earlystop = false,
             test = :wilks,
             K = 1,
-            savedir = dir,
+            outputdir = dir,
         )
         @test hasproperty(res, :P)
         @test hasproperty(res, :C)

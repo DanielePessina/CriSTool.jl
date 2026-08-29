@@ -251,7 +251,7 @@ function _run_ensemble_internal(samples::Matrix{Float64},
                            ConstantTemperature(measurements[m].temperature) :
                            temp_profile
         run_initial_concentration = isnothing(initial_concentration) ?
-                                    initial_concentration(measurements[m]) :
+                                    CriSTool.initial_concentration(measurements[m]) :
                                     initial_concentration
         concentration = Matrix{Float64}(undef, n_timepoints, n_samples)
         d43 = Matrix{Float64}(undef, n_timepoints, n_samples)

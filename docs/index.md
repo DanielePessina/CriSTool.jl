@@ -44,7 +44,7 @@ end
 
 ## Tutorials
 
-Runnable scripts in `CriSTool/examples/`:
+Runnable scripts in `examples/`:
 
 - `Tutorial 1 Running Simulations.jl` — three temperature profiles side-by-side.
 - `Tutorial 2 Parameter Estimation.jl` — PE + ABCDE + Turing NUTS on experimental data.

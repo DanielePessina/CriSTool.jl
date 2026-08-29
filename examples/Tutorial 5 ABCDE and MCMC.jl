@@ -3,7 +3,8 @@ Tutorial 5: Posterior sampling with ABCDE and Turing NUTS.
 
 Two complementary inference routines on the same synthetic dataset:
   1. ABCDE (likelihood-free) via the new `run_abc` entry point.
-  2. NUTS (gradient MCMC) via Turing.
+  2. NUTS (gradient MCMC) via the `MCMC_Routine` wrapper around
+     `nuts_model` (Turing).
 Same forward model, prior bounds, and loss function for both. Runs in
 ~1 minute on `julia --threads=4`; no external workbook needed.
 """
@@ -14,27 +15,13 @@ using Distributions, Random
 using Turing
 using Statistics
 
-# Turing model lives at module scope so AD precompilation can specialise.
-# Kinetics, solver, and loss are passed in (no closures over module-level state).
-@model function nuts_model(data, lb, ub, nucl, gr, agg, br, solver, loss)
-    Aj ~ TriangularDist(lb[1], ub[1], 0.5 * (lb[1] + ub[1]))
-    γ  ~ TriangularDist(lb[2], ub[2], 0.5 * (lb[2] + ub[2]))
-    Ag ~ TriangularDist(lb[3], ub[3], 0.5 * (lb[3] + ub[3]))
-    g  ~ TriangularDist(lb[4], ub[4], 0.5 * (lb[4] + ub[4]))
-    problem = CrystallisationProblem(; kinetics_nucleationfunction = nucl,
-                                                   kinetics_growthfunction = gr, kinetics_aggregationfunction = agg,
-                                                   kinetics_breakagefunction = br, solver = solver)
-                                                   L = loss(loss, problem, [Aj, γ, Ag, g], [data])
-    Turing.@addlogprob!(-L)
-end
-
 function main()
     Random.seed!(42)
 
     # Forward model.
     nucl, gr, agg, br = nucl_CNT(), growth_empirical(), noaggregation(), nobreakage()
     solver = MoM()
-    loss   = logMLE(weighting = (1.0, 1.0))
+    loss   = logMLE(weighting = [1.0, 1.0])
     truth  = ComponentVector(nucl = (Aj = 38.0, γ = 0.6),
                              gr   = (Ag = 1.0, g = 3.0),
                              agg  = Float64[], br = Float64[])
@@ -76,19 +63,23 @@ function main()
     abc_means = abc_meta["meanparameters"]
     println("  $(round(time() - t, digits=1))s, mean = ", round.(abc_means, digits=3))
 
-    # 2. NUTS — same forward model and loss, gradient-based MCMC over a
-    #    triangular-prior likelihood-as-loss formulation.
+    # 2. NUTS — same forward model and loss, gradient-based MCMC. The
+    #    `MCMC_Routine` wrapper builds the Turing model, samples, renames
+    #    the chain with the kinetic symbols, and returns it.
     println("NUTS...")
+    nuts_prior = [TriangularDist(lb[i], ub[i], 0.5 * (lb[i] + ub[i]))
+                  for i in eachindex(lb)]
     t = time()
-    chain = sample(nuts_model(meas, lb, ub, nucl, gr, agg, br, solver, loss),
-                    NUTS(50, 0.65; adtype = AutoForwardDiff(chunksize = 4)),
-                    100; progress = false)
-    nuts_means = [mean(chain[:Aj]), mean(chain[:γ]), mean(chain[:Ag]), mean(chain[:g])]
+    chain = MCMC_Routine([meas], nuts_prior, nucl, gr, agg, br;
+                          solver = solver, lossfunction = loss,
+                          sampler = NUTS(50, 0.65; adtype = AutoForwardDiff(chunksize = 4)),
+                          n_samples = 100, n_chains = 1, verbosity = 0)
+    nuts_means = [mean(chain[:Aⱼ]), mean(chain[:γ]), mean(chain[:Ag]), mean(chain[:g])]
     println("  $(round(time() - t, digits=1))s, mean = ", round.(nuts_means, digits=3))
 
     # 3. Side-by-side comparison.
     println("\nparam │ truth │ ABCDE │ NUTS")
-    for (i, name) in enumerate(("Aj", "γ", "Ag", "g"))
+    for (i, name) in enumerate(("Aⱼ", "γ", "Ag", "g"))
         println(rpad(name, 6), "│ ", rpad(round(truth[i], digits = 3), 6),
                 "│ ", rpad(round(abc_means[i], digits = 3), 6),
                 "│ ", round(nuts_means[i], digits = 3))

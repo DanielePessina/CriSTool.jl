@@ -6,6 +6,7 @@ Main entry point for CriSTool. Imports dependencies, includes component source f
 # Core Julia packages
 using Base.Threads
 using LinearAlgebra
+using Random
 using Statistics
 using Turing
 
@@ -13,9 +14,7 @@ using Turing
 using OrdinaryDiffEq
 using SciMLSensitivity
 using OptimizationBase
-using ForwardDiff
 using PreallocationTools: DiffCache, get_tmp
-# using Zygote
 
 # Data Structures & Processing
 using DataFrames
@@ -34,10 +33,9 @@ import XLSX
 
 # Visualization
 using PairPlots
-import Plots
 import CairoMakie
 import Makie
-import StatsPlots
+import FlexiChains
 
 # Machine Learning & Optimization
 # import Flux
@@ -50,6 +48,7 @@ using Metaheuristics
 using ConcreteStructs
 using Dates
 using MonteCarloMeasurements
+using Trapz
 import Term
 using PrettyTables
 using StaticArrays
@@ -60,21 +59,28 @@ export Observable, CrystallisationExperiment, AbstractExperiment,
        initial_concentration
 export AbstractSaturationModel, ConstantSaturation, PolynomialSaturation, CallableSaturation,
        lysozyme_saturation, saturation_concentration, supersaturation
-export AbstractSolution, state_vars, size_metrics
+export AbstractSolution, state_vars, size_metrics, observable_values, solvent_state,
+       default_solvent_dynamics
 export AbstractNucleationFunction, AbstractGrowthFunction, nucl_CNT,
        nucl_empirical, nucl_CNTnoS, growth_empirical, growth_BpS, growth_BCF
 export AbstractAggregationFunction, AbstractBreakageFunction, nobreakage,
        breakage_empirical, noaggregation
 export runsimulation, paramaxis, crystallisation_odeproblem,
        get_characteristic_size, getmomentsizes
-export AbstractPELossFunction, logMLE, mae, loss, prepare_loss, LossSetup
-export load_experiments, load_experiments_legacy, load_experiments_legacy_single,
-       bootstrap_repeatmeasurements, repeatmeasurementbalancer, psd_measurementbalancer
+export AbstractPELossFunction, AbstractVarianceModel, MeasuredVariance, RelativeVariance,
+       logMLE, mae, loss, prepare_loss, LossSetup
+export load_measurements, load_experiments, load_experiments_legacy, load_experiments_legacy_single,
+       bootstrap_repeatmeasurements, balance_variances, repeatmeasurementbalancer,
+       psd_measurementbalancer, bootstrap_measurements
 export AbstractSolver, FiniteVol, MoM, WENO
 export run_abc, AbstractABCSampler, ABCDESampler, ABCDETurnerSampler
-export PE_Routine, ABCDE_Routine, ABCDE_Turner_Routine,
+export PE_Routine, PE_Routine_Optimisation, ABCDE_Routine, ABCDE_Turner_Routine,
        plot_posterior_pairplot, plot_measurements_vs_ensemble
+export ChainPairPlots, ChainStatsPlots, ChainMeasurementPlots
+export plot_ps_measurements_vs_ensemble, plot_measurements_vs_simulation,
+       plot_ps_measurements_vs_simulation
 export chains_to_matrix, distribution_to_matrix, create_product_prior, prior_to_matrix
+export nuts_model, MCMC_Routine, kinetic_parameter_symbols, rename_chain
 export CRISTOOL_PALETTE
 
 include("Structs.jl")

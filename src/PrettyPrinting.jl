@@ -346,3 +346,76 @@ function build_abcde_end_content(mean_params::AbstractVector, reached_target::Bo
 
     return join(lines, "\n")
 end
+
+# ============================================================================ #
+#                     MCMC ROUTINE CONTENT BUILDERS                            #
+# ============================================================================ #
+
+"""
+    build_mcmc_start_content(prior, sampler, n_samples, n_chains,
+                             lossfunction, solver, nucleationfunction,
+                             growthfunction, aggregationfunction, breakagefunction;
+                             extrastring="", symbols=nothing) -> String
+
+Build the content string for `MCMC_Routine` start panel.
+"""
+function build_mcmc_start_content(prior, sampler, n_samples::Int, n_chains::Int,
+                                  lossfunction, solver, nucleationfunction,
+                                  growthfunction, aggregationfunction, breakagefunction;
+                                  extrastring::String = "",
+                                  symbols::Union{Nothing, Vector{Symbol}} = nothing)
+    accent = CRISTOOL_PALETTE[:accent]
+    info = CRISTOOL_PALETTE[:info]
+    secondary = CRISTOOL_PALETTE[:secondary]
+
+    lines = String[]
+    push!(lines, "{$info bold}Sampler:{/$info bold}")
+    push!(lines, "  $sampler")
+    push!(lines, "  Samples per chain: $n_samples")
+    push!(lines, "  Chains: $n_chains")
+    if !isnothing(symbols)
+        push!(lines, "  Parameters: {dim}$(join(symbols, ", ")){/dim}")
+    end
+    push!(lines, "")
+    push!(lines, "{$info bold}Model:{/$info bold}")
+    push!(lines, "  Loss function: {$accent}$(lossfunction.string){/$accent}")
+    push!(lines, "  Solver: {$secondary}$(solver.string){/$secondary}")
+    push!(lines, "  Nucleation: $(nucleationfunction.string)")
+    push!(lines, "  Growth: $(growthfunction.string)")
+    push!(lines, "  Aggregation: $(aggregationfunction.string)")
+    push!(lines, "  Breakage: $(breakagefunction.string)")
+    push!(lines, "")
+    push!(lines, "{dim}Prior: $prior{/dim}")
+
+    if !isempty(extrastring)
+        push!(lines, "{dim}ID: $extrastring{/dim}")
+    end
+
+    return join(lines, "\n")
+end
+
+"""
+    build_mcmc_end_content(chain, burnin::Int=0) -> String
+
+Build the content string for `MCMC_Routine` end panel. Reports the posterior
+mean per parameter (post-burnin) and the number of retained samples.
+"""
+function build_mcmc_end_content(chain::MCMCChains.Chains, burnin::Int = 0)
+    accent = CRISTOOL_PALETTE[:accent]
+    highlight = CRISTOOL_PALETTE[:highlight]
+
+    chain_subset = burnin > 0 ? chain[(burnin + 1):end, :, :] : chain
+    stats = mean(chain_subset).nt
+    param_names = collect(stats.parameters)
+    means = Dict(param_names[i] => stats.mean[i] for i in eachindex(stats.mean))
+
+    lines = String[]
+    push!(lines, "{$highlight bold}Posterior Means:{/$highlight bold}")
+    for name in param_names
+        push!(lines, "  $(name): {$accent}$(round(means[name], sigdigits=5)){/$accent}")
+    end
+    push!(lines, "")
+    push!(lines, "{dim}Samples per chain: $(size(chain_subset.value, 1)){/dim}")
+
+    return join(lines, "\n")
+end

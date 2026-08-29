@@ -25,6 +25,23 @@ problem = CrystallisationProblem(; saturation_model = LinearSaturation(0.25, 2.0
 Built-ins: `ConstantSaturation(c)`, `PolynomialSaturation(coeffs, Tref)`,
 `CallableSaturation(f)` (see [Saturation models](saturation-models.md)).
 
+Coupled solvent variables are named in `initial_solvent_state`. The default
+`solvent_dynamics` updates solute concentration from crystal growth; a custom
+callable can return rates for concentration and additional variables:
+
+```julia
+solvent_dynamics = (problem, state, t, growth) ->
+    (concentration = default_solvent_dynamics(problem, state, t, growth)[1],
+     pH = -0.01 * growth)
+
+problem = CrystallisationProblem(; initial_concentration = 25.0,
+    initial_solvent_state = (; concentration = 25.0, pH = 7.0),
+    solvent_dynamics = solvent_dynamics, ...)
+```
+
+The resulting solution exposes `solvent_state`, and `solvent_state(prob, state)`
+returns the named values from a numerical state.
+
 ## 2. Custom kinetics (Tutorial-4 pattern)
 
 Three pieces: a struct subtyping the right `Abstract*` family, a `paramaxis`
@@ -75,9 +92,12 @@ expt = CrystallisationExperiment(;
     temperature = 293.15, loading = 0.0, exp_id = 1)
 ```
 
-The losses read `concentration` (series) and `d43`/`d50q` (scalars); extra
-observables ride along untouched. Loaders for the Excel long format:
-`load_experiments(path, sheet, loading)`.
+The losses read every simulated observable exposed by `observable_values`.
+Built-in concentration and size metrics are available automatically; define an
+`observable_values` method for a custom solution observable such as pH or mass.
+Loaders for the standard Excel long format use
+`load_experiments(path, sheet, loading)`, while custom column layouts use
+`load_measurements`.
 
 ## 4. Simulation, loss, estimation
 

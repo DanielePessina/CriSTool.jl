@@ -16,8 +16,8 @@
                                         solver = solver)
     end
 
-    # FV solver state: [numberdensity(mesh); C]. Concentrate the state so that
-    # the liquid concentration gives the desired supersaturation.
+    # FV solver state: [numberdensity(mesh); C]. Set the state so that
+    # the solute concentration gives the desired supersaturation.
     function state_at_S(problem, S; meshsize = 50)
         C = S * saturation_concentration(problem, 0.0)
         return [zeros(meshsize); C]
@@ -118,6 +118,128 @@
 
         br_rate = CriSTool.breakagerate(nobreakage(), params, problem, state, 0.0)
         @test br_rate == 0.0
+    end
+
+    @testset "Migrated kinetic families use problem state" begin
+        problem = make_test_problem()
+        state = state_at_S(problem, 1.5)
+        temperature = CriSTool.temperature(problem.temp_profile, 0.0)
+        saturation = saturation_concentration(problem, 0.0)
+        supersaturation_value = state[end] / saturation
+
+        expected_cnt = (60 * exp(38.0)) * supersaturation_value *
+                       exp(-16π * (0.7e-3)^3 * problem.molecular_volume^2 /
+                           (3 * (problem.kb * temperature)^3 * log(supersaturation_value)^2))
+        @test CriSTool.nucleationrate(CriSTool.nucl_CNT_fixed([38.0, 0.7]),
+                                      Float64[], problem, state, 0.0) ≈ expected_cnt
+
+        expected_empirical = (60 * 10.0^10.0) * (supersaturation_value - 1.0)^2.0
+        @test CriSTool.nucleationrate(CriSTool.nucl_empirical_fixed([10.0, 2.0]),
+                                      Float64[], problem, state, 0.0) ≈ expected_empirical
+
+        expected_growth = 1.0e-9 * (supersaturation_value - 1.0)^3.0
+        @test CriSTool.growthrate(CriSTool.growth_empirical_fixed([1.0, 3.0]),
+                                  Float64[], problem, state, 0.0) ≈ expected_growth
+    end
+
+    @testset "Composite and loading-dependent kinetics dispatch" begin
+        problem = make_test_problem()
+        state = state_at_S(problem, 1.5)
+
+        primary = CriSTool.nucl_empirical_energy()
+        secondary = CriSTool.nucl_secondary()
+        composite = CriSTool.nucl_prim_plus_second()
+        composite_params = [8.0, 2.0, 6.0, 1.0, 2.0, 1.5]
+        expected_composite =
+            CriSTool.nucleationrate(primary, composite_params[1:3], problem, state, 0.0) +
+            CriSTool.nucleationrate(secondary, composite_params[4:6], problem, state, 0.0)
+        @test CriSTool.nucleationrate(composite, composite_params, problem, state, 0.0) ≈
+              expected_composite
+
+        multi_growth = CriSTool.growth_energy_multiloading([0.0, 1.0])
+        loaded_problem = CrystallisationProblem(; kinetics_nucleationfunction = nucl_CNT(),
+                                                 kinetics_growthfunction = multi_growth,
+                                                 parameterset_nucleation = [38.0, 0.7],
+                                                 parameterset_growth = [1.0, 2.0, 3.0, 4.0],
+                                                 loading = 1.0,
+                                                 solver = MoM())
+        loaded_state = [zeros(5); 1.5 * saturation_concentration(loaded_problem, 0.0)]
+        expected_loaded = exp10(3.0) *
+                          exp(-multi_growth.Ea / (8.314 *
+                                                  CriSTool.temperature(loaded_problem.temp_profile, 0.0))) *
+                          (1.5 - 1.0)^4.0
+        @test CriSTool.growthrate(multi_growth, [1.0, 2.0, 3.0, 4.0],
+                                  loaded_problem, loaded_state, 0.0) ≈ expected_loaded
+    end
+
+    @testset "Dissolution uses the configured saturation model" begin
+        solver = FiniteVol(meshsize = 4, lmax = 4e-6)
+        problem = CrystallisationProblem(;
+            kinetics_nucleationfunction = nucl_CNT(),
+            kinetics_growthfunction = CriSTool.growth_dissolution(),
+            saturation_model = ConstantSaturation(10.0),
+            initial_concentration = 5.0,
+            solver = solver)
+        state = [zeros(solver.meshsize); 5.0]
+        parameters = [2.0, 4.0, 1.5]
+        temperature = CriSTool.temperature(problem.temp_profile, 0.0)
+        expected_scalar = -(2.0e-9) * exp(-(4.0e3) / (8.314 * temperature)) *
+                          (1.0 - 0.5)^1.5
+        @test CriSTool.growthrate(CriSTool.growth_dissolution(), parameters,
+                                  problem, state, 0.0) ≈ expected_scalar
+
+        length_problem = CrystallisationProblem(;
+            kinetics_nucleationfunction = nucl_CNT(),
+            kinetics_growthfunction = CriSTool.growth_dissolution_length(),
+            saturation_model = ConstantSaturation(10.0),
+            initial_concentration = 5.0,
+            solver = solver)
+        expected_length = -(2.0e-9) .* exp(-(4.0e3) ./ (8.314 .* temperature)) .*
+                          (10.0 - 5.0)^1.5 .*
+                          (1.0 .+ 1.0 * 1.0e3 .* solver.cell_centre) .^ 2.0
+        @test CriSTool.growthrate(CriSTool.growth_dissolution_length(),
+                                  [2.0, 4.0, 1.5, 1.0, 2.0],
+                                  length_problem, state, 0.0) ≈ expected_length
+    end
+
+    @testset "Combined growth and dissolution dispatch" begin
+        problem = make_test_problem()
+        super_state = state_at_S(problem, 1.5)
+        combined = CriSTool.growth_energy_dissolution()
+        combined_parameters = [1.0, 3.0, 2.0, 4.0, 1.5]
+        @test CriSTool.growthrate(combined, combined_parameters, problem,
+                                  super_state, 0.0) ≈
+              CriSTool.growthrate(CriSTool.growth_energy(), combined_parameters[1:2],
+                                  problem, super_state, 0.0)
+
+        under_problem = CrystallisationProblem(;
+            kinetics_nucleationfunction = nucl_CNT(),
+            kinetics_growthfunction = combined,
+            saturation_model = ConstantSaturation(10.0),
+            initial_concentration = 5.0,
+            solver = MoM())
+        under_state = [zeros(5); 5.0]
+        @test CriSTool.growthrate(combined, combined_parameters, under_problem,
+                                  under_state, 0.0) ≈
+              CriSTool.growthrate(CriSTool.growth_dissolution(), combined_parameters[3:5],
+                                  under_problem, under_state, 0.0)
+    end
+
+    @testset "Breakage rates dispatch on the configured mesh" begin
+        solver = FiniteVol(meshsize = 4, lmax = 4e-6)
+        problem = CrystallisationProblem(; kinetics_nucleationfunction = nucl_CNT(),
+                                         kinetics_growthfunction = growth_empirical(),
+                                         solver = solver)
+        state = [ones(solver.meshsize); 2.0]
+        empirical = CriSTool.breakagerate(CriSTool.breakage_empirical(),
+                                           [0.5, 1.0], problem, state, 0.0)
+        @test length(empirical) == solver.meshsize
+        @test empirical[end] ≈ -0.5 * solver.cell_centre[end]^3
+
+        uniform = CriSTool.breakagerate(CriSTool.breakage_uniform(),
+                                         [log(0.5), 1.0], problem, state, 0.0)
+        @test length(uniform) == solver.meshsize
+        @test uniform[end] ≈ -0.5 * (1e6 * solver.cell_centre[end])^3
     end
 
 end

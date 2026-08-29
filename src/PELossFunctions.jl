@@ -46,7 +46,8 @@ function PE_Routine(lossfunction::AbstractPELossFunction,
                     generations::Int64 = 128,
                     savetxt::Bool = true,
                     verbosity::Int64 = 1,
-                    HPC::Bool = false)
+                    HPC::Bool = false,
+                    outputdir::Union{Nothing, AbstractString} = nothing)
 
     parameter_bounds = boxconstraints(lb, ub)
 
@@ -77,7 +78,9 @@ function PE_Routine(lossfunction::AbstractPELossFunction,
     end_content = build_pe_end_content(minimizer(results), minimum(results))
     print_end_panel("Parameter Estimation", end_content; verbosity = verbosity)
 
-    if savetxt
+    if savetxt && outputdir !== nothing
+        outdir = String(outputdir)
+        mkpath(outdir)
         startstring = ("Starting the parameter search at $(Dates.format(now(), "HH-MM"))
             \nOptimisation search settings:
             \nLB: $(lb) \nUB: $(ub)
@@ -94,7 +97,7 @@ function PE_Routine(lossfunction::AbstractPELossFunction,
             \nOptimal parameters are: $(round.(minimizer(results), sigdigits = 5))
             \nLF Value : $(round.(minimum(results), sigdigits = 5))"
 
-        open(joinpath(pwd(), "R - PE Logs", "$(now_str) $(extrastring).txt"), "w") do io
+        open(joinpath(outdir, "$(now_str) $(extrastring).txt"), "w") do io
             write(io, startstring)
             write(io, "\n\n")
             write(io, printstr)
@@ -142,7 +145,8 @@ function PE_Routine_Optimisation(lossfunction::AbstractPELossFunction,
                                  adtype = AutoForwardDiff(),
                                  savetxt::Bool = true,
                                  verbosity::Int64 = 1,
-                                 HPC::Bool = false)
+                                 HPC::Bool = false,
+                                 outputdir::Union{Nothing, AbstractString} = nothing)
 
 
     start_content = build_pe_start_content(lb, ub, lossfunction, solver,
@@ -177,7 +181,9 @@ x0 = isnothing(x0) ? [lb[i] + (ub[i] - lb[i]) * rand() for i in eachindex(lb)] :
     end_content = build_pe_end_content(results.u, results.objective; stats = results.stats)
     print_end_panel("Parameter Estimation", end_content; verbosity = verbosity)
 
-    if savetxt
+    if savetxt && outputdir !== nothing
+        outdir = String(outputdir)
+        mkpath(outdir)
         startstring = ("Starting the parameter search at $(Dates.format(now(), "HH-MM"))
             \nOptimisation search settings:
             \nLB: $(lb) \nUB: $(ub)
@@ -194,7 +200,7 @@ x0 = isnothing(x0) ? [lb[i] + (ub[i] - lb[i]) * rand() for i in eachindex(lb)] :
             \nOptimal parameters are: $(round.(results.u, sigdigits = 5))
             \nLF Value : $(round.(results.objective, sigdigits = 5))"
 
-        open(joinpath(pwd(), "R - PE Logs", "$(now_str) $(extrastring).txt"), "w") do io
+        open(joinpath(outdir, "$(now_str) $(extrastring).txt"), "w") do io
             write(io, startstring)
             write(io, "\n\n")
             write(io, printstr)
@@ -291,10 +297,11 @@ function prepare_loss(problem::CrystallisationProblem,
                       experiments::Vector{<:AbstractExperiment})
     prepared = map(experiments) do expt
         per_exp_problem = _experiment_problem(problem, expt)
+        saveat = _loss_saveat(expt, problem.solver)
         odeprob, algorithm = crystallisation_odeproblem(per_exp_problem,
-                                                        expt.observables.concentration.time)
+                                                        saveat)
         PreparedExperiment(per_exp_problem, odeprob, algorithm,
-                           expt.observables.concentration.time)
+                           saveat)
     end
     return LossSetup(problem, experiments, prepared)
 end
@@ -333,14 +340,17 @@ function batchLF_procMO(lossfunction::AbstractPELossFunction,
                         parameter_mat::AbstractArray{Float64})
 
     Nt = size(parameter_mat, 1)
-    fx = zeros(Nt, 2)
+    objective_names = _loss_observable_names(first(setup.experiments), setup.problem.solver)
+    fx = zeros(Nt, length(objective_names))
 
     @floop for i in 1:Nt
-        objectives = map(zip(setup.prepared, setup.experiments)) do (prep, expt)
-            _experiment_objectives(lossfunction, expt, _solve_prepared(prep, parameter_mat[i, :]))
+        for (prep, expt) in zip(setup.prepared, setup.experiments)
+            objectives = _experiment_objectives(lossfunction, expt,
+                                                _solve_prepared(prep, parameter_mat[i, :]))
+            for j in eachindex(objectives)
+                fx[i, j] += objectives[j]
+            end
         end
-        fx[i, 1] = sum(o -> o[1], objectives)
-        fx[i, 2] = sum(o -> o[2], objectives)
     end
 
     return fx
@@ -426,6 +436,9 @@ function _experiment_problem(problem::CrystallisationProblem,
         loading = expt.loading,
         ρ = problem.ρ,
         initial_concentration = initial_concentration(expt),
+        initial_solvent_state = merge(problem.initial_solvent_state,
+                                      (; concentration = initial_concentration(expt))),
+        solvent_dynamics = problem.solvent_dynamics,
         saturation_model = problem.saturation_model,
         kv = problem.kv,
         molecular_volume = problem.molecular_volume,
@@ -490,36 +503,137 @@ function _solve_experiment(problem::CrystallisationProblem, params,
 end
 
 """
-    _size_pair(observables, solution) -> (Observable, AbstractVector)
+    _loss_observable_names(experiment, solver) -> Vector{Symbol}
 
-Return the particle-size observable and simulated size trajectory used by
-losses, dispatched on the solution type: `d43` for the MoM solver, `d50q`
-for discretised solvers (matching the legacy loss behaviour). Read through
-`size_metrics` so consumers never index solution fields directly.
+Return the measured observables used by the loss. When a legacy loader has
+stored the same particle-size value under both `d43` and `d50q`, keep only the
+solver-appropriate one; all other observable fields participate in the loss.
 """
-_size_pair(observables, solution::CrystallisationMoMSolution) =
-    (observables.d43, size_metrics(solution).d43)
-_size_pair(observables, solution::CrystallisationFVSolution) =
-    (observables.d50q, size_metrics(solution).d50q)
+function _loss_observable_names(expt::CrystallisationExperiment,
+                                solver::AbstractSolver)
+    names = Symbol[]
+    active_size = solver isa MoM ? :d43 : :d50q
+    has_d43 = hasproperty(expt.observables, :d43)
+    has_d50q = hasproperty(expt.observables, :d50q)
+    for name in propertynames(expt.observables)
+        if (name === :d43 || name === :d50q) && has_d43 && has_d50q
+            name === active_size && push!(names, name)
+        else
+            push!(names, name)
+        end
+    end
+    return names
+end
+
+_loss_observable_names(expt::CrystallisationExperiment,
+                       ::CrystallisationMoMSolution) = _loss_observable_names(expt, MoM())
+_loss_observable_names(expt::CrystallisationExperiment,
+                       ::CrystallisationFVSolution) =
+    _loss_observable_names(expt, FiniteVol(meshsize = 2))
+
+function _loss_saveat(expt::CrystallisationExperiment, solver::AbstractSolver)
+    times = Float64[]
+    for name in _loss_observable_names(expt, solver)
+        measured = getproperty(expt.observables, name)
+        if measured.mean isa AbstractArray
+            append!(times, Float64.(measured.time))
+        else
+            push!(times, Float64(measured.time))
+        end
+    end
+    saveat = sort!(unique!(times))
+    length(saveat) >= 2 ||
+        throw(ArgumentError("An experiment needs at least two distinct observation times."))
+    return saveat
+end
+
+function _measurement_data(observable::Observable{T}) where {T <: AbstractArray}
+    return observable.time, observable.mean
+end
+
+function _measurement_data(observable::Observable{T}) where {T <: Real}
+    return [observable.time], [observable.mean]
+end
+
+function _variance_at(observable::Observable{T, Tt, Nothing}, index::Int) where {T, Tt}
+    return nothing
+end
+
+function _variance_at(observable::Observable{T, Tt, Tv}, index::Int) where {T, Tt, Tv}
+    return observable.variance isa AbstractArray ? observable.variance[index] : observable.variance
+end
+
+function _measurement_variance(observable, mean_value, index,
+                               ::MeasuredVariance, variance_floor)
+    measured_variance = _variance_at(observable, index)
+    fallback_variance = (0.1 * abs(mean_value))^2
+    return measured_variance === nothing ? max(variance_floor, fallback_variance) :
+           measured_variance + variance_floor
+end
+
+function _measurement_variance(observable, mean_value, index,
+                               model::RelativeVariance, variance_floor)
+    return max(variance_floor, (0.01 * model.percent * abs(mean_value))^2)
+end
+
+function _linear_interpolate(xs::AbstractVector, ys::AbstractVector, x::Real)
+    x <= xs[1] && return ys[1]
+    x >= xs[end] && return ys[end]
+    right = searchsortedfirst(xs, x)
+    right == 1 && return ys[1]
+    xs[right] == x && return ys[right]
+    left = right - 1
+    fraction = (x - xs[left]) / (xs[right] - xs[left])
+    return ys[left] + fraction * (ys[right] - ys[left])
+end
+
+function _simulated_at(solution::AbstractSolution, name::Symbol,
+                       target_time::AbstractVector)
+    simulated = observable_values(solution, name)
+    simulated isa AbstractVector ||
+        throw(ArgumentError("Simulated observable :$name must be a trajectory."))
+    return [_linear_interpolate(solution.time, simulated, t) for t in target_time]
+end
+
+function _observable_weight(lossfunction::AbstractPELossFunction, index::Int)
+    return index <= length(lossfunction.weighting) ? lossfunction.weighting[index] : 1.0
+end
 
 """
-    _experiment_objectives(lf, expt, solution) -> (Float64, Float64)
+    _experiment_objectives(lf, expt, solution) -> Vector
 
-(Concentration, particle-size) objective contributions of one experiment,
-with the legacy weighting semantics (`weighting[i] * 0.5 * objective_i`).
+Return one weighted objective contribution per measured observable. The
+observable order is the `NamedTuple` field order, with the duplicated inactive
+legacy particle-size slot removed.
 """
 function _experiment_objectives(lf::AbstractPELossFunction,
                                 expt::CrystallisationExperiment, solution)
-    obs = expt.observables
-    conc = obs.concentration
-    size_obs, size_sim = _size_pair(obs, solution)
+    names = _loss_observable_names(expt, solution)
+    contributions = map(enumerate(names)) do (observable_index, name)
+        measured = getproperty(expt.observables, name)
+        measured_time, measured_mean = _measurement_data(measured)
+        simulated_mean = _simulated_at(solution, name, measured_time)
+        first_index = name === :concentration ? 2 : 1
 
-    conc_contrib = sum(log.(2π .* (conc.variance[2:end] .+ 1e-6)) .+
-                       ((solution.concentration[2:end] .- conc.mean[2:end]) .^ 2) ./
-                       (conc.variance[2:end] .+ 1e-6))
-    size_contrib = log(2π * (size_obs.variance + 1e-6)) +
-                   ((size_sim[end] - size_obs.mean)^2) / (size_obs.variance + 1e-6)
-    return (lf.weighting[1] * 0.5 * conc_contrib, lf.weighting[2] * 0.5 * size_contrib)
+        if lf isa logMLE
+            objective = 0.0
+            for index in first_index:length(measured_mean)
+                variance = _measurement_variance(measured, measured_mean[index], index,
+                                                 lf.variance_model, lf.variance_floor)
+                residual = simulated_mean[index] - measured_mean[index]
+                objective += log(2π * variance) + residual^2 / variance
+            end
+            return _observable_weight(lf, observable_index) * 0.5 * objective
+        end
+
+        if !solution.success
+            return _observable_weight(lf, observable_index) * 1e6
+        end
+        objective = mean(abs.(simulated_mean[first_index:end] .-
+                              measured_mean[first_index:end]))
+        return _observable_weight(lf, observable_index) * objective
+    end
+    return contributions
 end
 
 """
@@ -550,27 +664,27 @@ particle-size error (`d43` for MoM, `d50q` for discretised solvers). Failed
 simulations contribute a `1e6` penalty per timepoint.
 """
 function loss(lf::mae, setup::LossSetup, params)
-    error_values = map(zip(setup.prepared, setup.experiments)) do (prep, expt)
-        obs = expt.observables
-        conc = obs.concentration
+    objective_names = _loss_observable_names(first(setup.experiments), setup.problem.solver)
+    error_sums = [zero(eltype(params)) for _ in objective_names]
+    error_counts = zeros(Int, length(objective_names))
+    for (prep, expt) in zip(setup.prepared, setup.experiments)
         solution = _solve_prepared(prep, params)
-        size_obs, size_sim = _size_pair(obs, solution)
-
-        if solution.success
-            (abs.(solution.concentration .- conc.mean),
-             [abs(size_sim[end] - size_obs.mean)])
-        else
-            (fill(1e6, length(conc.mean)), [1e6])
+        for (observable_index, name) in enumerate(_loss_observable_names(expt, solution))
+            measured = getproperty(expt.observables, name)
+            measured_time, measured_mean = _measurement_data(measured)
+            if solution.success
+                simulated_mean = _simulated_at(solution, name, measured_time)
+                error_sums[observable_index] +=
+                    sum(abs.(simulated_mean .- measured_mean))
+                error_counts[observable_index] += length(measured_mean)
+            else
+                error_sums[observable_index] += 1e6
+                error_counts[observable_index] += 1
+            end
         end
     end
-
-    all_conc_errors = vcat(map(x -> x[1], error_values)...)
-    all_q_errors = vcat(map(x -> x[2], error_values)...)
-
-    total_conc_mae = mean(all_conc_errors)
-    total_q_mae = mean(all_q_errors)
-
-    return lf.weighting[1] * total_conc_mae + lf.weighting[2] * total_q_mae
+    return sum(_observable_weight(lf, i) * error_sums[i] / error_counts[i]
+               for i in eachindex(objective_names))
 end
 
 """

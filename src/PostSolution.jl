@@ -211,19 +211,20 @@ _size_trajectory(sol::CrystallisationFVSolution) = sol.d50q
 """
     state_vars(sol::CrystallisationMoMSolution) -> NamedTuple
 
-Named state variables of a MoM solution: `concentration`.
+Named solvent-state variables of a MoM solution, including `concentration`
+and any additional coupled solvent variables.
 """
-state_vars(sol::CrystallisationMoMSolution) = (; concentration = sol.concentration)
+state_vars(sol::CrystallisationMoMSolution) = sol.solvent_state
 
 """
     state_vars(sol::CrystallisationFVSolution) -> NamedTuple
 
-Named state variables of a discretised solution: `concentration`,
-`numberdensity` (mesh × time) and `voldensity` (mesh × time).
+Named solvent-state variables of a discretised solution, plus `numberdensity`
+ (mesh × time) and `voldensity` (mesh × time).
 """
-state_vars(sol::CrystallisationFVSolution) = (; concentration = sol.concentration,
-                                                numberdensity = sol.numberdensity,
-                                                voldensity = sol.voldensity)
+state_vars(sol::CrystallisationFVSolution) = merge(sol.solvent_state,
+                                                   (; numberdensity = sol.numberdensity,
+                                                      voldensity = sol.voldensity))
 
 """
     size_metrics(sol::CrystallisationMoMSolution) -> NamedTuple
@@ -242,3 +243,17 @@ plus `d10`/`d32`/`d43`.
 size_metrics(sol::CrystallisationFVSolution) =
     (; d10q = sol.d10q, d50q = sol.d50q, d90q = sol.d90q,
       d10 = sol.d10, d32 = sol.d32, d43 = sol.d43)
+
+"""
+    observable_values(sol::AbstractSolution, name::Symbol) -> AbstractArray
+
+Return the simulated trajectory for a named observable. Built-in state and
+size metrics are available automatically; users can extend this method for a
+custom solution observable.
+"""
+function observable_values(sol::AbstractSolution, name::Symbol)
+    named_values = merge(state_vars(sol), size_metrics(sol))
+    hasproperty(named_values, name) ||
+        throw(ArgumentError("No simulated observable named :$name for $(typeof(sol))."))
+    return getproperty(named_values, name)
+end

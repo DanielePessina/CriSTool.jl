@@ -1,23 +1,16 @@
 # Gradient harness: cross-backend gradient agreement via DifferentiationInterface.
-# Backends: FiniteDifferences (numerical reference), ForwardDiff (forward AD),
-# Enzyme (reverse AD). Reverse-mode gradients of the *kinetics* (the layer where
-# Lux.jl neural kinetic models would plug in) work today; reverse mode through
-# the full ODE solve is blocked upstream (Enzyme x OrdinaryDiffEq x Julia 1.12,
-# see EnzymeAD/Enzyme.jl#2912/#2961, SciML/OrdinaryDiffEq.jl#3227) — those
-# targets are marked @test_broken and should flip once the ecosystem lands.
+# FiniteDifferences is the numerical reference and ForwardDiff is the supported
+# automatic-differentiation backend for the current release. Reverse Enzyme
+# differentiation through OrdinaryDiffEq is deferred because of upstream Julia
+# 1.12 ecosystem blockers; see AUDIT_v1.0.md.
 
 import DifferentiationInterface as DI
-import Enzyme
 import ForwardDiff
 import FiniteDifferences
 
 @testset "Gradient harness (DI cross-backend)" begin
     fd_backend = DI.AutoFiniteDifferences(FiniteDifferences.central_fdm(5, 1))
     fwd_backend = DI.AutoForwardDiff()
-    # Duplicated annotation: closures defined inside @testset function scope
-    # need it for Enzyme to prove the function argument's memory behaviour.
-    rev_backend = DI.AutoEnzyme(mode = Enzyme.Reverse,
-                                function_annotation = Enzyme.Duplicated)
 
     base_params = [38.0, 0.6, 1.0, 3.0]
 
@@ -30,35 +23,6 @@ import FiniteDifferences
                 @test abs(g1[i] - g2[i]) <= 1e-6
             end
         end
-    end
-
-    function cross_backend_gradient(f, x; name, fd_rtol, ad_rtol = 1e-6)
-        g_fd = DI.gradient(f, fd_backend, x)
-        g_fwd = DI.gradient(f, fwd_backend, x)
-        g_rev = DI.gradient(f, rev_backend, x)
-        println("  [$name]")
-        println("    FD  = ", g_fd)
-        println("    FWD = ", g_fwd)
-        println("    REV = ", g_rev)
-        assert_gradient_agreement(name, g_fd, g_fwd; rtol = fd_rtol)
-        assert_gradient_agreement(name, g_fd, g_rev; rtol = fd_rtol)
-        assert_gradient_agreement(name, g_fwd, g_rev; rtol = ad_rtol)
-        return (g_fd = g_fd, g_fwd = g_fwd, g_rev = g_rev)
-    end
-
-    # Attempt reverse mode, marking upstream-blocked paths as broken rather
-    # than failing the suite.
-    function enzyme_attempt(f, x; name)
-        g_rev = try
-            DI.gradient(f, rev_backend, x)
-        catch e
-            @info("Enzyme reverse gradient blocked for $name (upstream Enzyme x OrdinaryDiffEq x Julia 1.12 interop)", e)
-            nothing
-        end
-        if g_rev === nothing
-            @test_broken false # upstream blocker; flip to @test once fixed
-        end
-        return g_rev
     end
 
 @testset "Kinetics rates" begin
@@ -82,22 +46,6 @@ import FiniteDifferences
         assert_gradient_agreement("growthrate (growth_empirical)", g_fd_gr, g_fwd_gr;
                                   rtol = 1e-4)
 
-        # Enzyme reverse on the rate functions: blocked upstream (Enzyme
-        # compiler assertion `codegen_i > length(codegen_types)` on the
-        # 16-field CrystallisationProblem struct with the (prob, state, t)
-        # signature). Flip to a hard @test once upstream lands.
-        g_rev = try
-            DI.gradient(f_nucl, rev_backend, [38.0, 0.6])
-        catch e
-            @info("Enzyme reverse blocked for kinetics (upstream Enzyme compiler assertion on the problem struct)", e)
-            nothing
-        end
-        if g_rev === nothing
-            @test_broken false
-        else
-            assert_gradient_agreement("nucleationrate (nucl_CNT)", g_fd, g_rev; rtol = 1e-4)
-            assert_gradient_agreement("nucleationrate (nucl_CNT)", g_fwd, g_rev; rtol = 1e-6)
-        end
     end
 
     @testset "MoM solution observables" begin
@@ -120,11 +68,6 @@ import FiniteDifferences
         g_fd = DI.gradient(f_conc, fd_backend, base_params)
         g_fwd = DI.gradient(f_conc, fwd_backend, base_params)
         assert_gradient_agreement("MoM final concentration", g_fd, g_fwd; rtol = 0.05)
-        g_rev = enzyme_attempt(f_conc, base_params; name = "MoM final concentration")
-        if g_rev !== nothing
-            assert_gradient_agreement("MoM final concentration", g_fd, g_rev; rtol = 0.05)
-        end
-
         f_d43(params) = run_mom(params).d43[end]
         g_fd43 = DI.gradient(f_d43, fd_backend, base_params)
         g_fwd43 = DI.gradient(f_d43, fwd_backend, base_params)
@@ -144,10 +87,6 @@ import FiniteDifferences
         g_fd = DI.gradient(f_loss, fd_backend, base_params)
         g_fwd = DI.gradient(f_loss, fwd_backend, base_params)
         assert_gradient_agreement("logMLE loss (2 experiments)", g_fd, g_fwd; rtol = 0.1)
-        g_rev = enzyme_attempt(f_loss, base_params; name = "logMLE loss")
-        if g_rev !== nothing
-            assert_gradient_agreement("logMLE loss", g_fd, g_rev; rtol = 0.1)
-        end
     end
 
     @testset "FiniteVol final concentration" begin
@@ -169,9 +108,5 @@ import FiniteDifferences
         g_fd = DI.gradient(f_fv, fd_backend, base_params)
         g_fwd = DI.gradient(f_fv, fwd_backend, base_params)
         assert_gradient_agreement("FV final concentration", g_fd, g_fwd; rtol = 0.15)
-        g_rev = enzyme_attempt(f_fv, base_params; name = "FV final concentration")
-        if g_rev !== nothing
-            assert_gradient_agreement("FV final concentration", g_fd, g_rev; rtol = 0.15)
-        end
     end
 end

@@ -24,13 +24,14 @@ abstract type AbstractSolution end
     - `success::Bool`: Success flag
 
 """
-@concrete struct CrystallisationFVSolution{Tt, TCo, TNn, TVd, TDq, TDm, TStats} <:
+@concrete struct CrystallisationFVSolution{Tt, TCo, TNn, TVd, TDq, TDm, TL, TStats} <:
                  AbstractSolution where {Tt <: AbstractArray{<:Real},
                                          TCo <: AbstractArray{<:Real},
                                          TNn <: AbstractArray{<:Real},
                                          TVd <: AbstractArray{<:Real},
                                          TDq <: AbstractArray{<:Real},
                                          TDm <: AbstractArray{<:Real},
+                                         TL <: NamedTuple,
                                          TStats}
     time::Tt
     concentration::TCo
@@ -43,6 +44,8 @@ abstract type AbstractSolution end
     d32::TDm
     d43::TDm
     mu2::TDm
+
+    solvent_state::TL
 
     final_state::TCo
     ode_stats::TStats
@@ -66,13 +69,14 @@ end
     - `success::Bool`: Success flag
 
 """
-@concrete struct CrystallisationMoMSolution{Tt, TCo, TD1, TD3, TD4, TMu2, TStats} <:
+@concrete struct CrystallisationMoMSolution{Tt, TCo, TD1, TD3, TD4, TMu2, TL, TStats} <:
                  AbstractSolution where {Tt <: AbstractArray{<:Real},
                                          TCo <: AbstractArray{<:Real},
                                          TD1 <: AbstractArray{<:Real},
                                          TD3 <: AbstractArray{<:Real},
                                          TD4 <: AbstractArray{<:Real},
                                          TMu2 <: AbstractArray{<:Real},
+                                         TL <: NamedTuple,
                                          TStats}
     time::Tt
     concentration::TCo
@@ -81,6 +85,8 @@ end
     d43::TD4
 
     mu2::TMu2
+
+    solvent_state::TL
 
     final_state::TCo
     ode_stats::TStats
@@ -540,20 +546,6 @@ end
 
 
 """
-    nucl_sreg <: AbstractFPNucleationFunction
-
-Supersaturation-regulated nucleation function (placeholder/experimental).
-
-Fields:
-- `nparams::Int64`: Number of parameters (0)
-- `string::String`: String identifier ("SReg Nu")
-"""
-Base.@kwdef @concrete struct nucl_sreg <: AbstractFPNucleationFunction
-    nparams::Int64 = 0
-    string::String = "SReg Nu"
-end
-
-"""
     growth_empirical <: AbstractFPScalarGrowthFunction
 
 Empirical crystal growth rate function.
@@ -606,6 +598,7 @@ Base.@kwdef @concrete struct growth_energy_multiloading <: AbstractFPScalarGrowt
     string::String = "GrEnergy-multiload"
     symbols::Vector{Symbol} = [:Ag, :g]
     unique_loadings::Vector{Float64} = [0.0]
+    Ea::Float64 = 53 * 1e3
 end
 
 """
@@ -687,20 +680,6 @@ Base.@kwdef @concrete struct growth_BpS <: AbstractFPScalarGrowthFunction
 end
 
 paramaxis(::growth_BpS) = ComponentArrays.Axis(C1 = 1, C2 = 2)
-
-"""
-    growth_empirical_length <: AbstractFPLengthGrowthFunction
-
-Empirical length-dependent crystal growth rate function.
-
-Fields:
-- `nparams::Int64`: Number of parameters (4)
-- `string::String`: String identifier ("Emp. Gr Length")
-"""
-Base.@kwdef @concrete struct growth_empirical_length <: AbstractFPLengthGrowthFunction
-    nparams::Int64 = 4
-    string::String = "Emp. Gr Length"
-end
 
 """
     growth_empirical_fixed <: AbstractFPScalarGrowthFunction
@@ -948,18 +927,47 @@ Abstract supertype for parameter estimation loss functions.
 abstract type AbstractPELossFunction end
 
 """
+    AbstractVarianceModel
+
+Strategy used by likelihood losses to obtain an observable variance when a
+measurement does not provide one or when a relative-error policy is desired.
+"""
+abstract type AbstractVarianceModel end
+
+"""
+    MeasuredVariance()
+
+Use the measured variance, falling back to a relative 10% standard deviation
+when the observable has no variance.
+"""
+struct MeasuredVariance <: AbstractVarianceModel end
+
+"""
+    RelativeVariance(percent)
+
+Use `percent` of the absolute measured value as the standard deviation.
+"""
+struct RelativeVariance{T <: Real} <: AbstractVarianceModel
+    percent::T
+end
+
+"""
     logMLE <: AbstractPELossFunction
 
 Log Maximum Likelihood Estimation loss function.
 
 Fields:
-- `weighting::Tuple{Float64,Float64}`: Weighting factors for different components (default: (1.0, 1.0))
+- `weighting::Vector{Float64}`: Weighting factors by observable (default: concentration and size both 1.0)
+- `variance_model::AbstractVarianceModel`: Variance policy (default: measured variance)
+- `variance_floor::Float64`: Minimum variance used by the likelihood
 - `string::String`: String identifier
 - `symbols::Vector{Symbol}`: Parameter symbols [:logMLE]
 """
 Base.@kwdef @concrete struct logMLE <: AbstractPELossFunction
-    weighting::Tuple{Float64, Float64} = (1.0, 1.0)
-    string::String = weighting == (1.0, 1.0) ? "Log MLE" : "Log MLE wgted $(weighting)"
+    weighting::Vector{Float64} = [1.0, 1.0]
+    variance_model::AbstractVarianceModel = MeasuredVariance()
+    variance_floor::Float64 = 1e-6
+    string::String = weighting == [1.0, 1.0] ? "Log MLE" : "Log MLE wgted $(weighting)"
     symbols::Vector{Symbol} = [:logMLE]
 end
 
@@ -969,12 +977,12 @@ end
 Mean Absolute Error loss function.
 
 Fields:
-- `weighting::Tuple{Float64,Float64}`: Weighting factors for different components (default: (1.0, 1.0))
+- `weighting::Vector{Float64}`: Weighting factors by observable (default: concentration and size both 1.0)
 - `string::String`: String identifier
 """
 Base.@kwdef @concrete struct mae <: AbstractPELossFunction
-    weighting::Tuple{Float64, Float64} = (1.0, 1.0)
-    string::String = weighting == (1.0, 1.0) ? "MAE" : "MAE wgted $(weighting)"
+    weighting::Vector{Float64} = [1.0, 1.0]
+    string::String = weighting == [1.0, 1.0] ? "MAE" : "MAE wgted $(weighting)"
 end
 
 ## Measurements
@@ -1017,7 +1025,7 @@ Abstract supertype for a single experimental run (see `CrystallisationExperiment
 abstract type AbstractExperiment end
 
 """
-    CrystallisationExperiment{O<:NamedTuple} <: AbstractExperiment
+    CrystallisationExperiment{O<:NamedTuple,M<:NamedTuple} <: AbstractExperiment
 
 A single crystallisation experiment: a typed `NamedTuple` of observables
 plus the run conditions.
@@ -1028,17 +1036,20 @@ Fields:
 - `temperature::Float64`: run temperature in Kelvin
 - `loading::Float64`: loading (e.g. volumetric solids fraction)
 - `exp_id::Int`: experiment identifier
+- `metadata::M`: additional typed run metadata
 
 The `NamedTuple` shape keeps the container type-stable and Tables.jl
 compatible; additional observables (pH, mass, PSD, ...) are added as new
 fields, not new container types.
 """
-Base.@kwdef @concrete struct CrystallisationExperiment{O <: NamedTuple} <:
+Base.@kwdef @concrete struct CrystallisationExperiment{O <: NamedTuple,
+                                                       M <: NamedTuple} <:
                  AbstractExperiment
     observables::O
     temperature::Float64
     loading::Float64
     exp_id::Int
+    metadata::M = NamedTuple()
 end
 
 """
@@ -1137,7 +1148,7 @@ Method of Moments solver for crystallization population balance equations.
 Fields:
 - `string::String`: Solver identifier ("MoM")
 - `nmoments::Int64`: Highest tracked moment order. The state holds
-  moments `µ0 .. µ_nmoments` plus the liquid-phase concentration
+  moments `µ0 .. µ_nmoments` plus the solvent-phase concentration
   (`nmoments + 2` states). Must be `>= 2` (the concentration closure uses
   `µ2`); `d43 = µ4/µ3` requires `nmoments >= 4` (the default).
 - `timestepping_algorithm::Symbol`: Time-stepping algorithm selector (e.g. `:tsit5`, `:ssprk43`, `:auto`).
@@ -1415,6 +1426,37 @@ Abstract supertype for crystallization problem definitions.
 """
 abstract type AbstractCrystallisationProblem end
 
+struct DefaultSolventDynamics end
+
+function (::DefaultSolventDynamics)(problem, state, time, growth)
+    solvent_names = propertynames(problem.initial_solvent_state)
+    solvent_count = length(solvent_names)
+    derivative_type = promote_type(eltype(state), typeof(growth))
+    derivatives = MVector{solvent_count, derivative_type}(undef)
+    fill!(derivatives, zero(growth))
+    concentration_position = findfirst(==(Symbol(:concentration)), solvent_names)
+    concentration_position === nothing &&
+        throw(ArgumentError("initial_solvent_state must define :concentration."))
+
+    population_count = length(state) - solvent_count
+    depletion = zero(growth)
+    if hasproperty(problem.solver, :nmoments)
+        problem.solver.nmoments >= 2 ||
+            throw(ArgumentError("MoM solver requires nmoments >= 2 for concentration closure."))
+        depletion = 3 * problem.kv * problem.ρ * growth * state[3]
+    else
+        @inbounds for index in 1:population_count
+            crystal_length = problem.solver.cell_centre[index]
+            depletion += problem.solver.cell_dL * state[index] * growth * crystal_length^2
+        end
+        depletion *= 3 * problem.kv * problem.ρ
+    end
+    derivatives[concentration_position] = -depletion
+    return SVector(derivatives)
+end
+
+const default_solvent_dynamics = DefaultSolventDynamics()
+
 """
     CrystallisationProblem{NuF,GrF,BrF,AggF,solmethod,NuP,GrP,BrP,AggP} <: AbstractCrystallisationProblem
 
@@ -1432,6 +1474,10 @@ Fields:
 - `temp_profile::TP`: Temperature profile (see `AbstractTemperature`)
 - `ρ::Float64`: Crystal density (kg/m³)
 - `initial_concentration::Float64`: Initial solute concentration (kg/m³)
+- `initial_solvent_state::SS`: Named initial values for solvent-phase variables;
+  `:concentration` is required
+- `solvent_dynamics::SD`: Callable `(problem, state, time, growth) -> rates`
+  returning one derivative per named solvent variable
 - `saturation_model::AbstractSaturationModel`: Solubility model (default `lysozyme_saturation()`)
 - `kv::Float64`: Volume shape factor
 - `molecular_volume::Float64`: Molecular volume (m³)
@@ -1457,7 +1503,9 @@ Base.@kwdef @concrete struct CrystallisationProblem{NuF <: AbstractNucleationFun
                                                     BrP <: AbstractVector{<:Real},
                                                     AggP <: AbstractVector{<:Real},
                                                     TP <: AbstractTemperature,
-                                                                     SM <: AbstractSaturationModel} <:
+                                                    SM <: AbstractSaturationModel,
+                                                    SS <: NamedTuple,
+                                                    SD} <:
                              AbstractCrystallisationProblem
 
     # Operation
@@ -1472,6 +1520,8 @@ Base.@kwdef @concrete struct CrystallisationProblem{NuF <: AbstractNucleationFun
     saturation_model::SM = lysozyme_saturation()
     kv::Float64 = 0.81 #0.55
     molecular_volume::Float64 = 2.97e-26
+    initial_solvent_state::SS = (; concentration = initial_concentration)
+    solvent_dynamics::SD = default_solvent_dynamics
 
     # Chosen Kinetics
     kinetics_nucleationfunction::NuF = nucl_CNT()
@@ -1504,11 +1554,29 @@ saturation_concentration(prob::CrystallisationProblem, t) =
     saturation_concentration(prob.saturation_model, prob.temp_profile, t)
 
 """
+    solvent_state(prob, state) -> NamedTuple
+
+Read the named solvent-phase variables from the tail of a numerical solver
+state. `initial_solvent_state` defines both their names and their ordering.
+"""
+function solvent_state(prob::CrystallisationProblem, state)
+    names = propertynames(prob.initial_solvent_state)
+    n_solvent = length(names)
+    values = ntuple(index -> state[length(state) - n_solvent + index], Val(n_solvent))
+    return NamedTuple{names}(values)
+end
+
+function _solvent_state_index(prob::CrystallisationProblem, state, name::Symbol)
+    position = findfirst(==(name), propertynames(prob.initial_solvent_state))
+    position === nothing && throw(ArgumentError("Unknown solvent-state variable :$name."))
+    return length(state) - length(propertynames(prob.initial_solvent_state)) + position
+end
+
+"""
     supersaturation(prob::CrystallisationProblem, state, t) -> Real
 
-Supersaturation ratio `state[end] / saturation_concentration(prob, t)`. The
-liquid-phase concentration is the last state component in both the MoM and
-discretised solver states.
+Supersaturation ratio from the named `:concentration` solvent-state variable.
 """
 supersaturation(prob::CrystallisationProblem, state, t) =
-    state[end] / saturation_concentration(prob, t)
+    state[_solvent_state_index(prob, state, :concentration)] /
+    saturation_concentration(prob, t)

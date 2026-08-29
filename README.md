@@ -10,7 +10,7 @@ The package is designed to handle various aspects of crystallisation modeling:
 *   **Flexible Kinetics:** Supports a wide range of kinetic models for nucleation, growth, aggregation, and breakage, with named-parameter access via ComponentArrays. Users can select from built-in empirical and first-principles models or define their own (see Tutorial 4).
 *   **Parameter Estimation:** Includes routines for fitting model parameters to experimental data using metaheuristic optimization, Optimization.jl-based search, Turing NUTS, and Approximate Bayesian Computation. ABC inference is unified behind a single `run_abc` entry point with selectable samplers (`ABCDESampler`, `ABCDETurnerSampler`).
 *   **Uncertainty & Sensitivity Analysis:** Provides tools to perform uncertainty quantification through ensemble simulations and to analyze model sensitivity to different parameters.
-*   **Visualization:** Comes with plotting utilities built on `Makie.jl` and `Plots.jl` for visualizing simulation results, posterior distributions, and measurement data.
+*   **Visualization:** Comes with plotting utilities built on `Makie.jl` for visualizing simulation results, posterior distributions, and measurement data.
 
 
 ## Example Usage
@@ -67,7 +67,7 @@ Worked examples in `examples/`:
 
 ## Documentation guides
 
-Short, usage-first guides live in `CriSTool/docs/`:
+Short, usage-first guides live in `docs/`:
 
 - `docs/index.md` (navigation)
 - `docs/simulation.md` (running simulations)
