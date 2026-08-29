@@ -5,11 +5,11 @@ an `AbstractTemperature`. The default is a constant 25 C.
 
 You can pass a custom profile to `runsimulation` via `temp_profile`. For
 side-by-side runs across constant, ramp, and arbitrary `T(t)` profiles,
-see `CriSTool/examples/Tutorial 1 Running Simulations.jl`.
+see `../examples/Tutorial 1 Running Simulations.jl`.
 
 ## Built-in profiles
 
-`AbstractTemperature` subtypes (defined in `Structs.jl`):
+`AbstractTemperature` subtypes (defined in `src/core/temperature_types.jl`):
 
 - `ConstantTemperature(T)` — fixed temperature (Kelvin).
 - `LinearTemperature(T0, slope)` — `T(t) = T0 + slope * t`.

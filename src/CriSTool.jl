@@ -101,35 +101,64 @@ export chains_to_matrix, distribution_to_matrix, create_product_prior, prior_to_
 export nuts_model, MCMC_Routine, kinetic_parameter_symbols, rename_chain
 export CRISTOOL_PALETTE
 
-include("Structs.jl")
+# Core types and public interfaces.
+include("core/solution_types.jl")
+include("core/kinetic_types.jl")
+include("core/loss_types.jl")
+include("core/measurement_types.jl")
+include("core/solver_types.jl")
+include("core/temperature_types.jl")
+include("core/saturation_types.jl")
+include("core/problem_types.jl")
 
-include("Measurements.jl")
+# Measurement ingestion and normalization.
+include("measurements/loaders.jl")
+include("measurements/legacy.jl")
+include("measurements/balancing.jl")
+include("measurements/bootstrap.jl")
 
-include("PostSolution.jl")
+# Solution post-processing precedes the model and solver implementations.
+include("solvers/post_solution.jl")
 
-include("Models.jl")
+# Kinetic rate families and population-balance terms.
+include("physics/model_interfaces.jl")
+include("physics/nucleation_rates.jl")
+include("physics/growth_rates.jl")
+include("physics/aggregation_breakage_rates.jl")
 
-include("PrettyPrinting.jl")
+# Numerical solver implementations and public simulation wrappers.
+include("solvers/solver_helpers.jl")
+include("solvers/mom.jl")
+include("solvers/finite_volume.jl")
+include("solvers/weno.jl")
+include("solvers/runsimulation.jl")
 
-include("KissABC.jl")
+include("output/pretty_printing.jl")
+
+include("vendor/KissABC.jl")
 using .KissABC
 using .KissABC: ABCDE, smc, AIS, ApproxPosterior, ApproxKernelizedPosterior
 
-include("PELossFunctions.jl")
+# Inference and posterior utilities.
+include("inference/parameter_estimation.jl")
 
-# include("PELossFunctions_BO.jl")
+# include("inference/parameter_estimation_bo.jl")
 
-include("ABC.jl")
+include("inference/abc.jl")
 
-include("ChainUtilities.jl")
+include("inference/chain_utilities.jl")
 
-include("ChainsFunctions.jl")
+include("inference/bayesian.jl")
 
-include("SensitivityAnalysis.jl")
+# Uncertainty workflows.
+include("uncertainty/sensitivity.jl")
+include("uncertainty/ensembles.jl")
 
-include("Uncertainties.jl")
-
-include("plotting.jl")
+# Plotting is included last because it consumes all public solution and
+# inference interfaces.
+include("plotting/common.jl")
+include("plotting/ensemble.jl")
+include("plotting/simulation.jl")
 
 
 

@@ -1,6 +1,6 @@
 # Ensembles and uncertainty
 
-CriSTool includes ensemble utilities in `Uncertainties.jl`.
+CriSTool includes ensemble utilities in `src/uncertainty/ensembles.jl`.
 The main function is `run_ensemble`, which runs many forward simulations
 and returns ensemble solution objects.
 

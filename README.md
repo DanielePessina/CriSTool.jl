@@ -65,6 +65,13 @@ Worked examples in `examples/`:
 - `Tutorial 4 Defining a Custom Kinetic.jl` — three-step pattern (subtype + `paramaxis` + rate function) for adding a kinetic family from a user script.
 - `Tutorial 5 ABCDE and MCMC.jl` — `run_abc` and Turing NUTS on synthetic data, side-by-side posteriors. Self-contained.
 
+Run them from the repository root with the dedicated example environment:
+
+```sh
+julia --project=examples -e 'using Pkg; Pkg.instantiate()'
+julia --project=examples "examples/Tutorial 1 Running Simulations.jl"
+```
+
 ## Documentation guides
 
 Short, usage-first guides live in `docs/`:

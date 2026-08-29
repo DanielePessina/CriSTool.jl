@@ -212,7 +212,7 @@ function main()
     println(io, "(AllocCheck only sees statically resolvable code; the ODE solve core is")
     println(io, " behind kwcall boundaries and is NOT analysed — the 16 sites above are all")
     println(io, " in the flat-vector wrapper: paramaxis/ComponentArray axis construction,")
-    println(io, " Models.jl:34 and Models.jl:2045.)")
+    println(io, " src/physics/model_interfaces.jl and src/solvers/runsimulation.jl.)")
 
     # ---- hotspot: wrapper vs ComponentArray direct call ----------------------
     p = ComponentArray(CANONICAL_θ, paramaxis(nucl_f, gr_f, agg_f, br_f))

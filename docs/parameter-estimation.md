@@ -8,8 +8,8 @@ CriSTool provides two main entry points:
 Both routines minimize a loss function built from experimental measurements.
 
 For a fully worked end-to-end example (PE + ABCDE + NUTS) see
-`CriSTool/examples/Tutorial 2 Parameter Estimation.jl` and
-`Tutorial 5 ABCDE and MCMC.jl`.
+`../examples/Tutorial 2 Parameter Estimation.jl` and
+`../examples/Tutorial 5 ABCDE and MCMC.jl`.
 
 ## Basic workflow
 
@@ -42,7 +42,8 @@ optimal_params = minimizer(optres)
 
 ## Loss functions
 
-Built-in loss function types (see `Structs.jl` and `PELossFunctions.jl`):
+Built-in loss function types (see `src/core/loss_types.jl` and
+`src/inference/parameter_estimation.jl`):
 
 - `logMLE`: weighted Gaussian negative log-likelihood over the active
   observables
@@ -76,18 +77,19 @@ The `problem` carries kinetics and solver; per-experiment conditions
 
 To add a new loss function:
 
-1) Define a new struct in `Structs.jl` that subtypes `AbstractPELossFunction`.
-2) Implement `loss` for it in `PELossFunctions.jl`.
+1) Define a new struct in `src/core/loss_types.jl` that subtypes
+   `AbstractPELossFunction`.
+2) Implement `loss` for it in `src/inference/parameter_estimation.jl`.
 
 Minimal example:
 
 ```julia
-# Structs.jl
+# src/core/loss_types.jl
 Base.@kwdef @concrete struct mse_loss <: AbstractPELossFunction
     string::String = "MSE"
 end
 
-# PELossFunctions.jl
+# src/inference/parameter_estimation.jl
 function loss(::mse_loss, problem::CrystallisationProblem,
               parameters, experiments::Vector{<:AbstractExperiment})
     total = 0.0

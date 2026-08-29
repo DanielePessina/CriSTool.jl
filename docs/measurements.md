@@ -12,7 +12,7 @@ means adding a field to the `NamedTuple`, not a new container type.
 ```julia
 using CriSTool
 
-path = joinpath(@__DIR__, "fake-experimental-dataset.xlsx")
+path = joinpath(@__DIR__, "..", "examples", "fake-experimental-dataset.xlsx")
 experiments = load_experiments(path, "Unseeded_PE", 0.0)
 ```
 

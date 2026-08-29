@@ -22,7 +22,7 @@ All forms require:
 - a prior distribution (use `Distributions.product_distribution`)
 
 For a worked end-to-end example see
-`CriSTool/examples/Tutorial 5 ABCDE and MCMC.jl`, which runs
+`../examples/Tutorial 5 ABCDE and MCMC.jl`, which runs
 `run_abc` and Turing NUTS on the same synthetic dataset and compares
 posteriors side-by-side.
 

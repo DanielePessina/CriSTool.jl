@@ -1,7 +1,8 @@
 # Kinetics: nucleation and growth
 
 CriSTool uses small structs to represent kinetic models. Each struct
-implements a rate function by multiple dispatch in `Models.jl`, and
+implements a rate function by multiple dispatch in the corresponding
+`src/physics/*_rates.jl` file, and
 declares a `paramaxis` so its parameters can be accessed by name.
 
 Key ideas:
@@ -60,7 +61,7 @@ Three pieces, all in your own user script:
    `_named_params(model, parameters)`.
 
 Worked example in
-`CriSTool/examples/Tutorial 4 Defining a Custom Kinetic.jl`. Sketched
+`../examples/Tutorial 4 Defining a Custom Kinetic.jl`. Sketched
 here for nucleation and growth:
 
 ```julia

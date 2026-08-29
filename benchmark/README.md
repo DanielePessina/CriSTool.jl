@@ -56,8 +56,9 @@ Expected wall time ≈ 1–2 minutes (mostly precompile + the 5 s sampling windo
   `AllocCheck.check_allocs(f, argtypes)` (the macro form only wraps new
   definitions). Important caveat: AllocCheck only sees statically resolvable
   code — the ODE solve core sits behind kwcall boundaries, so it reports the
-  entry wrapper's allocations (`paramaxis`/ComponentArray axis construction at
-  `src/Models.jl:34` and the flat-vector forward at `src/Models.jl:2045`) and
+  entry wrapper's allocations (`paramaxis`/ComponentArray axis construction in
+  `src/physics/model_interfaces.jl` and the flat-vector forward in
+  `src/solvers/runsimulation.jl`) and
   cannot see inside the solve.
 - **Fallback** (if AllocCheck breaks on a future Julia): Chairmarks alloc
   counts are already reported; add `InteractiveUtils.@code_warntype` on the hot
@@ -77,8 +78,9 @@ WENO200     17.233 ms      1064149     26652816.0     2391      395        0    
 - Per experiment: MoM ≈ 2.8 ms / 51k allocs / 4.2 MB; FV200 ≈ 2.8 ms / 213k
   allocs / 5.1 MB; WENO200 ≈ 2.5 ms / 152k allocs / 3.8 MB.
 - AllocCheck: **flags allocations** — 16 sites, all in the flat-vector wrapper
-  (`paramaxis` → `ViewAxis`/`UnitRange`/`NamedTuple` at `src/Models.jl:34`,
-  `ComponentArray` construction + kwarg splat at `src/Models.jl:2045-2046`).
+  (`paramaxis` → `ViewAxis`/`UnitRange`/`NamedTuple` in
+  `src/physics/model_interfaces.jl`, `ComponentArray` construction + kwarg
+  splat in `src/solvers/runsimulation.jl`).
   The measured runtime cost of that wrapper is tiny (~70 allocs / 3.5 KB per
   full 7-experiment fit vs. the ComponentArray-direct path).
 - The overwhelming allocation volume comes from the per-call ODE machinery
@@ -93,7 +95,7 @@ FV200       2.677 ms         2058      1010464.0     3447      571        0     
 WENO200      4.632 ms         2478      1829856.0     2403      397        0        0         70
 ```
 
-- What was fixed (both in `src/Models.jl`):
+- What was fixed (in `src/solvers/mom.jl` and the discretised solver files):
   1. **MoM RHS type instability**: `n_mom`/`n_states` were boxed closure captures
      (`code_warntype`: `Body::ANY`, 64 B allocated per RHS call). The
      `if n_states == 6` value-branch became a runtime branch on a dynamic value,

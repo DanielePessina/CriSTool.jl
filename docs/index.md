@@ -2,6 +2,19 @@
 
 This folder collects short, usage-first guides for the main workflows in CriSTool.
 
+## Running tutorials
+
+The tutorials use the package plus tutorial-only dependencies such as
+`GlobalSensitivity` and `QuasiMonteCarlo`. From the repository root:
+
+```sh
+julia --project=examples -e 'using Pkg; Pkg.instantiate()'
+julia --project=examples "examples/Tutorial 1 Running Simulations.jl"
+```
+
+Replace the script name to run another tutorial. Tutorial 3 requires the
+example environment because it uses the sensitivity-analysis dependencies.
+
 ## Quick start
 
 ```julia
