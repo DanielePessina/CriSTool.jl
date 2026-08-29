@@ -1055,6 +1055,14 @@ Uses the solver's configured algorithm if not `:auto`, otherwise uses the defaul
     return _timestepping_algorithm(Val(alg_symbol), step_limiter, stage_limiter)
 end
 
+@inline function _concentration_depletion(cell_dL, numberdensity, scalargrowth, cell_centre)
+    acc = 0.0
+    @inbounds for i in eachindex(numberdensity, cell_centre)
+        acc += cell_dL * numberdensity[i] * scalargrowth * (cell_centre[i] * cell_centre[i])
+    end
+    return acc
+end
+
 """
     _simulatecrystallisation(CryProblem::CrystallisationProblem{..., MoM, ...}, saveat) -> CrystallisationMoMSolution
 
@@ -1070,6 +1078,21 @@ without aggregation or breakage.
 # Returns
 - `CrystallisationMoMSolution` containing time, concentration, and moment-derived sizes
 """
+@inline function _mom_rhs(CryProblem, scalargrowth, B, u::SVector{6})
+    return SVector(B, scalargrowth * u[1], 2 * scalargrowth * u[2],
+                   3 * scalargrowth * u[3], 4 * scalargrowth * u[4],
+                   -3 * CryProblem.kv * CryProblem.ρ * scalargrowth * u[3])
+end
+
+@inline function _mom_rhs(CryProblem, scalargrowth, B, u::SVector{N}) where {N}
+    n_states = N
+    return SVector(ntuple(Val(n_states)) do k
+        k == 1 ? B :
+        k == n_states ? -3 * CryProblem.kv * CryProblem.ρ * scalargrowth * u[3] :
+        (k - 1) * scalargrowth * u[k - 1]
+    end)
+end
+
 function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, GrF, nobreakage,
                                                                        noaggregation, MoM,
                                                                        NuP, GrP, BrP, AggP,
@@ -1088,26 +1111,15 @@ function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, Gr
                                                    AbstractVector{<:Real},
                                                    TP <:
                                                    AbstractTemperature}
+    n_mom = CryProblem.solver.nmoments
+    @assert n_mom >= 2 "MoM solver requires nmoments >= 2 (concentration closure uses µ2)"
+
     function MoM_model(u, p, t)
         scalargrowth = growthrate(CryProblem.kinetics_growthfunction, p.gr,
                                   CryProblem, u, t)
         B = nucleationrate(CryProblem.kinetics_nucleationfunction, p.nucl,
                            CryProblem, u, t)
-
-        n_mom = CryProblem.solver.nmoments
-        @assert n_mom >= 2 "MoM solver requires nmoments >= 2 (concentration closure uses µ2)"
-        n_states = n_mom + 2
-        return if n_states == 6
-            SVector(B, scalargrowth * u[1], 2 * scalargrowth * u[2],
-                    3 * scalargrowth * u[3], 4 * scalargrowth * u[4],
-                    -3 * CryProblem.kv * CryProblem.ρ * scalargrowth * u[3])
-        else
-            SVector(ntuple(Val(n_states)) do k
-                k == 1 ? B :
-                k == n_states ? -3 * CryProblem.kv * CryProblem.ρ * scalargrowth * u[3] :
-                (k - 1) * scalargrowth * u[k - 1]
-            end)
-        end
+        return _mom_rhs(CryProblem, scalargrowth, B, u)
     end
 
     θ = ComponentArray(;
@@ -1282,9 +1294,9 @@ finite volume method with flux limiters.
         end
 
         # Calculate dstdt for concentration part
-        sum_term = sum(CryProblem.solver.cell_dL .* numberdensity .* scalargrowth .*
-                       (cell_centre.^2))
-        dstdt[end] = -CryProblem.kv * CryProblem.ρ * (3 * sum_term)
+        dstdt[end] = -CryProblem.kv * CryProblem.ρ * (3 *
+                      _concentration_depletion(CryProblem.solver.cell_dL, numberdensity,
+                                               scalargrowth, cell_centre))
 
         return nothing
     end
@@ -1507,9 +1519,9 @@ finite volume method with size-dependent growth rates.
         end
 
         # Calculate dstdt for concentration part
-        sum_term = sum(@. CryProblem.solver.cell_dL * numberdensity * lengthbasedgrowth *
-                          (cell_centre^2))
-        dstdt[end] = -CryProblem.kv * CryProblem.ρ * (3 * sum_term)
+        dstdt[end] = -CryProblem.kv * CryProblem.ρ * (3 *
+                      _concentration_depletion(CryProblem.solver.cell_dL, numberdensity,
+                                               lengthbasedgrowth, cell_centre))
 
         return nothing
     end
@@ -1719,9 +1731,9 @@ function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, Gr
         end
 
         # Calculate dstdt for concentration part
-        sum_term = sum(CryProblem.solver.cell_dL .* numberdensity .* scalargrowth .*
-                       (cell_centre.^2))
-        dstdt[end] = -CryProblem.kv * CryProblem.ρ * (3 * sum_term)
+        dstdt[end] = -CryProblem.kv * CryProblem.ρ * (3 *
+                      _concentration_depletion(CryProblem.solver.cell_dL, numberdensity,
+                                               scalargrowth, cell_centre))
 
         return nothing
     end

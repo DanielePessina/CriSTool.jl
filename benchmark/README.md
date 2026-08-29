@@ -83,4 +83,39 @@ WENO200     17.233 ms      1064149     26652816.0     2391      395        0    
   full 7-experiment fit vs. the ComponentArray-direct path).
 - The overwhelming allocation volume comes from the per-call ODE machinery
   (every `runsimulation` call constructs an `ODEProblem` + solver cache inside
+
+## Post type-stability fix (2026-08-29, uncommitted on `4e10db6`, Julia 1.12.4, Chairmarks 1.3.1)
+
+```
+solver     med time   med allocs      med bytes       nf     nacc     nrej   nsolve      nsave
+MoM         0.990 ms         1519       126400.0     7863     1307        0        0         57
+FV200       2.677 ms         2058      1010464.0     3447      571        0        0         70
+WENO200      4.632 ms         2478      1829856.0     2403      397        0        0         70
+```
+
+- What was fixed (both in `src/Models.jl`):
+  1. **MoM RHS type instability**: `n_mom`/`n_states` were boxed closure captures
+     (`code_warntype`: `Body::ANY`, 64 B allocated per RHS call). The
+     `if n_states == 6` value-branch became a runtime branch on a dynamic value,
+     deoptimising the whole solve. Replaced by static dispatch
+     `_mom_rhs(..., u::SVector{6})` / `_mom_rhs(..., u::SVector{N}) where N`
+     (N is a type parameter, so the `ntuple(Val(N))` fallback is static too);
+     the `@assert n_mom >= 2` moved out of the RHS into
+     `crystallisation_odeproblem` (construction-time).
+  2. **FV/WENO RHS broadcast temps**: `sum(cell_dL .* numberdensity .* g .*
+     cell_centre.^2)` allocated one Vector per RHS call (~1.6 KB at mesh 200).
+     Replaced by the allocation-free `_concentration_depletion` accumulator at
+     all three sites (FV, FV-length, WENO).
+- MoM per-experiment (thesis sweep, tsit5, save_idx 0:4:400): **0.158 ms / 241
+  allocs** — matches the original thesis code's 0.161 ms class with ~15x fewer
+  allocs (was 0.94–1.35 ms / 23.3k allocs).
+- All three RHS closures are now fully type-stable (`Body::Nothing` for FV/WENO
+  iip, `Body::SVector{6,Float64}` for MoM) and allocation-free (0 B/call).
+- AllocCheck: same 16 wrapper-only sites as before (flat-vector
+  `paramaxis`/`ComponentArray`/kwarg-splat), ~70 allocs / 3.5 KB per 7-exp fit.
+- Full test suite: 492 pass / 3 pre-existing broken; gold-fixture and
+  nf/naccept identical to pre-fix runs (same physics, pure overhead removal).
+- Historical "env effect" (identical code+manifest in two dirs → 0.16 vs
+  0.95 ms): **no longer reproduces**; the original code measures 0.164 ms in
+  this same env. See `research/benchmark-perf-log.md` for the full story.
   `_simulatecrystallisation`); this is opaque to AllocCheck.
