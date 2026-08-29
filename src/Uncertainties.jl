@@ -44,7 +44,7 @@ function run_ensemble(distribution::D,
                       verbosity::Int64 = 1,
                       time_idx::T = 0:5:305,
                       temp_profile = nothing,
-                      initial_concentration = nothing,
+                                  initial_concentration = nothing,
                       use_measurement_time::Bool = true) where {D <:
                                                                 Distributions.Distribution,
                                                                 T <: AbstractArray}
@@ -55,7 +55,7 @@ function run_ensemble(distribution::D,
                                   aggregationfunction, breakagefunction, solver;
                                   time_idx = time_idx,
                                   temp_profile = temp_profile,
-                                  initial_concentration = initial_concentration,
+                                  initial_concentration_override = initial_concentration,
                                   use_measurement_time = use_measurement_time,
                                   HPC = HPC,
                                   verbosity = verbosity)
@@ -107,7 +107,7 @@ function run_ensemble(samples::Matrix{Float64},
                                   aggregationfunction, breakagefunction, solver;
                                   time_idx = time_idx,
                                   temp_profile = temp_profile,
-                                  initial_concentration = initial_concentration,
+                                  initial_concentration_override = initial_concentration,
                                   use_measurement_time = use_measurement_time,
                                   HPC = HPC,
                                   verbosity = verbosity)
@@ -133,7 +133,7 @@ function _create_ensemble_solution(time, concentration, d43, d32, d50q,
                                    solver::AbstractDiscretisedSolver)
     concentration_mean = vec(mean(concentration, dims = 2))
     concentration_std = vec(std(concentration, dims = 2))
-    z = 1.96
+    z = CRISTOOL_CONFIDENCE_Z95
     concentration_lb = concentration_mean - z * concentration_std
     concentration_ub = concentration_mean + z * concentration_std
     d43_mean = vec(mean(d43, dims = 2))
@@ -169,8 +169,8 @@ Create ensemble solution object for Method of Moments solver.
 function _create_ensemble_solution(time, concentration, d43, d32, _, solver::MoM)
     concentration_mean = vec(mean(concentration, dims = 2))
     concentration_std = vec(std(concentration, dims = 2))
-    concentration_lb = concentration_mean - 1.96 * concentration_std
-    concentration_ub = concentration_mean + 1.96 * concentration_std
+    concentration_lb = concentration_mean - CRISTOOL_CONFIDENCE_Z95 * concentration_std
+    concentration_ub = concentration_mean + CRISTOOL_CONFIDENCE_Z95 * concentration_std
     d43_mean = vec(mean(d43, dims = 2))
     d43_std = vec(std(d43, dims = 2))
     d32_mean = vec(mean(d32, dims = 2))
@@ -187,7 +187,7 @@ end
     _run_ensemble_internal(samples::Matrix{Float64}, measurements::Vector{<:AbstractExperiment},
                            nucleationfunction, growthfunction, aggregationfunction, breakagefunction,
                            solver; time_idx::T=0:5:305, verbosity::Int64=1, HPC::Bool=false,
-                           temp_profile=nothing, initial_concentration=nothing,
+                           temp_profile=nothing, initial_concentration_override=nothing,
                            use_measurement_time::Bool=true)
                            -> Vector{Union{EnsembleFVSolution, EnsembleMoMSolution}}
                            where {T<:AbstractArray}
@@ -206,7 +206,7 @@ Internal function to run ensemble simulations across multiple measurements.
 - `verbosity::Int64=1`: Verbosity level
 - `HPC::Bool=false`: Whether running on HPC
 - `temp_profile=nothing`: Override temperature profile; defaults to measurement temperature
-- `initial_concentration=nothing`: Override initial concentration; defaults to measurement value
+- `initial_concentration_override=nothing`: Internal override; defaults to measurement value
 - `use_measurement_time::Bool=true`: When true, infer time grid from measurements
 
 # Returns
@@ -222,7 +222,7 @@ function _run_ensemble_internal(samples::Matrix{Float64},
                                 verbosity::Int64 = 1,
                                 HPC::Bool = false,
                                 temp_profile = nothing,
-                                initial_concentration = nothing,
+                                initial_concentration_override = nothing,
                                 use_measurement_time::Bool = true) where {T <: AbstractArray}
 
     print_ensemble_diagnostics(samples; verbosity = verbosity)
@@ -250,9 +250,9 @@ function _run_ensemble_internal(samples::Matrix{Float64},
         run_temp_profile = isnothing(temp_profile) ?
                            ConstantTemperature(measurements[m].temperature) :
                            temp_profile
-        run_initial_concentration = isnothing(initial_concentration) ?
-                                    CriSTool.initial_concentration(measurements[m]) :
-                                    initial_concentration
+        run_initial_concentration = isnothing(initial_concentration_override) ?
+                                    initial_concentration(measurements[m]) :
+                                    initial_concentration_override
         concentration = Matrix{Float64}(undef, n_timepoints, n_samples)
         d43 = Matrix{Float64}(undef, n_timepoints, n_samples)
         d32 = Matrix{Float64}(undef, n_timepoints, n_samples)
@@ -466,7 +466,7 @@ function _simulateensembleuncertainty(samples::Matrix{Float64}, c_array::Vector{
         concentration_std = vec(std(concentration, dims = 2))
 
         # Compute confidence bounds (95% confidence interval)
-        z = 1.96
+        z = CRISTOOL_CONFIDENCE_Z95
         concentration_lb = concentration_mean - z * concentration_std
         concentration_ub = concentration_mean + z * concentration_std
 
@@ -571,7 +571,7 @@ function _simulateensembleuncertainty(samples::Matrix{Float64}, c_array::Vector{
         concentration_std = vec(std(concentration, dims = 2))
 
         # Compute confidence bounds (95% confidence interval)
-        z = 1.96
+        z = CRISTOOL_CONFIDENCE_Z95
         concentration_lb = concentration_mean - z * concentration_std
         concentration_ub = concentration_mean + z * concentration_std
 
@@ -671,7 +671,7 @@ function _simulateensembleuncertainty(samples::Matrix{Float64}, conc::Real,
     concentration_std = vec(std(concentration, dims = 2))
 
     # Compute confidence bounds (95% confidence interval)
-    z = 1.96
+    z = CRISTOOL_CONFIDENCE_Z95
     concentration_lb = concentration_mean - z * concentration_std
     concentration_ub = concentration_mean + z * concentration_std
 
@@ -773,7 +773,7 @@ function _simulateensembleuncertainty(samples::Matrix{Float64}, conc::Real,
     concentration_std = vec(std(concentration, dims = 2))
 
     # Compute confidence bounds (95% confidence interval)
-    z = 1.96
+    z = CRISTOOL_CONFIDENCE_Z95
     concentration_lb = concentration_mean - z * concentration_std
     concentration_ub = concentration_mean + z * concentration_std
 

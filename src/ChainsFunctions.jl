@@ -111,7 +111,7 @@ function ChainPairPlots(chain, params::Vector{Float64};
 
     if prior !== nothing
         # Accept any Distribution directly - use utility function
-        priordist_matrix = distribution_to_matrix(prior, 2^18)
+        priordist_matrix = distribution_to_matrix(prior, CRISTOOL_PRIOR_PLOT_SAMPLES)
         if size(priordist_matrix, 1) == length(names(df))
             prior_df = DataFrame(permutedims(priordist_matrix), names(df))
         else
@@ -176,7 +176,7 @@ function ChainPairPlots(samples::AbstractMatrix, params::Vector{Float64};
     mean_params_dict = Dict(param_symbols[i] => meanparameter[i] for i in 1:n_params)
 
     if prior !== nothing
-        priordist_matrix = distribution_to_matrix(prior, 2^18)
+        priordist_matrix = distribution_to_matrix(prior, CRISTOOL_PRIOR_PLOT_SAMPLES)
         if size(priordist_matrix, 1) == length(param_symbols)
             prior_df = DataFrame(permutedims(priordist_matrix), param_symbols)
         else
@@ -279,7 +279,8 @@ end
 """
     ChainMeasurementPlots(chain, measurements, params, lossfunction, nucleationfunction,
                           growthfunction, aggregationfunction, breakagefunction, solver;
-                          burnin=0, title="", saveplot=false, savestring="", colouroffset=0)
+                 burnin=0, title="", saveplot=false, savestring="", colouroffset=0,
+                 showplot=true)
 
 Create plots comparing ensemble simulations from chain samples against measurements.
 """
@@ -296,7 +297,8 @@ function ChainMeasurementPlots(chain, measurements::Vector{<:AbstractExperiment}
                                saveplot::Bool = false,
                                savestring::String = "",
                                savedir::Union{Nothing, AbstractString} = nothing,
-                               colouroffset::Int = 0)
+                               colouroffset::Int = 0,
+                               showplot::Bool = true)
 
     # Apply burnin if specified
     chain_subset = burnin > 0 ? chain[(burnin + 1):end, :, :] : chain
@@ -330,7 +332,8 @@ function ChainMeasurementPlots(chain, measurements::Vector{<:AbstractExperiment}
                                   growthfunction = growthfunction,
                                   aggregationfunction = aggregationfunction,
                                   breakagefunction = breakagefunction, solver = solver,
-                                  parameter_samples = samples_mat)
+                                  parameter_samples = samples_mat,
+                                  showplot = showplot)
 end
 
 # ============================================================================ #
@@ -452,6 +455,8 @@ named chain.
   filesystem writes; otherwise the named chain (`.jld2`), and — when
   `saveplot` is true — posterior pair, trace/density and
   measurements-vs-ensemble plots are written there.
+- `showplot`: display generated diagnostics; defaults to `false` for a
+  headless routine.
 - `verbosity`: 0 silent, 1 normal, 2 verbose.
 
 # Returns
@@ -474,6 +479,7 @@ function MCMC_Routine(measurements::Vector{<:AbstractExperiment},
                       symbols::Union{Nothing, Vector{Symbol}} = nothing,
                       outputdir::Union{Nothing, AbstractString} = nothing,
                       saveplot::Bool = true,
+                      showplot::Bool = false,
                       verbosity::Int = 1)
     nparams = _total_nparams(nucleationfunction, growthfunction,
                              aggregationfunction, breakagefunction)
@@ -523,17 +529,18 @@ function MCMC_Routine(measurements::Vector{<:AbstractExperiment},
             ChainPairPlots(named_chain, meanparameter; prior = product_distribution(prior...),
                            burnin = 0, title = "$(now_str) $(extrastring)\nMCMC posterior",
                            saveplot = true, savestring = "$(now_str) $(extrastring)",
-                           savedir = outdir, symbols = inferred_symbols)
+                           savedir = outdir, symbols = inferred_symbols,
+                           showplot = showplot)
             ChainStatsPlots(named_chain; title = "$(now_str) $(extrastring)",
                             saveplot = true, savestring = "$(now_str) $(extrastring)",
-                            savedir = outdir)
+                            savedir = outdir, showplot = showplot)
             ChainMeasurementPlots(named_chain, measurements, meanparameter,
                                   lossfunction, nucleationfunction, growthfunction,
                                   aggregationfunction, breakagefunction, solver;
                                   burnin = 0, title = "$(now_str) $(extrastring)",
                                   saveplot = true,
                                   savestring = "$(now_str) $(extrastring)",
-                                  savedir = outdir)
+                                  savedir = outdir, showplot = showplot)
         end
     end
 

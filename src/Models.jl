@@ -846,11 +846,11 @@ function breakagerate(bf::breakage_uniform, parameters::T, prob::Crystallisation
     fullmesh = prob.solver.cell_centre
     fullnumberdensity = crystal_state(prob, state)
 
-    cumul_integral = Base.step(1e6 * prob.solver.cell_centre) .^ 3 .*
-                     cumsum(2 .* (1e6 .* prob.solver.cell_centre) .^ -3 .* exp(p.logb) .*
-                            (1e6 .* prob.solver.cell_centre) .^ (3p.n) .* crystal_state(prob, state))
+    cumul_integral = Base.step(CRISTOOL_MICROMETER_SCALE * prob.solver.cell_centre) .^ 3 .*
+                     cumsum(2 .* (CRISTOOL_MICROMETER_SCALE .* prob.solver.cell_centre) .^ -3 .* exp(p.logb) .*
+                            (CRISTOOL_MICROMETER_SCALE .* prob.solver.cell_centre) .^ (3p.n) .* crystal_state(prob, state))
     return (cumul_integral[end] .- cumul_integral) .-
-           exp(p.logb) .* (1e6 .* fullmesh) .^ (3p.n) .* fullnumberdensity
+           exp(p.logb) .* (CRISTOOL_MICROMETER_SCALE .* fullmesh) .^ (3p.n) .* fullnumberdensity
 end
 
 ###### Solver functions ######
@@ -872,7 +872,7 @@ oscillations near discontinuities.
 """
 function weno_flux(y::AbstractArray{T}, i::Integer) where {T <: Real}
     # Constants for WENO scheme
-    ε = T(1e-6)
+    ε = T(CRISTOOL_WENO_EPSILON)
     γ₁, γ₂, γ₃ = T(0.3), T(0.6), T(0.1)
     c13_12 = T(13 / 12)
     c1_4 = T(1 / 4)
@@ -1189,16 +1189,19 @@ function _wrap_solution(CryProblem::CrystallisationProblem{NuclF, GrF, nobreakag
     n_states = n_mom + 1 + length(propertynames(CryProblem.initial_solvent_state))
     # Fixed moment indices: state k holds µ_{k-1}; µ2 = state 3, µ3 = state 4,
     # µ4 = state 5. Higher moments (if any) do not change these metrics.
-    d32 = n_mom >= 3 ? 1e6 .* sol[4, :] ./ (sol[3, :] .+ 1e-6) :
+    d32 = n_mom >= 3 ? CRISTOOL_MICROMETER_SCALE .* sol[4, :] ./
+                       (sol[3, :] .+ CRISTOOL_MOMENT_RATIO_FLOOR) :
           fill(NaN, length(sol.t))
-    d43 = n_mom >= 4 ? 1e6 .* sol[5, :] ./ (sol[4, :] .+ 1e-6) :
+    d43 = n_mom >= 4 ? CRISTOOL_MICROMETER_SCALE .* sol[5, :] ./
+                       (sol[4, :] .+ CRISTOOL_MOMENT_RATIO_FLOOR) :
           fill(NaN, length(sol.t))
     mu2 = n_mom >= 2 ? sol[3, :] : fill(NaN, length(sol.t))
     solvent_solution_state = _solvent_solution_state(CryProblem, sol)
 
     return CrystallisationMoMSolution(sol.t,
                                       solvent_solution_state.concentration,
-                                      1e6 * (sol[2, :]) ./ (sol[1, :] .+ 1e-6),
+                                      CRISTOOL_MICROMETER_SCALE * sol[2, :] ./
+                                      (sol[1, :] .+ CRISTOOL_MOMENT_RATIO_FLOOR),
                                       d32,
                                       d43,
                                       mu2,
@@ -1452,7 +1455,7 @@ function _simulatecrystallisation(CryProblem::CrystallisationProblem{NuclF, GrF,
                    dense = false,
                    alg_hints = [:stiff],
                    saveat = saveat,
-                   maxiters = 1e8,)
+                   maxiters = CRISTOOL_MAX_SOLVER_ITERS,)
     return _wrap_solution(CryProblem, ODEsol)
 end
 
@@ -1669,7 +1672,7 @@ function _simulatecrystallisation(CryProblem::CrystallisationProblem{NuclF, GrF,
                    dense = false,
                    alg_hints = [:stiff],
                    saveat = saveat,
-                   maxiters = 1e8,)
+                   maxiters = CRISTOOL_MAX_SOLVER_ITERS,)
     return _wrap_solution(CryProblem, ODEsol)
 end
 
@@ -1877,7 +1880,7 @@ function _simulatecrystallisation(CryProblem::CrystallisationProblem{NuclF, GrF,
                    dense = false,
                    alg_hints = [:stiff],
                    saveat = saveat,
-                   maxiters = 1e8,)
+                   maxiters = CRISTOOL_MAX_SOLVER_ITERS,)
 
     return _wrap_solution(CryProblem, ODEsol)
 end

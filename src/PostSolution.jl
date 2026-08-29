@@ -74,7 +74,7 @@ function quantilecalculator(cellcentre::AbstractVector{T}, voldensity::AbstractV
                             quantile::W) where {T <: Real, K <: Real, W <: Real}
     # Early return if voldensity is approximately zero
     if all(x -> abs(x) < eps(K), voldensity)
-        return cellcentre[1] * 1e6
+        return cellcentre[1] * CRISTOOL_MICROMETER_SCALE
     end
 
     step_size = cellcentre[2] - cellcentre[1]
@@ -86,7 +86,7 @@ function quantilecalculator(cellcentre::AbstractVector{T}, voldensity::AbstractV
     end
 
     if total ≈ 0
-        return cellcentre[1] * 1e6
+        return cellcentre[1] * CRISTOOL_MICROMETER_SCALE
     end
 
     # Find quantile by iterating through cumulative sum
@@ -98,17 +98,17 @@ function quantilecalculator(cellcentre::AbstractVector{T}, voldensity::AbstractV
 
         if cumulative >= target
             if i == 1
-                return cellcentre[1] * 1e6
+                return cellcentre[1] * CRISTOOL_MICROMETER_SCALE
             else
                 # Linear interpolation
                 x0, x1 = prev_cumulative / total, cumulative / total
                 y0, y1 = cellcentre[i-1], cellcentre[i]
-                return (y0 + (quantile - x0) * (y1 - y0) / (x1 - x0)) * 1e6
+                return (y0 + (quantile - x0) * (y1 - y0) / (x1 - x0)) * CRISTOOL_MICROMETER_SCALE
             end
         end
     end
 
-    return cellcentre[end] * 1e6
+    return cellcentre[end] * CRISTOOL_MICROMETER_SCALE
 end
 
 """
@@ -147,10 +147,10 @@ function _momentsizes(mesh::AbstractVector, numberdensity::AbstractMatrix)
     mu2 = momentcalculator(mesh, numberdensity, 2)
     mu3 = momentcalculator(mesh, numberdensity, 3)
     mu4 = momentcalculator(mesh, numberdensity, 4)
-    return (d10 = 1e6 .* (mu1 ./ (mu0 .+ 1e-8)),
-            d32 = 1e6 .* (mu3 ./ (mu2 .+ 1e-8)),
-            d43 = 1e6 .* (mu4 ./ (mu3 .+ 1e-8)),
-            mu2 = 1e6 .* mu2)
+    return (d10 = CRISTOOL_MICROMETER_SCALE .* (mu1 ./ (mu0 .+ CRISTOOL_MOMENT_DENSITY_FLOOR)),
+            d32 = CRISTOOL_MICROMETER_SCALE .* (mu3 ./ (mu2 .+ CRISTOOL_MOMENT_DENSITY_FLOOR)),
+            d43 = CRISTOOL_MICROMETER_SCALE .* (mu4 ./ (mu3 .+ CRISTOOL_MOMENT_DENSITY_FLOOR)),
+            mu2 = CRISTOOL_MICROMETER_SCALE .* mu2)
 end
 
 function getmomentsizes(::CrystallisationProblem,

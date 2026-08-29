@@ -102,7 +102,7 @@ function forwardsensitivity(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, 
     tstep_solver = _resolve_timestepping_algorithm(CryProblem.solver, :tsit5)
     ODEsol = solve(ODEprob, tstep_solver;
                    saveat = saveat,
-                   maxiters = 1e8)
+                   maxiters = CRISTOOL_MAX_SOLVER_ITERS)
 
     return ODEsol
 end

@@ -812,7 +812,7 @@ function plot_ps_measurements_vs_ensemble(measurements::Vector{<:AbstractExperim
 
         for m in eachindex(measurements)
             sol = optimal_solutions[m][2]
-            size_traj = CriSTool._size_trajectory(sol)
+            size_traj = _size_trajectory(sol)
             Makie.lines!(ax1, sol.time, size_traj, color = resolve_experiment_color(colors, m, color_palette, colouroffset),
                          linewidth = ms_linewidth,
                          linestyle = :dash)

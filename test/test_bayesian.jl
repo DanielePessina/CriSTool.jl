@@ -88,7 +88,7 @@ using JLD2
         chain2 = CriSTool.MCMC_Routine(meas, prior, nucl, gr, agg, br;
                                        solver = solver, lossfunction = lf,
                                        sampler = sampler, n_samples = 10, n_chains = 1,
-                                       outputdir = outdir, verbosity = 0)
+                                       outputdir = outdir, showplot = false, verbosity = 0)
         files = readdir(outdir)
         @test !isempty(files)
         @test any(f -> endswith(f, ".jld2"), files)
@@ -106,7 +106,8 @@ using JLD2
         chain = Chains(rand(MersenneTwister(7), 30, 2, 1), [:Aⱼ, :γ])
         outdir = mktempdir()
         fig = CriSTool.ChainStatsPlots(chain; saveplot = true,
-                                       savestring = "stats_test", savedir = outdir)
+                                       savestring = "stats_test", savedir = outdir,
+                                       showplot = false)
         @test fig isa Makie.Figure
         @test any(f -> endswith(f, "ChDensity.png"), readdir(outdir))
     end

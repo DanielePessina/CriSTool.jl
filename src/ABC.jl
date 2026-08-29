@@ -406,7 +406,7 @@ function ABCplot(abcres, params::Vector{Float64}, lossfunction::AbstractPELossFu
 
     if prior !== nothing
         # Use standardized distribution_to_matrix function
-        priordist_matrix = distribution_to_matrix(prior, 2^18)
+        priordist_matrix = distribution_to_matrix(prior, CRISTOOL_PRIOR_PLOT_SAMPLES)
         prior_df = DataFrame(permutedims(priordist_matrix),
                              propertynames(df)[1:num_param_cols])
     else

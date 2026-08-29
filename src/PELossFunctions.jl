@@ -54,7 +54,7 @@ function PE_Routine(lossfunction::AbstractPELossFunction,
     MHOptions = Metaheuristics.Options(iterations = generations, store_convergence = false,
                                        verbose = (verbosity > 1 && !HPC),
                                        parallel_evaluation = true,
-                                       f_calls_limit = 1e18)
+                                       f_calls_limit = CRISTOOL_MAX_OPTIMISER_CALLS)
 
     start_content = build_pe_start_content(lb, ub, lossfunction, solver,
                                            nucleationfunction, growthfunction,
@@ -474,7 +474,7 @@ end
 _solve_kwargs(solver::MoM) = (reltol = solver.reltol, abstol = solver.abstol)
 _solve_kwargs(solver::AbstractDiscretisedSolver) =
     (reltol = solver.reltol, abstol = solver.abstol, dense = false,
-     alg_hints = [:stiff], maxiters = 1e8)
+     alg_hints = [:stiff], maxiters = CRISTOOL_MAX_SOLVER_ITERS)
 
 """
     _solve_prepared(prep::PreparedExperiment, params) -> AbstractSolution
@@ -627,7 +627,7 @@ function _experiment_objectives(lf::AbstractPELossFunction,
         end
 
         if !solution.success
-            return _observable_weight(lf, observable_index) * 1e6
+            return _observable_weight(lf, observable_index) * CRISTOOL_FAILED_SIMULATION_PENALTY
         end
         objective = mean(abs.(simulated_mean[first_index:end] .-
                               measured_mean[first_index:end]))
@@ -643,7 +643,8 @@ Log Maximum Likelihood Estimation loss over all prepared experiments.
 
 Evaluates the negative log-likelihood combining concentration trajectory
 (measured times, first timepoint excluded) and final particle size
-(`d43` for MoM, `d50q` for discretised solvers), with a `1e-6` variance floor,
+(`d43` for MoM, `d50q` for discretised solvers), with the configured variance
+floor,
 matching the legacy `parameterestimation_lossfunction` semantics.
 """
 function loss(lf::logMLE, setup::LossSetup, params)
@@ -661,7 +662,7 @@ end
 Mean Absolute Error loss over all prepared experiments: mean absolute
 concentration error over all timepoints plus mean absolute final
 particle-size error (`d43` for MoM, `d50q` for discretised solvers). Failed
-simulations contribute a `1e6` penalty per timepoint.
+failed simulations contribute the configured failure penalty per observable.
 """
 function loss(lf::mae, setup::LossSetup, params)
     objective_names = _loss_observable_names(first(setup.experiments), setup.problem.solver)
@@ -678,7 +679,7 @@ function loss(lf::mae, setup::LossSetup, params)
                     sum(abs.(simulated_mean .- measured_mean))
                 error_counts[observable_index] += length(measured_mean)
             else
-                error_sums[observable_index] += 1e6
+                error_sums[observable_index] += CRISTOOL_FAILED_SIMULATION_PENALTY
                 error_counts[observable_index] += 1
             end
         end

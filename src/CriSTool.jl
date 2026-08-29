@@ -1,6 +1,7 @@
 module CriSTool
 """
-Main entry point for CriSTool. Imports dependencies, includes component source files defining models, optimisation routines and uncertainty tools, and creates default output directories.
+Main entry point for CriSTool. Imports dependencies and includes source files
+defining models, optimisation routines, uncertainty tools, and plotting.
 """
 
 # Core Julia packages
@@ -52,6 +53,23 @@ using Trapz
 import Term
 using PrettyTables
 using StaticArrays
+
+# Shared numerical policies. Keeping these names centralized makes model,
+# measurement, uncertainty, and plotting behavior auditable and configurable
+# without scattering magic values across source files.
+const CRISTOOL_VARIANCE_FLOOR = 1e-6
+const CRISTOOL_MOMENT_RATIO_FLOOR = 1e-6
+const CRISTOOL_MOMENT_DENSITY_FLOOR = 1e-8
+const CRISTOOL_MICROMETER_SCALE = 1e6
+const CRISTOOL_WENO_EPSILON = 1e-6
+const CRISTOOL_CONFIDENCE_Z95 = 1.96
+const CRISTOOL_FAILED_SIMULATION_PENALTY = 1e6
+const CRISTOOL_MAX_SOLVER_ITERS = 1e8
+const CRISTOOL_MAX_OPTIMISER_CALLS = 1e18
+const CRISTOOL_PRIOR_PLOT_SAMPLES = 2^18
+const CRISTOOL_MISSING_SIZE_SENTINEL = -1.0
+const CRISTOOL_MISSING_SIZE_VALUE = 10.0
+const CRISTOOL_MISSING_SIZE_VARIANCE = 100.0
 
 ## Export stuff
 export CrystallisationFVSolution, CrystallisationMoMSolution, CrystallisationProblem

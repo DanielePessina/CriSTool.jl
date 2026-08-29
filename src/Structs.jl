@@ -966,7 +966,7 @@ Fields:
 Base.@kwdef @concrete struct logMLE <: AbstractPELossFunction
     weighting::Vector{Float64} = [1.0, 1.0]
     variance_model::AbstractVarianceModel = MeasuredVariance()
-    variance_floor::Float64 = 1e-6
+    variance_floor::Float64 = CRISTOOL_VARIANCE_FLOOR
     string::String = weighting == [1.0, 1.0] ? "Log MLE" : "Log MLE wgted $(weighting)"
     symbols::Vector{Symbol} = [:logMLE]
 end

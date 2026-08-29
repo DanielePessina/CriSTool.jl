@@ -277,27 +277,28 @@ function load_experiments(filepath::AbstractString, sheet_name::AbstractString,
         ps_last = begin
             if "PS" in names(sdf)
                 v = sdf.PS[end]
-                v === missing ? -1.0 : Float64(v)
+                v === missing ? CRISTOOL_MISSING_SIZE_SENTINEL : Float64(v)
             else
-                -1.0
+                CRISTOOL_MISSING_SIZE_SENTINEL
             end
         end
         ps_var_last = begin
             if "PS_var" in names(sdf)
                 v = sdf.PS_var[end]
-                v === missing ? -1.0 : Float64(v)
+                v === missing ? CRISTOOL_MISSING_SIZE_SENTINEL : Float64(v)
             else
-                -1.0
+                CRISTOOL_MISSING_SIZE_SENTINEL
             end
         end
 
-        if ps_last == -1.0 || !isfinite(ps_last)
-            ps_mean = 10.0
-            ps_var = 100.0
+        if ps_last == CRISTOOL_MISSING_SIZE_SENTINEL || !isfinite(ps_last)
+            ps_mean = CRISTOOL_MISSING_SIZE_VALUE
+            ps_var = CRISTOOL_MISSING_SIZE_VARIANCE
         else
             ps_mean = ps_last
             # If PS_var at last is missing or sentinel, set to 100.0 as instructed
-            ps_var = (ps_var_last == -1.0 || !isfinite(ps_var_last)) ? 100.0 : ps_var_last
+            ps_var = (ps_var_last == CRISTOOL_MISSING_SIZE_SENTINEL || !isfinite(ps_var_last)) ?
+                     CRISTOOL_MISSING_SIZE_VARIANCE : ps_var_last
         end
 
         out[i] = CrystallisationExperiment(;
@@ -734,8 +735,8 @@ function _bootstrap_repeatmeasurements_rng(experiments::Vector{CrystallisationEx
         if include_ps
             ps_entries = get(ps_by_id, exp_id, Tuple{Float64, Float64, Float64}[])
             if isempty(ps_entries)
-                ps_mean = -1.0
-                ps_var = -1.0
+                ps_mean = CRISTOOL_MISSING_SIZE_SENTINEL
+                ps_var = CRISTOOL_MISSING_SIZE_SENTINEL
             else
                 ps_time = [entry[1] for entry in ps_entries]
                 ps_idx = argmax(ps_time)
