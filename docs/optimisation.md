@@ -18,7 +18,7 @@ using OptimizationOptimJL
 using Optim
 
 path = joinpath(pkgdir(CriSTool), "examples", "fake-experimental-dataset.xlsx")
-measurements = load_experiments(path, "Unseeded_PE", 0.0)
+measurements = load_experiments(path, "Unseeded_PE")
 
 nucl_f = nucl_CNT()
 growth_f = growth_energy()

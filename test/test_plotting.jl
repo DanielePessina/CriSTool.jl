@@ -2,7 +2,6 @@
     params = [38.0, 0.7, 1.0, 3.0]
     save_idx = collect(0.0:120.0:480.0)
     temperature = 293.15
-    loading = 12.5
 
     _,
     solution = runsimulation(params;
@@ -13,8 +12,7 @@
                              solver = MoM(),
                              initial_concentration = 18.0,
                              save_idx = save_idx,
-                             temp_profile = CriSTool.ConstantTemperature(temperature),
-                             loading = loading)
+                             temp_profile = CriSTool.ConstantTemperature(temperature))
 
     measurement = CrystallisationExperiment(;
                                                     observables = (;
@@ -23,23 +21,22 @@
                                                     d43 = Observable(; time = save_idx[end], mean = solution.d43[end], variance = 4.0),
                                                     d50q = Observable(; time = save_idx[end], mean = solution.d43[end], variance = 4.0)),
                                                     temperature = temperature,
-                                                    loading = loading,
                                                     exp_id = 42)
 
     thesis_default = CriSTool.build_simulation_thesis_table_data([measurement], [solution])
     @test thesis_default.size_label == "d43"
     @test thesis_default.rows[1][1] == "42"
-    @test thesis_default.rows[1][2] == string(round(loading, sigdigits = 3))
-    @test thesis_default.rows[1][4] ==
+    @test thesis_default.rows[1][2] == string(round(temperature - 273, digits = 2))
+    @test thesis_default.rows[1][3] ==
           string(round(CriSTool.get_characteristic_size(solution), sigdigits = 3))
-    @test occursin("±", thesis_default.rows[1][5])
+    @test occursin("±", thesis_default.rows[1][4])
 
     thesis_deterministic = CriSTool.build_simulation_thesis_table_data([measurement],
                                                                        [solution];
                                                                        show_measurement_uncertainty = false)
     @test thesis_deterministic.size_label == "d43"
-    @test thesis_deterministic.rows[1][5] == string(round(measurement.observables.d43.mean, sigdigits = 3))
-    @test !occursin("±", thesis_deterministic.rows[1][5])
+    @test thesis_deterministic.rows[1][4] == string(round(measurement.observables.d43.mean, sigdigits = 3))
+    @test !occursin("±", thesis_deterministic.rows[1][4])
 
     param_symbols = vcat(nucl_CNT().symbols, growth_empirical().symbols)
     param_table = CriSTool.build_parameter_value_table(params, param_symbols)
@@ -54,7 +51,6 @@ end
     params = [38.0, 0.7, 1.0, 3.0]
     save_idx = collect(0.0:120.0:480.0)
     temperature = 293.15
-    loading = 12.5
 
     _,
     solution = runsimulation(params;
@@ -65,8 +61,7 @@ end
                              solver = MoM(),
                              initial_concentration = 18.0,
                              save_idx = save_idx,
-                             temp_profile = CriSTool.ConstantTemperature(temperature),
-                             loading = loading)
+                             temp_profile = CriSTool.ConstantTemperature(temperature))
 
     measurement = CrystallisationExperiment(;
                                                     observables = (;
@@ -75,7 +70,6 @@ end
                                                     d43 = Observable(; time = save_idx[end], mean = solution.d43[end], variance = 4.0),
                                                     d50q = Observable(; time = save_idx[end], mean = solution.d43[end], variance = 4.0)),
                                                     temperature = temperature,
-                                                    loading = loading,
                                                     exp_id = 42)
 
     mktempdir() do dir

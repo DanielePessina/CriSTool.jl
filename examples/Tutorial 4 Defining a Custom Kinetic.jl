@@ -34,7 +34,7 @@ paramaxis(::growth_saturation) = ComponentArrays.Axis(A = 1, B = 2)
 
 # 3. Rate function. Standard signature: (fn, params, prob, state, t).
 #    The rate computes S itself via supersaturation(prob, state, t) and reads
-#    temperature from prob.temp_profile — no positional S/temperature/loading.
+#    temperature from prob.temp_profile — no positional supersaturation or temperature.
 function growthrate(gf::growth_saturation, parameters::AbstractVector,
                     prob::CrystallisationProblem, state, t)
     p = _named_params(gf, parameters)

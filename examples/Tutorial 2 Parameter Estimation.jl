@@ -26,7 +26,7 @@ function main()
     # 1. Load + variance-balance the experimental data. The balancer rescales
     #    concentration / PSD variance by the supplied factors so the loss
     #    function weights the two observation types more comparably.
-    raw          = load_experiments(DATA_WORKBOOK, "Unseeded_PE", 0.0)
+    raw          = load_experiments(DATA_WORKBOOK, "Unseeded_PE")
     measurements = CriSTool.psd_measurementbalancer(
                     CriSTool.repeatmeasurementbalancer(raw, 3), 4)
 

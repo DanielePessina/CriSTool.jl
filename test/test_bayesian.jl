@@ -41,7 +41,7 @@ using JLD2
                                                            variance = 0.1),
                                           d50q = Observable(; time = save_grid[end], mean = ref.d43[end],
                                                             variance = 0.1)),
-                                      temperature = 295.0, loading = 0.0, exp_id = 1)]
+                                      temperature = 295.0, exp_id = 1)]
 
     prior = [TriangularDist(25.0, 50.0, 38.0), TriangularDist(0.3, 1.0, 0.6),
              TriangularDist(0.3, 3.0, 1.0), TriangularDist(2.0, 4.0, 3.0)]

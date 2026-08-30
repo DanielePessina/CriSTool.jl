@@ -31,7 +31,6 @@ function load_experiments_legacy(filepath::AbstractString, sheet_ids::Vector{Int
                 d43 = Observable(; mean = df_d.qmean[end], variance = df_d.qvariance[end]),
             ),
             temperature = NaN,
-            loading = 0.0,
             exp_id = id,
             metadata = (;))
     end
@@ -76,7 +75,6 @@ function load_experiments_legacy_single(filepath::AbstractString, n_sheets::Int6
                 d43 = Observable(; mean = df_d.d43[1]),
             ),
             temperature = NaN,
-            loading = 0.0,
             exp_id = i,
             metadata = (;))
     end

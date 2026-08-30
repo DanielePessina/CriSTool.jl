@@ -27,15 +27,14 @@ function main()
                              agg  = Float64[], br = Float64[])
 
     save_grid     = collect(0.0:30.0:300.0)
-    T_K, loading  = 295.0, 0.0
+    T_K             = 295.0
     C0            = 18.0
 
     # Synthesise one repeat-measurement dataset with 5% multiplicative noise.
     _, ref = runsimulation(truth; nucl=nucl, gr=gr, agg=agg, br=br,
                             initial_concentration=C0, solver=solver,
                             save_idx=save_grid,
-                            temp_profile=CriSTool.ConstantTemperature(T_K),
-                            loading=loading)
+                            temp_profile=CriSTool.ConstantTemperature(T_K))
     noisy_c = ref.concentration .* (1.0 .+ 0.05 .* randn(length(save_grid)))
     σ2      = (0.05 .* abs.(noisy_c) .+ 0.02) .^ 2
     meas    = CrystallisationExperiment(;
@@ -44,7 +43,7 @@ function main()
                                                           variance = σ2),
                                                           d43 = Observable(; mean = ref.d43[end], variance = 0.1),
                                                           d50q = Observable(; mean = ref.d43[end], variance = 0.1)),
-                                                          temperature = T_K, loading = loading, exp_id = 1)
+                                                          temperature = T_K, exp_id = 1)
 
     lb = [25.0, 0.30, 0.30, 2.0]
     ub = [50.0, 1.00, 3.00, 4.0]

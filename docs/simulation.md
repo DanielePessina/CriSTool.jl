@@ -172,14 +172,19 @@ kept for backward compatibility — new code can read `sol.d43` /
 
 ## Optional initial state
 
-For discretised solvers (`FiniteVol`, `WENO`), you can pass an initial
-number density via `initial_state` to match the solver mesh size.
+For seeded batches, describe the initial crystal population once and let
+CriSTool construct the solver-specific state. The public characteristics use
+kg/m³ for crystal mass concentration and µm for `d43`.
 
 ```julia
 using CriSTool
 
+initial_crystals = (; mass_concentration = 0.25,
+                    d43 = 12.0,
+                    distribution = :lognormal,
+                    spread = 1.25)
+
 solver = FiniteVol(meshsize = 100, lmax = 50e-6)
-initial_state = zeros(solver.meshsize)
 
 problem, solution = runsimulation(
     [38.0, 0.7, 1.0, 3.0];
@@ -188,9 +193,23 @@ problem, solution = runsimulation(
     agg = noaggregation(),
     br = nobreakage(),
     solver = solver,
-    initial_state = initial_state,
+    initial_crystals = initial_crystals,
     initial_concentration = 18.0,
     save_idx = 0.0:120.0:480.0,
+)
+```
+
+Use `distribution = :gaussian` with `spread` in µm for a truncated positive
+Gaussian profile. Set `d43 = 0.0` and `mass_concentration = 0.0` for an empty
+initial population. The lower-level `initial_state` keyword remains available
+when a solver-specific state is already known.
+
+The same state builder is available directly:
+
+```julia
+state = initial_state_from_characteristics(
+    CrystallisationProblem(; solver = MoM()),
+    initial_crystals,
 )
 ```
 
@@ -198,7 +217,7 @@ problem, solution = runsimulation(
 
 `runsimulation` forwards extra keyword arguments to
 `CrystallisationProblem`, which means you can pass things like
-`temp_profile` or `loading` directly:
+`temp_profile` directly:
 
 ```julia
 using CriSTool
@@ -210,14 +229,13 @@ problem, solution = runsimulation(
     solver = MoM(),
     initial_concentration = 18.0,
     temp_profile = ConstantTemperature(293.15),
-    loading = 0.0,
     save_idx = 0.0:60.0:480.0,
 )
 ```
 
 `runsimulation` forwards additional keywords to `CrystallisationProblem`. This
-is the route for process settings such as `temp_profile`, `loading`,
-`saturation_model`, `initial_solvent_state`, and a custom `solvent_dynamics`
-callable. See [Temperature profiles](temperature-profiles.md), [Saturation
+is the route for process settings such as `temp_profile`, `saturation_model`,
+`initial_solvent_state`, and a custom `solvent_dynamics` callable. See
+[Temperature profiles](temperature-profiles.md), [Saturation
 models](saturation-models.md), and [Bringing your own system](bring-your-own-system.md)
 for those extensions.

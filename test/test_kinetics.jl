@@ -142,7 +142,7 @@
                                   Float64[], problem, state, 0.0) ≈ expected_growth
     end
 
-    @testset "Composite and loading-dependent kinetics dispatch" begin
+    @testset "Composite kinetics dispatch" begin
         problem = make_test_problem()
         state = state_at_S(problem, 1.5)
 
@@ -156,20 +156,6 @@
         @test CriSTool.nucleationrate(composite, composite_params, problem, state, 0.0) ≈
               expected_composite
 
-        multi_growth = CriSTool.growth_energy_multiloading([0.0, 1.0])
-        loaded_problem = CrystallisationProblem(; kinetics_nucleationfunction = nucl_CNT(),
-                                                 kinetics_growthfunction = multi_growth,
-                                                 parameterset_nucleation = [38.0, 0.7],
-                                                 parameterset_growth = [1.0, 2.0, 3.0, 4.0],
-                                                 loading = 1.0,
-                                                 solver = MoM())
-        loaded_state = [zeros(5); 1.5 * saturation_concentration(loaded_problem, 0.0)]
-        expected_loaded = exp10(3.0) *
-                          exp(-multi_growth.Ea / (8.314 *
-                                                  CriSTool.temperature(loaded_problem.temp_profile, 0.0))) *
-                          (1.5 - 1.0)^4.0
-        @test CriSTool.growthrate(multi_growth, [1.0, 2.0, 3.0, 4.0],
-                                  loaded_problem, loaded_state, 0.0) ≈ expected_loaded
     end
 
     @testset "Dissolution uses the configured saturation model" begin

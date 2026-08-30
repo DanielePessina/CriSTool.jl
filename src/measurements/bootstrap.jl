@@ -106,7 +106,7 @@ function bootstrap_measurements(experiments::Vector{<:CrystallisationExperiment}
             push!(replicate, CrystallisationExperiment(;
                 observables = observables,
                 temperature = expt.temperature,
-                loading = expt.loading,
+                initial_crystals = expt.initial_crystals,
                 exp_id = expt.exp_id,
                 metadata = expt.metadata))
         end
@@ -234,7 +234,7 @@ function _bootstrap_repeatmeasurements_rng(experiments::Vector{CrystallisationEx
                       d50q = Observable(; time = time[end], mean = ps_mean, variance = ps_var),
                   ),
                   temperature = expt.temperature,
-                  loading = expt.loading,
+                  initial_crystals = expt.initial_crystals,
                   exp_id = exp_id,
                   metadata = expt.metadata))
     end

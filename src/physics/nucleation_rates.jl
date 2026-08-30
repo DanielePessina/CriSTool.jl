@@ -59,7 +59,7 @@ end
 
 """
     nucleationrate(::nucl_empirical_energy, parameters::AbstractVector, S::Real,
-                   system, temperature, loading, numberdensity) -> Real
+                   system, temperature, numberdensity) -> Real
 
 Calculate nucleation rate using empirical model with activation energy.
 
@@ -68,7 +68,6 @@ Calculate nucleation rate using empirical model with activation energy.
 - `S`: Supersaturation ratio
 - `system`: Crystallisation system parameters
 - `temperature`: Temperature in Kelvin
-- `loading`: Loading value
 - `numberdensity`: Current crystal size distribution
 
 # Returns
@@ -117,7 +116,7 @@ end
 
 """
     nucleationrate(::nucl_secondary, parameters::AbstractVector, S::Real,
-                   system, temperature, loading, numberdensity::AbstractVector) -> Real
+                   system, temperature, numberdensity::AbstractVector) -> Real
 
 Calculate secondary nucleation rate proportional to third moment (crystal mass).
 
@@ -126,7 +125,6 @@ Calculate secondary nucleation rate proportional to third moment (crystal mass).
 - `S`: Supersaturation ratio
 - `system`: Crystallisation system parameters
 - `temperature`: Temperature in Kelvin
-- `loading`: Loading value
 - `numberdensity`: Current crystal size distribution
 
 # Returns
@@ -149,7 +147,7 @@ end
 
 """
     nucleationrate(::nucl_prim_plus_second, parameters::AbstractVector, S::Real,
-                   system::CrystallisationProblem, temperature, loading,
+                   system::CrystallisationProblem, temperature,
                    numberdensity::AbstractVector) -> Real
 
 Calculate combined primary (empirical) and secondary nucleation rate.
@@ -159,7 +157,6 @@ Calculate combined primary (empirical) and secondary nucleation rate.
 - `S`: Supersaturation ratio
 - `system`: Crystallisation problem
 - `temperature`: Temperature in Kelvin
-- `loading`: Loading value
 - `numberdensity`: Current crystal size distribution
 
 # Returns
@@ -174,7 +171,7 @@ end
 
 """
     nucleationrate(::nucl_CNT_plus_second, parameters::AbstractVector, S::Real,
-                   system::CrystallisationProblem, temperature, loading,
+                   system::CrystallisationProblem, temperature,
                    numberdensity::AbstractVector) -> Real
 
 Calculate combined CNT primary and secondary nucleation rate.
@@ -184,7 +181,6 @@ Calculate combined CNT primary and secondary nucleation rate.
 - `S`: Supersaturation ratio
 - `system`: Crystallisation problem
 - `temperature`: Temperature in Kelvin
-- `loading`: Loading value
 - `numberdensity`: Current crystal size distribution
 
 # Returns
@@ -199,7 +195,7 @@ end
 
 """
     nucleationrate(NuF::nucl_CNT_fixed, parameters::AbstractVector, S::Real,
-                   system::CrystallisationProblem, temperature, loading,
+                   system::CrystallisationProblem, temperature,
                    numberdensity::AbstractVector) -> Real
 
 Calculate CNT nucleation rate using pre-fixed parameters embedded in the struct.
@@ -210,7 +206,6 @@ Calculate CNT nucleation rate using pre-fixed parameters embedded in the struct.
 - `S`: Supersaturation ratio
 - `system`: Crystallisation problem
 - `temperature`: Temperature in Kelvin
-- `loading`: Loading value
 - `numberdensity`: Current crystal size distribution
 
 # Returns
@@ -231,7 +226,7 @@ end
 
 """
     nucleationrate(NuF::nucl_empirical_fixed, parameters::AbstractVector, S::Real,
-                   system::CrystallisationProblem, temperature, loading,
+                   system::CrystallisationProblem, temperature,
                    numberdensity::AbstractVector) -> Real
 
 Calculate empirical nucleation rate using pre-fixed parameters embedded in the struct.
@@ -242,7 +237,6 @@ Calculate empirical nucleation rate using pre-fixed parameters embedded in the s
 - `S`: Supersaturation ratio
 - `system`: Crystallisation problem
 - `temperature`: Temperature in Kelvin
-- `loading`: Loading value
 - `numberdensity`: Current crystal size distribution
 
 # Returns
@@ -252,50 +246,6 @@ function nucleationrate(NuF::nucl_empirical_fixed, parameters::T, prob::Crystall
     S = supersaturation(prob, state, t)
     return S > 1.001 ? (60 * 10^(NuF.Aj)) * (S - 1)^NuF.j : 0.0
 end
-
-"""
-    nucleationrate(::nucl_CNT_multiloading, parameters::AbstractVector, S::Real,
-                   system, temperature, loading, numberdensity)
-
-Calculate nucleation rate using Classical Nucleation Theory (CNT) with loading-dependent parameters.
-
-# Arguments
-- `parameters`: Vector containing [A1, γ1, A2, γ2, ...] where each pair corresponds to a unique loading
-- `S`: Supersaturation ratio
-- `system`: Crystallisation system parameters (molecular volume, constants, etc.)
-- `temperature`: Instantaneous temperature in Kelvin
-- `loading`: Current loading value (used to select appropriate A and γ parameters)
-- `numberdensity`: Current crystal size distribution
-
-# Returns
-- Nucleation rate (number/m³/s) using the parameters corresponding to the current loading
-"""
-function nucleationrate(nucl_func::nucl_CNT_multiloading, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
-    S = supersaturation(prob, state, t)
-    temp = temperature(prob.temp_profile, t)
-    # Find which prob.loading corresponds to the current prob.loading value
-    loading_idx = findfirst(==(prob.loading), nucl_func.unique_loadings)
-
-    if loading_idx === nothing
-        error("Loading value $prob.loading not found in unique_loadings: $(nucl_func.unique_loadings)")
-    end
-
-    # Extract the relevant A and γ parameters for this prob.loading
-    param_idx = 2 * (loading_idx - 1) + 1
-    A_param = parameters[param_idx]
-    γ_param = parameters[param_idx + 1]
-
-    # Apply the standard CNT nucleation rate formula
-    return if S > 1.001
-        (60 * exp(A_param)) *
-        S *
-        exp(-16π * ((γ_param * 1e-3)^3) * ((prob.molecular_volume)^2) /
-            (3(prob.kb * temp)^3 * (log(S))^2))
-    else
-        0.0
-    end
-end
-
 
 """
     _secondary_third_moment(solver, prob, nd) -> Real

@@ -373,7 +373,7 @@ function growthrate(gf::growth_empirical, parameters::T, prob::CrystallisationPr
 end
 """
     growthrate(gf::growth_energy, parameters::AbstractVector, S::Real,
-               system, temperature, loading, numberdensity) -> Real
+               system, temperature, numberdensity) -> Real
 
 Calculate growth rate with Arrhenius temperature dependence using fixed activation energy.
 
@@ -383,7 +383,6 @@ Calculate growth rate with Arrhenius temperature dependence using fixed activati
 - `S`: Supersaturation ratio
 - `system`: System parameters
 - `temperature`: Temperature in Kelvin
-- `loading`: Loading value
 - `numberdensity`: Current crystal size distribution
 
 # Returns
@@ -399,7 +398,7 @@ end
 
 """
     growthrate(gf::growth_energy_est, parameters::AbstractVector, S::Real,
-               system, temperature, loading, numberdensity) -> Real
+               system, temperature, numberdensity) -> Real
 
 Calculate growth rate with Arrhenius temperature dependence and estimated activation energy.
 
@@ -409,7 +408,6 @@ Calculate growth rate with Arrhenius temperature dependence and estimated activa
 - `S`: Supersaturation ratio
 - `system`: System parameters
 - `temperature`: Temperature in Kelvin
-- `loading`: Loading value
 - `numberdensity`: Current crystal size distribution
 
 # Returns
@@ -422,48 +420,6 @@ function growthrate(gf::growth_energy_est, parameters::T, prob::CrystallisationP
     return _growth_energy_rate(p.Ag, p.g, p.Eag * 1e3, S, temp, prob.R)
     ## multiply by 1e12 to convert to typical units
 end
-
-"""
-    growthrate(gf::growth_energy_multiloading, parameters, S, system, temperature,
-               loading, numberdensity) -> Real
-
-Calculate growth rate using loading-dependent parameters.
-
-# Arguments
-- `gf`: Growth function with unique_loadings array
-- `parameters`: Vector [Ag1, g1, Ag2, g2, ...] with pairs for each loading
-- `S`: Supersaturation ratio
-- `system`: System parameters
-- `temperature`: Temperature in Kelvin
-- `loading`: Current loading value (used to select parameters)
-- `numberdensity`: Current crystal size distribution
-
-# Returns
-- Growth rate (m/s) using parameters for the matching loading
-"""
-function growthrate(gf::growth_energy_multiloading, parameters, prob::CrystallisationProblem, state, t)
-
-    S = supersaturation(prob, state, t)
-
-    temp = temperature(prob.temp_profile, t)
-# Find which prob.loading corresponds to the current prob.loading value
-    loading_idx = findfirst(==(prob.loading), gf.unique_loadings)
-
-    if loading_idx === nothing
-        error("Loading value $prob.loading not found in unique_loadings: $(gf.unique_loadings)")
-    end
-
-    # Extract the relevant A and γ parameters for this prob.loading
-    param_idx = 2 * (loading_idx - 1) + 1
-    A_param::Real = parameters[param_idx]
-    g_param::Real = parameters[param_idx + 1]
-
-    return S > 1.001 ?
-           exp10(A_param) * exp(-gf.Ea / (prob.R * temp)) *
-           ((S - 1)^g_param) :
-           0.0
-end
-
 
 """
     growthrate(::growth_BCF, parameters::AbstractVector, S::Real,
@@ -544,7 +500,7 @@ end
 
 """
     growthrate(gf::growth_dissolution_length, parameters::AbstractVector, S::Real,
-               mesh::AbstractVector, temperature, loading, numberdensity) -> Vector
+               mesh::AbstractVector, temperature, numberdensity) -> Vector
 
 Calculate length-dependent dissolution rate (negative growth).
 
@@ -554,7 +510,6 @@ Calculate length-dependent dissolution rate (negative growth).
 - `S`: Supersaturation ratio
 - `mesh`: Cell-centre coordinates (length-dependence is evaluated on each mesh cell)
 - `temperature`: Temperature in Kelvin
-- `loading`: Loading value
 - `numberdensity`: Current crystal size distribution
 
 # Returns
@@ -674,7 +629,7 @@ growthrate_at_length(gf::growth_dissolution_length,
 
 """
     growthrate(gf::growth_dissolution, parameters::AbstractVector, S::Real,
-               system, temperature, loading, numberdensity) -> Real
+               system, temperature, numberdensity) -> Real
 
 Calculate scalar dissolution rate (negative growth) with Arrhenius temperature dependence.
 
@@ -684,7 +639,6 @@ Calculate scalar dissolution rate (negative growth) with Arrhenius temperature d
 - `S`: Supersaturation ratio
 - `system`: System parameters
 - `temperature`: Temperature in Kelvin
-- `loading`: Loading value
 - `numberdensity`: Current crystal size distribution
 
 # Returns
@@ -704,7 +658,7 @@ dissolutionrate(gf::growth_dissolution, parameters::T,
 
 """
     growthrate(gf::growth_energy_dissolution, parameters::AbstractVector, S::Real,
-               system, temperature, loading, numberdensity) -> Real
+               system, temperature, numberdensity) -> Real
 
 Calculate growth or dissolution rate depending on supersaturation.
 
@@ -717,7 +671,6 @@ Uses `growth_energy` for supersaturated conditions (S > 1.001) and
 - `S`: Supersaturation ratio
 - `system`: System parameters
 - `temperature`: Temperature in Kelvin
-- `loading`: Loading value
 - `numberdensity`: Current crystal size distribution
 
 # Returns
@@ -750,7 +703,7 @@ end
 
 """
     growthrate(grf::growth_empirical_fixed, parameters, S::Real,
-               system::CrystallisationProblem, temperature, loading, numberdensity) -> Real
+               system::CrystallisationProblem, temperature, numberdensity) -> Real
 
 Calculate empirical growth rate using pre-fixed parameters embedded in the struct.
 
@@ -760,7 +713,6 @@ Calculate empirical growth rate using pre-fixed parameters embedded in the struc
 - `S`: Supersaturation ratio
 - `system`: Crystallisation problem
 - `temperature`: Temperature in Kelvin
-- `loading`: Loading value
 - `numberdensity`: Current crystal size distribution
 
 # Returns

@@ -102,9 +102,6 @@ Base.@kwdef @concrete struct CrystallisationProblem{NuF <: AbstractNucleationFun
     # Operation
     temp_profile::TP = ConstantTemperature(273.15 + 20.0) # Default to 25°C
 
-    # Loading
-    loading::Float64 = 0.0
-
     # Solute
     ρ::Float64 = 1370.0
     initial_concentration::Float64 = 20.0

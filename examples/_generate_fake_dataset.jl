@@ -1,16 +1,17 @@
 """
 Generate a synthetic experimental crystallisation dataset for CriSTool's
-`load_experiments(workbook, sheet_name, loading)` loader.
+`load_experiments(workbook, sheet_name)` loader.
 
 Truth model:
     nucl = nucl_CNT(),         params = [Aj=38.0, γ=0.6]
     gr   = growth_empirical(), params = [Ag=1.0, g=3.0]
     agg  = noaggregation(), br = nobreakage(), solver = MoM()
 
-Workbook layout matches `CriSTool.load_experiments(filepath, sheet_name, loading)`:
+Workbook layout matches `CriSTool.load_experiments(filepath, sheet_name)`:
 sheet "Unseeded_PE" with columns
-    Exp_ID | System | Temperature [°C] | Loading | Time [min]
+    Exp_ID | System | Temperature [°C] | Time [min]
     | Concentration [mg/mL] | Concentration_var | PS [μm] | PS_var
+    | SeedMass [kg/m³] | SeedD43 [μm] | SeedDistribution | SeedSpread
 PS / PS_var are populated only on the LAST timepoint of each experiment
 (loader picks them up at the last row, all earlier rows store -1.0 sentinels).
 Temperature is stored in Celsius — the loader adds 273.15 to convert to K.
@@ -140,12 +141,15 @@ for (idx, (T_K, c0)) in enumerate(exp_conditions)
             Exp_ID            = idx,
             System            = "FAKE_SYS_A",
             Temperature       = round(T_C, digits = 2),
-            Loading           = 0.0,
             Time              = times[j],
             Concentration     = round(c_obs[j], digits = 6),
             Concentration_var = round(c_var[j], digits = 8),
             PS                = is_last ? round(d43_obs, digits = 6) : -1.0,
             PS_var            = is_last ? round(d43_var, digits = 8) : -1.0,
+            SeedMass          = 0.0,
+            SeedD43           = 0.0,
+            SeedDistribution  = "lognormal",
+            SeedSpread        = 1.25,
         ))
     end
 end
@@ -182,7 +186,14 @@ end
 # Verify by loading back through CriSTool.load_experiments
 # ----------------------------------------------------------------------
 
-loaded = CriSTool.load_experiments(OUT_PATH, SHEET_NAME, 0.0)
+loaded = CriSTool.load_experiments(
+    OUT_PATH,
+    SHEET_NAME;
+    initial_crystals_cols = (; mass_concentration = :SeedMass,
+                             d43 = :SeedD43,
+                             distribution = :SeedDistribution,
+                             spread = :SeedSpread),
+)
 
 println("\n========== VERIFICATION ==========")
 println("Number of measurement objects loaded: ", length(loaded))
@@ -190,12 +201,12 @@ for (i, m) in enumerate(loaded)
     conc = m.observables.concentration
     println("\n-- Experiment $(m.exp_id) --")
     println("  T (K)       = ", m.temperature)
-    println("  Loading     = ", m.loading)
+    println("  Initial crystals = ", m.initial_crystals)
     println("  N timepoints= ", length(conc.time))
     println("  time grid   = ", conc.time)
     println("  conc mean   = ", round.(conc.mean, digits = 4))
     println("  conc var    = ", round.(conc.variance, digits = 6))
-    println("  d43         = ", round(m.observables.d43.value, digits = 4),
+    println("  d43         = ", round(m.observables.d43.mean, digits = 4),
             "  d43var = ", round(m.observables.d43.variance, digits = 6))
 end
 println("===================================")

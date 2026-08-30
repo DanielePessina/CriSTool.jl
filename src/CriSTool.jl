@@ -96,7 +96,8 @@ export AbstractAggregationFunction, AbstractBreakageFunction, nobreakage,
        breakage_empirical, breakage_uniform, noaggregation,
        aggr_scalar, aggr_linear, aggr_linearvol, aggr_avg
 export runsimulation, paramaxis, crystallisation_odeproblem,
-       get_characteristic_size, getmomentsizes
+       get_characteristic_size, getmomentsizes,
+       initial_state_from_characteristics
 export AbstractPELossFunction, AbstractVarianceModel, MeasuredVariance, RelativeVariance,
        logMLE, mae, loss, prepare_loss, LossSetup
 export load_measurements, load_experiments, load_experiments_legacy, load_experiments_legacy_single,
@@ -135,6 +136,7 @@ include("measurements/bootstrap.jl")
 
 # Solution post-processing precedes the model and solver implementations.
 include("solvers/post_solution.jl")
+include("solvers/initial_state.jl")
 
 # Kinetic rate families and population-balance terms.
 include("physics/model_interfaces.jl")

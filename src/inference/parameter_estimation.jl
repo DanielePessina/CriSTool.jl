@@ -239,7 +239,8 @@ end
 
 Build the `CrystallisationProblem` used by `loss` from kinetic models and a
 solver. The problem carries the kinetics and solver; per-experiment conditions
-(temperature, loading, initial concentration) are applied inside `loss`.
+(temperature, initial concentration, and initial crystals) are applied inside
+`loss`.
 """
 function _build_loss_problem(nucleationfunction::AbstractNucleationFunction,
                              growthfunction::AbstractGrowthFunction,
@@ -258,7 +259,7 @@ end
     PreparedExperiment
 
 A per-experiment simulation bundle: the experiment's `CrystallisationProblem`
-(conditions applied: temperature, loading, initial concentration), its
+(conditions applied: temperature, initial concentration, initial crystals), its
 `ODEProblem` template, the solver algorithm, and the measurement time grid.
 The ODEProblem is built once and reused across parameter vectors with
 `remake` (SciML idiom) — the parameter-estimation hot loop never reconstructs
@@ -289,8 +290,8 @@ end
                  experiments::Vector{CrystallisationExperiment}) -> LossSetup
 
 Build per-experiment `ODEProblem` templates (u0 from each experiment's
-initial concentration, tspan from its measurement grid, constant temperature
-profile, loading). Each loss evaluation then only remakes the parameter
+initial concentration and initial crystals, tspan from its measurement grid,
+constant temperature profile). Each loss evaluation then only remakes the parameter
 vector — no ODEProblem construction in the optimisation loop.
 """
 function prepare_loss(problem::CrystallisationProblem,
@@ -426,14 +427,13 @@ end
     _experiment_problem(problem, expt) -> CrystallisationProblem
 
 The problem with the experiment's conditions applied (temperature profile,
-loading, initial concentration). Kinetics, saturation model, and physical
-constants carry over from the base problem.
+initial concentration, and initial crystal characteristics). Kinetics,
+saturation model, and physical constants carry over from the base problem.
 """
 function _experiment_problem(problem::CrystallisationProblem,
                              expt::CrystallisationExperiment)
-    return CrystallisationProblem(;
+    experiment_problem = CrystallisationProblem(;
         temp_profile = ConstantTemperature(expt.temperature),
-        loading = expt.loading,
         ρ = problem.ρ,
         initial_concentration = initial_concentration(expt),
         initial_solvent_state = merge(problem.initial_solvent_state,
@@ -441,18 +441,25 @@ function _experiment_problem(problem::CrystallisationProblem,
         solvent_dynamics = problem.solvent_dynamics,
         saturation_model = problem.saturation_model,
         kv = problem.kv,
+        solid_volume_threshold = problem.solid_volume_threshold,
         molecular_volume = problem.molecular_volume,
         kinetics_nucleationfunction = problem.kinetics_nucleationfunction,
         kinetics_growthfunction = problem.kinetics_growthfunction,
+        kinetics_dissolutionfunction = problem.kinetics_dissolutionfunction,
         kinetics_aggregationfunction = problem.kinetics_aggregationfunction,
         kinetics_breakagefunction = problem.kinetics_breakagefunction,
         parameterset_nucleation = problem.parameterset_nucleation,
         parameterset_growth = problem.parameterset_growth,
+        parameterset_dissolution = problem.parameterset_dissolution,
         parameterset_aggregation = problem.parameterset_aggregation,
         parameterset_breakage = problem.parameterset_breakage,
         R = problem.R,
         kb = problem.kb,
         solver = problem.solver)
+    isnothing(expt.initial_crystals) && return experiment_problem
+    return _problem_with_initial_state(
+        experiment_problem,
+        initial_state_from_characteristics(experiment_problem, expt.initial_crystals))
 end
 
 """

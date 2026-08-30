@@ -31,7 +31,7 @@ import FiniteDifferences
         system = CrystallisationProblem(; kinetics_nucleationfunction = nucl,
                                         kinetics_growthfunction = gr,
                                         solver = MoM())
-        S, T, loading = 3.2, 290.15, 0.0
+        S, T = 3.2, 290.15
         nd = [1e10, 1e11, 1e12, 1e13, 1e14]
         state = [nd; S * saturation_concentration(system, 0.0)]
 
@@ -59,7 +59,6 @@ import FiniteDifferences
                                    initial_concentration = 14.67,
                                    save_idx = save_idx,
                                    solver = MoM(),
-                                   loading = 0.0,
                                    temp_profile = CriSTool.ConstantTemperature(290.15))
             return sol
         end
@@ -76,7 +75,7 @@ import FiniteDifferences
 
     @testset "Full logMLE loss (gold fixture)" begin
         fixture = joinpath(@__DIR__, "fixtures", "real-experimental-dataset.xlsx")
-        ms = load_experiments(fixture, "Unseeded_PE", 0.0)
+        ms = load_experiments(fixture, "Unseeded_PE")
         problem = CrystallisationProblem(;
             kinetics_nucleationfunction = nucl_CNT(),
             kinetics_growthfunction = growth_empirical(),
@@ -100,7 +99,6 @@ import FiniteDifferences
                                    initial_concentration = 14.67,
                                    save_idx = save_idx,
                                    solver = FiniteVol(meshsize = 50, lmax = 50e-6),
-                                   loading = 0.0,
                                    temp_profile = CriSTool.ConstantTemperature(290.15))
             return sol.concentration[end]
         end

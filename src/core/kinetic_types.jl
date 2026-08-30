@@ -145,47 +145,6 @@ end
 paramaxis(::nucl_CNT) = ComponentArrays.Axis(Aj = 1, γ = 2)
 
 """
-    nucl_CNT_multiloading <: AbstractFPNucleationFunction
-
-Classical Nucleation Theory (CNT) nucleation function.
-
-Fields:
-- `nparams::Int64`: Number of parameters (2)
-- `string::String`: String identifier ("CNT")
-- `symbols::Vector{Symbol}`: Parameter symbols [:Aⱼ, :γ]
-"""
-Base.@kwdef @concrete struct nucl_CNT_multiloading <: AbstractFPNucleationFunction
-    nparams::Int64 = 2
-    string::String = "CNT-multiload"
-    symbols::Vector{Symbol} = [:Aⱼ, :γ]
-    unique_loadings::Vector{Float64} = [0.0]
-end
-"""
-    nucl_CNT_multiloading(unique_loadings::AbstractArray{<:Real}) -> nucl_CNT_multiloading
-
-Construct a `nucl_CNT_multiloading` for multiple loading conditions.
-
-Creates a nucleation function with separate CNT parameters (Aj, γ) for each unique loading value.
-
-# Arguments
-- `unique_loadings::AbstractArray{<:Real}`: Array of unique loading values
-
-# Returns
-- `nucl_CNT_multiloading`: Nucleation function with 2×length(unique_loadings) parameters
-"""
-function nucl_CNT_multiloading(unique_loadings::AbstractArray{<:Real})
-    num_unique_loadings = length(unique_loadings)
-    nparams = 2 * num_unique_loadings
-    symbols = Symbol[]
-    for i in 1:num_unique_loadings
-        push!(symbols, Symbol("A$i"))
-        push!(symbols, Symbol("γ$i"))
-    end
-    nucl_CNT_multiloading(unique_loadings = unique_loadings, nparams = nparams,
-                          symbols = symbols)
-end
-
-"""
     nucl_empirical <: AbstractFPNucleationFunction
 
 Empirical nucleation rate function.
@@ -434,50 +393,6 @@ Base.@kwdef @concrete struct growth_energy <: AbstractFPScalarGrowthFunction
 end
 
 paramaxis(::growth_energy) = ComponentArrays.Axis(Ag = 1, g = 2)
-
-"""
-    growth_energy_multiloading <: AbstractFPScalarGrowthFunction
-
-Growth function with activation energy for multiple loading conditions.
-
-Fields:
-- `nparams::Int64`: Number of parameters (2 × number of unique loadings)
-- `string::String`: String identifier ("GrEnergy-multiload")
-- `symbols::Vector{Symbol}`: Parameter symbols ([:Ag1, :g1, :Ag2, :g2, ...])
-- `unique_loadings::Vector{Float64}`: Array of unique loading values
-"""
-Base.@kwdef @concrete struct growth_energy_multiloading <: AbstractFPScalarGrowthFunction
-    nparams::Int64 = 2
-    string::String = "GrEnergy-multiload"
-    symbols::Vector{Symbol} = [:Ag, :g]
-    unique_loadings::Vector{Float64} = [0.0]
-    Ea::Float64 = 53 * 1e3
-end
-
-"""
-    growth_energy_multiloading(unique_loadings::AbstractArray{<:Real}) -> growth_energy_multiloading
-
-Construct a `growth_energy_multiloading` for multiple loading conditions.
-
-Creates a growth function with separate parameters (Ag, g) for each unique loading value.
-
-# Arguments
-- `unique_loadings::AbstractArray{<:Real}`: Array of unique loading values
-
-# Returns
-- `growth_energy_multiloading`: Growth function with 2×length(unique_loadings) parameters
-"""
-function growth_energy_multiloading(unique_loadings::AbstractArray{<:Real})
-    num_unique_loadings = length(unique_loadings)
-    nparams = 2 * num_unique_loadings
-    symbols = Symbol[]
-    for i in 1:num_unique_loadings
-        push!(symbols, Symbol("Ag$i"))
-        push!(symbols, Symbol("g$i"))
-    end
-    growth_energy_multiloading(unique_loadings = unique_loadings, nparams = nparams,
-                               symbols = symbols)
-end
 
 """
     growth_energy_est <: AbstractFPScalarGrowthFunction

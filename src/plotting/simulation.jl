@@ -27,7 +27,7 @@ function plot_measurements_vs_simulation(measurements::Vector{<:AbstractExperime
                                                       measurements[m].observables.concentration.time[end], 150),
                                   solver = solver,
                                   temp_profile = ConstantTemperature(measurements[m].temperature),
-                                  loading = measurements[m].loading,
+                                  initial_crystals = measurements[m].initial_crystals,
                                   kwargs...)
         solutions[m] = sol
     end
@@ -163,12 +163,12 @@ function plot_measurements_vs_simulation(measurements::Vector{<:AbstractExperime
 
             # Collect size information for text box
             if sol isa CrystallisationMoMSolution || sol isa CrystallisationQMOMSolution
-                pred_str = "Exp. $(exp_id) T = $(round(measurements[m].temperature-273,digits = 2) )°C, L = $(round(measurements[m].loading, sigdigits=2)) g/L, Pred. d43 = $(round(predicted_size, sigdigits=2)) μm"
+                pred_str = "Exp. $(exp_id) T = $(round(measurements[m].temperature-273,digits = 2) )°C, Pred. d43 = $(round(predicted_size, sigdigits=2)) μm"
                                     meas_str = "Meas. = $(round(measurements[m].observables.d43.mean, sigdigits=3)) ± $(round(sqrt(measurements[m].observables.d43.variance), sigdigits=2)) μm"
                     combined_str = "$pred_str, $meas_str"
                 push!(size_info, combined_str)
             elseif sol isa CrystallisationFVSolution
-                pred_str = "Exp. $(exp_id) T = $(round(measurements[m].temperature-273,digits = 2) )°C, L = $(round(measurements[m].loading, sigdigits=2)) g/L, Pred. D50 = $(round(predicted_size, sigdigits=2)) μm"
+                pred_str = "Exp. $(exp_id) T = $(round(measurements[m].temperature-273,digits = 2) )°C, Pred. D50 = $(round(predicted_size, sigdigits=2)) μm"
                                     meas_str = "Meas. = $(round(measurements[m].observables.d50q.mean, sigdigits=3)) ± $(round(sqrt(measurements[m].observables.d50q.variance), sigdigits=2)) μm"
                     combined_str = "$pred_str, $meas_str"
                     push!(size_info, combined_str)
@@ -198,8 +198,8 @@ function plot_measurements_vs_simulation(measurements::Vector{<:AbstractExperime
         if show_thesistext && !isempty(thesis_rows)
             thesis_io = IOBuffer()
             thesis_data = permutedims(reduce(hcat, thesis_rows))
-            thesis_header = (["Exp ID", "Loading", "T", "Pred. $(size_label)", "Meas. $(size_label)"],
-                             ["", "[g/L]", "[°C]", "[μm]", "[μm]"])
+            thesis_header = (["Exp ID", "T", "Pred. $(size_label)", "Meas. $(size_label)"],
+                             ["", "[°C]", "[μm]", "[μm]"])
             PrettyTables.pretty_table(thesis_io, thesis_data;
                                       header = thesis_header,
                                       tf = PrettyTables.tf_ascii_rounded,
@@ -347,7 +347,7 @@ function plot_ps_measurements_vs_simulation(measurements::Vector{<:AbstractExper
                                                     measurements[m].observables.concentration.time[end], 150),
                                 solver = solver,
                                 temp_profile = ConstantTemperature(measurements[m].temperature),
-                                loading = measurements[m].loading,
+                                initial_crystals = measurements[m].initial_crystals,
                                 kwargs...)
 
             function get_characteristic_size(sol)
@@ -389,12 +389,12 @@ function plot_ps_measurements_vs_simulation(measurements::Vector{<:AbstractExper
 
             # Collect size information for text box
             if sol isa CrystallisationMoMSolution || sol isa CrystallisationQMOMSolution
-                pred_str = "Exp. $(exp_id) T = $(round(measurements[m].temperature-273,digits = 2) )°C, L = $(round(measurements[m].loading, sigdigits=2)) g/L, Pred. d43 = $(round(predicted_size, sigdigits=2)) μm"
+                pred_str = "Exp. $(exp_id) T = $(round(measurements[m].temperature-273,digits = 2) )°C, Pred. d43 = $(round(predicted_size, sigdigits=2)) μm"
                                     meas_str = "Meas. = $(round(measurements[m].observables.d43.mean, sigdigits=3)) ± $(round(sqrt(measurements[m].observables.d43.variance), sigdigits=2)) μm"
                     combined_str = "$pred_str, $meas_str"
                 push!(size_info, combined_str)
             elseif sol isa CrystallisationFVSolution
-                pred_str = "Exp. $(exp_id) T = $(round(measurements[m].temperature-273,digits = 2) )°C, L = $(round(measurements[m].loading, sigdigits=2)) g/L, Pred. D50 = $(round(predicted_size, sigdigits=2)) μm"
+                pred_str = "Exp. $(exp_id) T = $(round(measurements[m].temperature-273,digits = 2) )°C, Pred. D50 = $(round(predicted_size, sigdigits=2)) μm"
                                     meas_str = "Meas. = $(round(measurements[m].observables.d50q.mean, sigdigits=3)) ± $(round(sqrt(measurements[m].observables.d50q.variance), sigdigits=2)) μm"
                     combined_str = "$pred_str, $meas_str"
                     push!(size_info, combined_str)

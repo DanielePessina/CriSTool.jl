@@ -111,7 +111,7 @@ end
                             variance = fill(0.01, 3)),
             d43 = Observable(; time = 120.0, mean = 8.0, variance = 1.0),
             d50q = Observable(; time = 120.0, mean = 8.0, variance = 1.0)),
-        temperature = 293.15, loading = 0.0, exp_id = 1)
+        temperature = 293.15, exp_id = 1)
     @test expt.observables.mass.mean[2] > 0
     L = loss(logMLE(), problem, [8.0, 2.0, 1.0, 2.0], [expt])
     @test L > 0

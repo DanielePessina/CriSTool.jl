@@ -43,11 +43,10 @@ function plot_measurements_vs_ensemble(measurements::Vector{<:AbstractExperiment
                     meas_text = "$(round(meas_mean, sigdigits=3)) ± $(round(meas_std, sigdigits=2))"
             end
 
-            loading_str = string(round(measurements[m].loading, sigdigits=3))
             temp_str = string(round(measurements[m].temperature - 273, digits = 2))
             # Get the actual experiment ID if available, otherwise use the loop index
             exp_id = hasproperty(measurements[m], :exp_id) ? measurements[m].exp_id : m
-            push!(thesis_rows, [string(exp_id), loading_str, temp_str, pred_text, meas_text])
+            push!(thesis_rows, [string(exp_id), temp_str, pred_text, meas_text])
         end
     end
 
@@ -167,13 +166,13 @@ function plot_measurements_vs_ensemble(measurements::Vector{<:AbstractExperiment
             if hasproperty(ensemble_sol, :d43_mean) # MoM solution
                 mean_pred_size = ensemble_sol.d43_mean[end]
                 std_pred_size = ensemble_sol.d43_std[end]
-                predicted_size_str = "T = $(round(measurements[m].temperature-273,digits = 2) )°C, Load = $(round(measurements[m].loading, sigdigits=2)) g/L, Pred. D43 = $(round(mean_pred_size, sigdigits=3)) ± $(round(std_pred_size, sigdigits=2)) μm"
+                predicted_size_str = "T = $(round(measurements[m].temperature-273,digits = 2) )°C, Pred. D43 = $(round(mean_pred_size, sigdigits=3)) ± $(round(std_pred_size, sigdigits=2)) μm"
 
                                     measured_size_str = "Meas. = $(round(measurements[m].observables.d43.mean, sigdigits=3)) ± $(round(sqrt(measurements[m].observables.d43.variance), sigdigits=2)) μm"
             elseif hasproperty(ensemble_sol, :d50q_mean) # FV solution
                 mean_pred_size = ensemble_sol.d50q_mean[end]
                 std_pred_size = ensemble_sol.d50q_std[end]
-                predicted_size_str = "T = $(round(measurements[m].temperature-273,digits = 2) )°C, Load = $(round(measurements[m].loading, sigdigits=2)) g/L,Pred. D50 = $(round(mean_pred_size, sigdigits=3)) ± $(round(std_pred_size, sigdigits=2)) μm"
+                predicted_size_str = "T = $(round(measurements[m].temperature-273,digits = 2) )°C, Pred. D50 = $(round(mean_pred_size, sigdigits=3)) ± $(round(std_pred_size, sigdigits=2)) μm"
 
                                     measured_size_str = "Meas. = $(round(measurements[m].observables.d50q.mean, sigdigits=3)) ± $(round(sqrt(measurements[m].observables.d50q.variance), sigdigits=2)) μm"
             end
@@ -221,8 +220,8 @@ function plot_measurements_vs_ensemble(measurements::Vector{<:AbstractExperiment
         if show_thesistext && !isempty(thesis_rows)
             thesis_io = IOBuffer()
             thesis_data = permutedims(reduce(hcat, thesis_rows))
-            thesis_header = (["Exp ID", "Loading", "T", "Pred. d43", "Meas. d43"],
-                             ["", "[g/L]", "[°C]", "[μm]", "[μm]"])
+            thesis_header = (["Exp ID", "T", "Pred. d43", "Meas. d43"],
+                             ["", "[°C]", "[μm]", "[μm]"])
             PrettyTables.pretty_table(thesis_io, thesis_data;
                                       header = thesis_header,
                                       tf = PrettyTables.tf_ascii_rounded,
@@ -464,7 +463,7 @@ function plot_ps_measurements_vs_ensemble(measurements::Vector{<:AbstractExperim
             # Get the actual experiment ID if available, otherwise use the loop index
             exp_id = hasproperty(measurements[m], :exp_id) ? measurements[m].exp_id : m
 
-            predicted_size_str = "T = $(round(measurements[m].temperature - 273, digits = 2))°C, Load = $(round(measurements[m].loading, sigdigits=2)) g/L, Pred. $(label_symbol) = $(round(predicted_size, sigdigits=3)) ± $(round(predicted_std, sigdigits=2)) μm"
+            predicted_size_str = "T = $(round(measurements[m].temperature - 273, digits = 2))°C, Pred. $(label_symbol) = $(round(predicted_size, sigdigits=3)) ± $(round(predicted_std, sigdigits=2)) μm"
 
             if !isnothing(meas_size)
                 measured_size_str = "Meas. = $(round(meas_size, sigdigits=3))"

@@ -3,7 +3,7 @@
 CriSTool represents each experimental run as a `CrystallisationExperiment`:
 a typed `NamedTuple` of per-observable containers (`Observable` for
 time series with their own grid, `Observable` for final-state scalars
-like d43) plus the run conditions (temperature, loading, `exp_id`). There is
+like d43) plus the run conditions (temperature, initial crystal state, `exp_id`). There is
 no `Dict{Symbol,Any}` anywhere; adding a new observable (pH, mass, PSD, ...)
 means adding a field to the `NamedTuple`, not a new container type.
 
@@ -16,7 +16,7 @@ estimation: [Tutorial 2 — Parameter Estimation](<../examples/Tutorial 2 Parame
 using CriSTool
 
 path = joinpath(@__DIR__, "..", "examples", "fake-experimental-dataset.xlsx")
-experiments = load_experiments(path, "Unseeded_PE", 0.0)
+experiments = load_experiments(path, "Unseeded_PE")
 ```
 
 For a different tabular layout, use the table-driven loader:
@@ -26,8 +26,11 @@ experiments = load_measurements(path, "Unseeded_PE";
     observables = (; concentration = (:Concentration, :Concentration_var),
                    particle_size = (:PS, :PS_var)),
     scalar_observables = (:particle_size,),
-    metadata_cols = (; temperature = :Temperature, loading = :Loading,
-                     system = :System),
+    metadata_cols = (; temperature = :Temperature, system = :System),
+    initial_crystals_cols = (; mass_concentration = :SeedMass,
+                             d43 = :SeedD43,
+                             distribution = :SeedDistribution,
+                             spread = :SeedSpread),
     temperature_transform = T -> T + 273.15)
 ```
 
@@ -35,12 +38,11 @@ Each observable may have its own time grid. Series observables retain all
 usable rows; scalar observables use the final available row. Extra metadata is
 retained in `experiment.metadata`.
 
-`load_experiments(path, sheet_name, loading)` expects a sheet where each
+`load_experiments(path, sheet_name)` expects a sheet where each
 experiment is grouped by `Exp_ID` (Python-importer long format) with columns
 such as `Time`, `Concentration`, `Concentration_var`, `Temperature`,
-`Loading`, and optional `PS`/`PS_var`. The third argument is the loading
-filter — pass a scalar (`0.0`) or a vector (`[0.0, 0.5]`) to combine multiple
-loading levels into one `Vector{CrystallisationExperiment}`.
+and optional `PS`/`PS_var`. Use the `filters` keyword for arbitrary source
+columns and `initial_crystals_cols` to load initial seed characteristics.
 
 The particle size (last timepoint) is stored twice as `d43` and `d50q`
 scalar observables: the MoM-based losses compare against `d43`, the
@@ -57,7 +59,6 @@ observable sample. The columns used by the default loader are:
 | `Concentration_var` | concentration variance, when replicate measurements exist |
 | `PS`, `PS_var` | optional particle-size measurement and variance |
 | `Temperature` | experiment temperature |
-| `Loading` | experiment loading |
 
 Use `load_measurements` when the workbook uses different column names, has
 additional observables, or needs a temperature transform.
@@ -84,7 +85,7 @@ expt.observables.d43.mean             # final d43 scalar (µm)
 expt.observables.d43.variance
 initial_concentration(expt)            # first concentration timepoint
 expt.temperature                       # Kelvin
-expt.loading
+expt.initial_crystals
 expt.exp_id
 ```
 

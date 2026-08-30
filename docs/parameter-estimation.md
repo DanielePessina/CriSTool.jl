@@ -20,7 +20,7 @@ using Metaheuristics
 
 # Load experiments (synthetic dataset shipped with the package)
 path = joinpath(pkgdir(CriSTool), "examples", "fake-experimental-dataset.xlsx")
-experiments = load_experiments(path, "Unseeded_PE", 0.0)
+experiments = load_experiments(path, "Unseeded_PE")
 
 # Model and bounds
 nucl_f = nucl_CNT()
@@ -78,7 +78,7 @@ lossfn = logMLE(weighting = [1.0, 0.5, 1.0],
 ```
 
 The `problem` carries kinetics and solver; per-experiment conditions
-(temperature, loading, initial concentration) are read from each
+(temperature, initial concentration, and initial crystals) are read from each
 `CrystallisationExperiment` inside the loss.
 
 ## Adding a new loss function
@@ -111,7 +111,7 @@ function loss(::mse_loss, problem::CrystallisationProblem,
                                initial_concentration = initial_concentration(expt),
                                save_idx = expt.observables.concentration.time,
                                temp_profile = ConstantTemperature(expt.temperature),
-                               loading = expt.loading)
+                               initial_crystals = expt.initial_crystals)
         conc = expt.observables.concentration
         total += sum((sol.concentration .- conc.mean).^2)
     end

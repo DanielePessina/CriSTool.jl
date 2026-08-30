@@ -8,7 +8,7 @@
 
 @testset "Gold fixture: loader + MoM at canonical params" begin
     fixture = joinpath(@__DIR__, "fixtures", "real-experimental-dataset.xlsx")
-    ms = load_experiments(fixture, "Unseeded_PE", 0.0)
+    ms = load_experiments(fixture, "Unseeded_PE")
     @test length(ms) == 7
 
     problem = CrystallisationProblem(;

@@ -65,12 +65,36 @@ function _measurement_scalar(table, time_col, mean_col, variance_col)
                       variance = variance)
 end
 
+function _initial_crystals_from_table(table, initial_crystals_cols)
+    initial_crystals_cols === nothing && return nothing
+    required = (:mass_concentration, :d43, :distribution, :spread)
+    all(name -> hasproperty(initial_crystals_cols, name), required) ||
+        throw(ArgumentError("initial_crystals_cols must map mass_concentration, d43, " *
+                            "distribution, and spread columns."))
+
+    values = map(required) do name
+        _first_measurement_value(table,
+                                 getproperty(initial_crystals_cols, name),
+                                 missing)
+    end
+    all(value -> value === missing, values) && return nothing
+    any(value -> value === missing, values) &&
+        throw(ArgumentError("Initial crystal characteristic columns must be populated " *
+                            "for every experiment or omitted entirely."))
+
+    return (; mass_concentration = Float64(values[1]),
+            d43 = Float64(values[2]),
+            distribution = values[3] isa Symbol ? values[3] : Symbol(lowercase(String(values[3]))),
+            spread = Float64(values[4]))
+end
+
 """
     load_measurements(filepath, sheet_name; time_col=:Time, id_col=:Exp_ID,
                       observables=(concentration = (:Concentration,
                       :Concentration_var),), scalar_observables=(),
-                      metadata_cols=(temperature=:Temperature, loading=:Loading),
-                      temperature_transform=identity, filters=NamedTuple())
+                      metadata_cols=(temperature=:Temperature,),
+                      initial_crystals_cols=nothing, temperature_transform=identity,
+                      filters=NamedTuple())
         -> Vector{CrystallisationExperiment}
 
 Load a table-driven measurement sheet. Each `observables` entry maps an
@@ -78,8 +102,10 @@ observable name to either a mean column or `(mean_column, variance_column)`.
 Names listed in `scalar_observables` use the final available row of each
 experiment; all others retain their own time series. `metadata_cols` maps
 typed metadata names to source columns and is retained on each experiment.
-The fixed `temperature`, `loading`, and `exp_id` fields are also populated
-from metadata columns when those names are supplied.
+The fixed `temperature` and `exp_id` fields are populated from metadata
+columns when `temperature` is supplied. `initial_crystals_cols` optionally
+maps initial seed characteristics into the experiment's `initial_crystals`
+field.
 """
 function load_measurements(filepath::AbstractString, sheet_name::AbstractString;
                             time_col = :Time,
@@ -88,9 +114,12 @@ function load_measurements(filepath::AbstractString, sheet_name::AbstractString;
                                 (; concentration = (:Concentration, :Concentration_var)),
                             scalar_observables = (),
                             metadata_cols::NamedTuple =
-                                (; temperature = :Temperature, loading = :Loading),
+                                (; temperature = :Temperature),
+                            initial_crystals_cols = nothing,
                             temperature_transform = identity,
                             filters::NamedTuple = NamedTuple())
+    hasproperty(metadata_cols, :loading) &&
+        throw(ArgumentError("The loading metadata field was removed; use initial_crystals_cols."))
     table = DataFrame(XLSX.readtable(filepath, sheet_name))
     id_source = _measurement_source_column(id_col)
     time_source = _measurement_source_column(time_col)
@@ -118,6 +147,18 @@ function load_measurements(filepath::AbstractString, sheet_name::AbstractString;
         end
     end
 
+    if initial_crystals_cols !== nothing
+        required = (:mass_concentration, :d43, :distribution, :spread)
+        all(name -> hasproperty(initial_crystals_cols, name), required) ||
+            throw(ArgumentError("initial_crystals_cols must map mass_concentration, d43, " *
+                                "distribution, and spread columns."))
+        for name in required
+            source = getproperty(initial_crystals_cols, name)
+            string(_measurement_source_column(source)) in names(table) ||
+                throw(ArgumentError("Expected initial crystal column '$source' for :$name."))
+        end
+    end
+
     groups = groupby(table, id_source, sort = true)
     experiments = Vector{CrystallisationExperiment}(undef, length(groups))
     for (index, group) in enumerate(groups)
@@ -140,19 +181,16 @@ function load_measurements(filepath::AbstractString, sheet_name::AbstractString;
 
         temperature_source = hasproperty(metadata_cols, :temperature) ?
                              getproperty(metadata_cols, :temperature) : nothing
-        loading_source = hasproperty(metadata_cols, :loading) ?
-                         getproperty(metadata_cols, :loading) : nothing
         raw_temperature = _first_measurement_value(group, temperature_source, NaN)
-        raw_loading = _first_measurement_value(group, loading_source, 0.0)
         temperature_value = raw_temperature === missing ? NaN :
                             Float64(temperature_transform(Float64(raw_temperature)))
-        loading_value = raw_loading === missing ? 0.0 : Float64(raw_loading)
         experiment_id = Int(_first_measurement_value(group, id_source, index))
+        initial_crystals = _initial_crystals_from_table(group, initial_crystals_cols)
 
         experiments[index] = CrystallisationExperiment(;
             observables = named_observables,
             temperature = temperature_value,
-            loading = loading_value,
+            initial_crystals = initial_crystals,
             exp_id = experiment_id,
             metadata = metadata)
     end
@@ -160,26 +198,31 @@ function load_measurements(filepath::AbstractString, sheet_name::AbstractString;
 end
 
 """
-    load_experiments(filepath::AbstractString, sheet_name::AbstractString,
-                     loading::Real, temperature_range::Tuple=(nothing, nothing))
+    load_experiments(filepath::AbstractString, sheet_name::AbstractString;
+                     temperature_range::Tuple=(nothing, nothing),
+                     filters::NamedTuple=NamedTuple(),
+                     initial_crystals_cols=nothing)
         -> Vector{CrystallisationExperiment}
 
 Load experiments from a single Excel sheet formatted like the Python importer
-(`data_import.py`), filtering by a specific `loading` and grouping by `Exp_ID`.
+(`data_import.py`), applying optional generic row filters and grouping by
+`Exp_ID`.
 
 # Arguments
 - `filepath::AbstractString`: Path to the Excel file containing measurements
 - `sheet_name::AbstractString`: Name of the sheet to load (e.g., a system name)
-- `loading::Real`: Loading value to filter experiments by
 - `temperature_range::Tuple=(nothing, nothing)`: Optional `(Tmin, Tmax)` bounds to
   filter rows by temperature; pass `nothing` for no bound on that side.
+- `filters::NamedTuple`: Optional source-column filters applied before grouping.
+- `initial_crystals_cols`: Optional mapping of initial seed characteristic
+  names to source columns.
 
 # Returns
 - `Vector{CrystallisationExperiment}`: One experiment per unique `Exp_ID`
 
 The sheet is expected to include the following columns:
-- `Exp_ID` (Int), `System` (String), `Temperature` (Real), `Loading` (Real),
-  `Time` (Real), `Concentration` (Real), optional `Concentration_var` (Real),
+- `Exp_ID` (Int), `System` (String), `Temperature` (Real), `Time` (Real),
+  `Concentration` (Real), optional `Concentration_var` (Real),
   optional `PS` (Real), optional `PS_var` (Real).
 
 Notes:
@@ -190,16 +233,17 @@ Notes:
   dummy value of `10.0` is used and variance is set to `100.0`, matching the
   legacy behaviour.
 """
-function load_experiments(filepath::AbstractString, sheet_name::AbstractString,
-                          loading::Real,
-                          temperature_range::Tuple = (nothing, nothing))
+function load_experiments(filepath::AbstractString, sheet_name::AbstractString;
+                          temperature_range::Tuple = (nothing, nothing),
+                          filters::NamedTuple = NamedTuple(),
+                          initial_crystals_cols = nothing)
 
     # Load the sheet as a DataFrame
     df = DataFrame(XLSX.readtable(filepath, sheet_name))
 
     # Normalize expected numeric columns to Float64 where present
     for col in
-        (:Time, :Concentration, :Concentration_var, :Temperature, :Loading, :PS, :PS_var)
+        (:Time, :Concentration, :Concentration_var, :Temperature, :PS, :PS_var)
         if string(col) in names(df)
             df[!, col] = Float64.(coalesce.(df[!, col], NaN))
         end
@@ -223,12 +267,15 @@ function load_experiments(filepath::AbstractString, sheet_name::AbstractString,
     if "Temperature" ∉ names(df)
         df[!, :Temperature] = fill(NaN, size(df, 1))
     end
-    if "Loading" ∉ names(df)
-        df[!, :Loading] = fill(NaN, size(df, 1))
+    for (column, expected) in pairs(filters)
+        source = _measurement_source_column(column)
+        string(source) in names(df) ||
+            throw(ArgumentError("Filter column '$source' not found in sheet '$(sheet_name)'."))
+        df = df[df[!, source] .== expected, :]
     end
 
-    # Filter by the requested loading, and optionally by temperature bounds
-    df_filtered = df[df.Loading .== Float64(loading), :]
+    # Apply optional temperature bounds.
+    df_filtered = df
 
     # Apply temperature bounds only if at least one bound is provided
     tmin, tmax = temperature_range
@@ -241,8 +288,20 @@ function load_experiments(filepath::AbstractString, sheet_name::AbstractString,
 
     # If nothing matches, return empty vector
     if nrow(df_filtered) == 0
-        @info "No experiments found for loading=$(loading) in sheet '$(sheet_name)' of $(filepath)"
+        @info "No experiments found in sheet '$(sheet_name)' of $(filepath) after applying filters."
         return CrystallisationExperiment[]
+    end
+
+    if initial_crystals_cols !== nothing
+        required = (:mass_concentration, :d43, :distribution, :spread)
+        all(name -> hasproperty(initial_crystals_cols, name), required) ||
+            throw(ArgumentError("initial_crystals_cols must map mass_concentration, d43, " *
+                                "distribution, and spread columns."))
+        for name in required
+            source = getproperty(initial_crystals_cols, name)
+            string(_measurement_source_column(source)) in names(df_filtered) ||
+                throw(ArgumentError("Expected initial crystal column '$source' for :$name."))
+        end
     end
 
     sort!(df_filtered, [:Exp_ID, :Time])
@@ -272,6 +331,7 @@ function load_experiments(filepath::AbstractString, sheet_name::AbstractString,
             Tvals = skipmissing(sdf.Temperature)
             isempty(Tvals) ? NaN : Float64(first(Tvals))
         end
+        initial_crystals = _initial_crystals_from_table(sdf, initial_crystals_cols)
 
         # Particle size: last element only (check for -1 sentinel)
         ps_last = begin
@@ -309,7 +369,7 @@ function load_experiments(filepath::AbstractString, sheet_name::AbstractString,
                 d50q = Observable(; time = time[end], mean = ps_mean, variance = ps_var),
             ),
             temperature = round(Texp + 273.15, digits = 2),
-            loading = Float64(loading),
+            initial_crystals = initial_crystals,
             exp_id = exp_id,
             metadata = (;))
     end
@@ -335,6 +395,6 @@ quantile, and diameter data respectively).
 
 The `q i` sheet's first quantile becomes the `d50q` scalar observable; the
 `d i` sheet's last quantile row becomes the `d43` scalar observable (the
-legacy layout stored d10/d32/d43 in successive rows). Temperatures and
-loadings are unknown in this format and set to `NaN`/`0.0`.
+legacy layout stored d10/d32/d43 in successive rows). Temperature is unknown
+in this format and set to `NaN`.
 """

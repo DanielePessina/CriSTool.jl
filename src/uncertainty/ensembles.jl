@@ -272,7 +272,7 @@ function _run_ensemble_internal(samples::Matrix{Float64},
                                 save_idx = time,
                                 solver = solver,
                                 temp_profile = run_temp_profile,
-                                loading = measurements[m].loading)
+                                initial_crystals = measurements[m].initial_crystals)
 
             concentration[:, i] = sol.concentration
             d43[:, i] = sol.d43
@@ -312,7 +312,7 @@ _store_d50q!(buffer::AbstractMatrix, sol, i, solver::AbstractDiscretisedSolver) 
                        nucleationfunction, growthfunction, aggregationfunction,
                        breakagefunction, solver;
                        time_idx::T=0:5:305, temp_profile,
-                       initial_concentration, loading::Float64=0.0,
+                       initial_concentration, initial_crystals=nothing,
                        verbosity::Int64=1, HPC::Bool=false)
                        -> Union{EnsembleFVSolution, EnsembleMoMSolution}
                        where {T<:AbstractArray}
@@ -329,7 +329,7 @@ Run ensemble simulations without measurement objects by providing fixed inputs.
 - `time_idx::T=0:5:305`: Time points for saving results
 - `temp_profile`: Temperature profile (required)
 - `initial_concentration`: Initial concentration (required)
-- `loading::Float64=0.0`: Fixed loading value
+- `initial_crystals`: Optional initial seed characteristics shared by all samples
 - `verbosity::Int64=1`: Verbosity level (0 = silent)
 - `HPC::Bool=false`: Whether running on HPC
 
@@ -345,7 +345,7 @@ function run_ensemble_fixed(samples::Matrix{Float64},
                             time_idx::T = 0:5:305,
                             temp_profile = nothing,
                             initial_concentration = nothing,
-                            loading::Float64 = 0.0,
+                            initial_crystals = nothing,
                             verbosity::Int64 = 1,
                             HPC::Bool = false) where {T <: AbstractArray}
 
@@ -382,7 +382,7 @@ function run_ensemble_fixed(samples::Matrix{Float64},
                             save_idx = time_idx,
                             solver = solver,
                             temp_profile = temp_profile,
-                            loading = loading)
+                            initial_crystals = initial_crystals)
 
         concentration[:, i] = sol.concentration
         d43[:, i] = sol.d43

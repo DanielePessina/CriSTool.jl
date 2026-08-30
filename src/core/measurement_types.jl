@@ -38,7 +38,7 @@ Abstract supertype for a single experimental run (see `CrystallisationExperiment
 abstract type AbstractExperiment end
 
 """
-    CrystallisationExperiment{O<:NamedTuple,M<:NamedTuple} <: AbstractExperiment
+    CrystallisationExperiment{O<:NamedTuple,I,M<:NamedTuple} <: AbstractExperiment
 
 A single crystallisation experiment: a typed `NamedTuple` of observables
 plus the run conditions.
@@ -47,8 +47,9 @@ Fields:
 - `observables::O`: e.g. `(concentration = Observable(...), d43 = Observable(...), d50q = Observable(...))`.
   The `concentration` observable is mandatory for loss evaluation.
 - `temperature::Float64`: run temperature in Kelvin
-- `loading::Float64`: loading (e.g. volumetric solids fraction)
 - `exp_id::Int`: experiment identifier
+- `initial_crystals::Union{Nothing,NamedTuple}`: optional initial seed
+  characteristics used to construct the solver state
 - `metadata::M`: additional typed run metadata
 
 The `NamedTuple` shape keeps the container type-stable and Tables.jl
@@ -56,12 +57,13 @@ compatible; additional observables (pH, mass, PSD, ...) are added as new
 fields, not new container types.
 """
 Base.@kwdef @concrete struct CrystallisationExperiment{O <: NamedTuple,
+                                                       I <: Union{Nothing, NamedTuple},
                                                        M <: NamedTuple} <:
                  AbstractExperiment
     observables::O
     temperature::Float64
-    loading::Float64
     exp_id::Int
+    initial_crystals::I = nothing
     metadata::M = NamedTuple()
 end
 

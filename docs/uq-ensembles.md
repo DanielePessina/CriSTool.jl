@@ -11,7 +11,7 @@ using CriSTool
 using Distributions
 
 path = joinpath(pkgdir(CriSTool), "examples", "fake-experimental-dataset.xlsx")
-measurements = load_experiments(path, "Unseeded_PE", 0.0)
+measurements = load_experiments(path, "Unseeded_PE")
 
 nucl_f = nucl_CNT()
 growth_f = growth_energy()
@@ -59,7 +59,7 @@ ensemble = run_ensemble(samples, measurements,
 
 ## Notes
 
-- The ensemble uses each measurement's `temperature` and `loading` fields
-  when running simulations.
+- The ensemble uses each measurement's `temperature` and `initial_crystals`
+  fields when running simulations.
 - The returned objects are `EnsembleMoMSolution` for MoM/QMOM and
   `EnsembleFVSolution` for FiniteVol/WENO.

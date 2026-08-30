@@ -24,7 +24,6 @@ const DATA_WORKBOOK = get(ENV, "CRISTOOL_DATA_WORKBOOK",
                           joinpath(pkgdir(CriSTool), "test", "fixtures",
                                    "real-experimental-dataset.xlsx"))
 const DATA_SHEET = get(ENV, "CRISTOOL_DATA_SHEET", "Unseeded_PE")
-const DATA_LOADING = parse(Float64, get(ENV, "CRISTOOL_DATA_LOADING", "0.0"))
 
 # These are deliberately sized for an actual inference run.  Reduce them only
 # when developing the script interactively.
@@ -71,8 +70,8 @@ end
 
 function main()
     Random.seed!(20260830)
-    measurements = load_experiments(DATA_WORKBOOK, DATA_SHEET, DATA_LOADING)
-    isempty(measurements) && error("No experiments found in $DATA_WORKBOOK [$DATA_SHEET, loading=$DATA_LOADING]")
+    measurements = load_experiments(DATA_WORKBOOK, DATA_SHEET)
+    isempty(measurements) && error("No experiments found in $DATA_WORKBOOK [$DATA_SHEET]")
     println("Loaded ", length(measurements), " experiments from ", DATA_WORKBOOK)
 
     mom_lower = [25.0, 0.30, 0.30, 2.0]

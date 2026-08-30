@@ -4,7 +4,7 @@
                             variance = [0.1, 0.2, 0.3])
     d43 = Observable(; time = 60.0, mean = 10.5, variance = 2.0)
     expt = CrystallisationExperiment(; observables = (; concentration = conc, d43 = d43),
-                                     temperature = 290.15, loading = 0.0, exp_id = 7)
+                                     temperature = 290.15, exp_id = 7)
 
     @test expt.observables.concentration === conc
     @test expt.observables.d43 === d43
@@ -23,11 +23,11 @@ end
 
 @testset "load_experiments on real fixture" begin
     fixture = joinpath(@__DIR__, "fixtures", "real-experimental-dataset.xlsx")
-    ms = load_experiments(fixture, "Unseeded_PE", 0.0)
+    ms = load_experiments(fixture, "Unseeded_PE")
 
     @test length(ms) == 7
     @test [m.exp_id for m in ms] == [3, 4, 5, 6, 7, 8, 9]
-    @test all(m.loading == 0.0 for m in ms)
+    @test all(m.initial_crystals === nothing for m in ms)
     @test [m.temperature for m in ms] == [290.15, 290.15, 294.15, 294.15, 294.15, 294.15, 294.15]
 
     # Hand-checked from the sheet (Exp 3): 9 timepoints, initial conc = mean of
@@ -44,13 +44,12 @@ end
     @test ms[1].observables.d43.mean == ms[1].observables.d50q.mean
     @test ms[1].observables.d43.time == conc3.time[end]
 
-    # PS = -1 sentinel -> dummy 10.0 / 100.0 (Exp 9 has real PS; use a sheet
-    # where the sentinel path is exercised via the loading filter instead)
+    # PS = -1 sentinel -> dummy 10.0 / 100.0 (Exp 9 has real PS).
     @test ms[7].observables.d43.mean ≈ 11.868243
     @test ms[7].observables.d43.variance ≈ 0.2669785799800902
 
-    # No data for an unknown loading -> empty
-    @test isempty(load_experiments(fixture, "Unseeded_PE", 999.0))
+    # Generic filtering still returns no data for an unknown system.
+    @test isempty(load_experiments(fixture, "Unseeded_PE"; filters = (; System = "UNKNOWN")))
 end
 
 @testset "Table-driven measurement loader" begin
@@ -61,9 +60,9 @@ end
         observables = (; concentration = (:Concentration, :Concentration_var),
                        particle_size = (:PS, :PS_var)),
         scalar_observables = (:particle_size,),
-        metadata_cols = (; temperature = :Temperature, loading = :Loading, system = :System),
+        metadata_cols = (; temperature = :Temperature, system = :System),
         temperature_transform = value -> value + 273.15,
-        filters = (; Loading = 0.0))
+        filters = (; System = "Unseeded"))
 
     @test length(measurements) == 7
     @test propertynames(measurements[1].observables) == (:concentration, :particle_size)
@@ -72,13 +71,13 @@ end
     @test measurements[1].observables.particle_size.time == 270.0
     @test measurements[1].observables.particle_size.mean ≈ 9.2480539
     @test measurements[1].temperature == 290.15
-    @test measurements[1].loading == 0.0
+    @test measurements[1].initial_crystals === nothing
     @test measurements[1].metadata.system == "Unseeded"
 end
 
 @testset "Balancers" begin
     fixture = joinpath(@__DIR__, "fixtures", "real-experimental-dataset.xlsx")
-    ms = load_experiments(fixture, "Unseeded_PE", 0.0)
+    ms = load_experiments(fixture, "Unseeded_PE")
 
     # Concentration variance floor: 10% of the mean, squared
     balanced = repeatmeasurementbalancer(ms, 10)
@@ -103,14 +102,14 @@ end
 
     custom = CrystallisationExperiment(;
         observables = (; pH = Observable(; time = [0.0, 1.0], mean = [7.0, 7.5])),
-        temperature = 290.15, loading = 0.0, exp_id = 99)
+        temperature = 290.15, exp_id = 99)
     custom_balanced = balance_variances([custom]; obs = :pH, min_rel_std_pc = 10)
     @test custom_balanced[1].observables.pH.variance ≈ [0.49, 0.5625]
 end
 
 @testset "Bootstrap resampling" begin
     fixture = joinpath(@__DIR__, "fixtures", "real-experimental-dataset.xlsx")
-    ms = load_experiments(fixture, "Unseeded_PE", 0.0)
+    ms = load_experiments(fixture, "Unseeded_PE")
 
     b1 = bootstrap_repeatmeasurements(ms, true; seed = 42)
     @test b1 isa Vector{CrystallisationExperiment}

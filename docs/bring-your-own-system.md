@@ -98,15 +98,15 @@ expt = CrystallisationExperiment(;
                           mean = [0.0, 5.0, 9.0]),
         d43 = Observable(; mean = 8.0, variance = 1.0),   # size observables
         d50q = Observable(; mean = 8.0, variance = 1.0)), # used by the losses
-    temperature = 293.15, loading = 0.0, exp_id = 1)
+    temperature = 293.15, exp_id = 1)
 ```
 
 The losses read every simulated observable exposed by `observable_values`.
 Built-in concentration and size metrics are available automatically; define an
 `observable_values` method for a custom solution observable such as pH or mass.
 Loaders for the standard Excel long format use
-`load_experiments(path, sheet, loading)`, while custom column layouts use
-`load_measurements`.
+`load_experiments(path, sheet)`, while custom column layouts use
+`load_measurements` and its `initial_crystals_cols` mapping.
 
 ## 4. Simulation, loss, estimation
 

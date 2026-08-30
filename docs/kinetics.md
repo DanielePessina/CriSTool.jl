@@ -95,9 +95,8 @@ p.nucl.Aj    # 38.0
 p.gr.g       # 3.0
 ```
 
-Variants that have not declared a custom `paramaxis` (the multi-loading
-nucleation/growth families, the delegating `growth_energy_dissolution`,
-and any rate-function-less placeholder) fall back to a generic
+Variants that have not declared a custom `paramaxis` (the delegating
+`growth_energy_dissolution` and any rate-function-less placeholder) fall back to a generic
 `Axis(θ1=1, θ2=2, ...)` with one entry per `nparams` slot.
 
 ## Add a new kinetic family (three pieces)

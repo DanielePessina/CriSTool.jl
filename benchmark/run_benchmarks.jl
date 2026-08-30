@@ -17,7 +17,6 @@ using ComponentArrays
 const ROOT      = dirname(@__DIR__)            # repo root
 const FIXTURE   = joinpath(ROOT, "test", "fixtures", "real-experimental-dataset.xlsx")
 const SHEET     = "Unseeded_PE"
-const LOADING   = 0.0
 const FIXED_GRID = 0:30:270                    # common save grid for FV/WENO
 const CANONICAL_θ = Float64[38.0, 0.6, 1.0, 3.0]  # gold fixture params (nucl_CNT + growth_empirical)
 const SECONDS = 5                              # Chairmarks sampling budget per benchmark
@@ -45,7 +44,6 @@ function fit_ode_stats(exps, θ, solver; grid=nothing)
                                         solver = solver,
                                         initial_concentration = CriSTool.initial_concentration(e),
                                         save_idx = save_idx,
-                                        loading = e.loading,
                                         temp_profile = CriSTool.ConstantTemperature(e.temperature))
         st = sol.ode_stats
         nf += something(_get_ode_stat(st, :nf), 0)
@@ -69,7 +67,6 @@ function run_mom_fit(exps, θ)
                                solver = mom_solver,
                                initial_concentration = CriSTool.initial_concentration(e),
                                save_idx = e.observables.concentration.time,
-                               loading = e.loading,
                                temp_profile = CriSTool.ConstantTemperature(e.temperature))
     end
     return nothing
@@ -86,14 +83,13 @@ function run_fixed_grid_fit(exps, θ, solver)
                                solver = solver,
                                initial_concentration = CriSTool.initial_concentration(e),
                                save_idx = FIXED_GRID,
-                               loading = e.loading,
                                temp_profile = CriSTool.ConstantTemperature(e.temperature))
     end
     return nothing
 end
 
 # --- AllocCheck target: representative warm MoM call (flat-vector path) ----
-function warm_mom_call(θ, nucl, gr, agg, br, solver, initc, timegrid, loading, tp)
+function warm_mom_call(θ, nucl, gr, agg, br, solver, initc, timegrid, tp)
     p, s = CriSTool.runsimulation(θ;
                                   nucl = nucl,
                                   gr = gr,
@@ -102,7 +98,6 @@ function warm_mom_call(θ, nucl, gr, agg, br, solver, initc, timegrid, loading, 
                                   solver = solver,
                                   initial_concentration = initc,
                                   save_idx = timegrid,
-                                  loading = loading,
                                   temp_profile = tp)
     return s
 end
@@ -137,7 +132,7 @@ function alloccheck_summary(errs)
 end
 
 function main()
-    exps = load_experiments(FIXTURE, SHEET, LOADING)
+    exps = load_experiments(FIXTURE, SHEET)
     @assert length(exps) == 7 "expected 7 experiments, got $(length(exps))"
     println("Loaded $(length(exps)) experiments from $(basename(FIXTURE)) [$SHEET]\n")
 
@@ -176,12 +171,12 @@ function main()
     initc = CriSTool.initial_concentration(e1)
     timegrid = e1.observables.concentration.time
     warm_mom_call(CANONICAL_θ, nucl_f, gr_f, agg_f, br_f, mom_solver,
-                  initc, timegrid, LOADING, tp)  # compile first
+                  initc, timegrid, tp)  # compile first
     t0 = time()
     alloc_errs = AllocCheck.check_allocs(warm_mom_call,
                                          (Vector{Float64}, typeof(nucl_f), typeof(gr_f),
                                           typeof(agg_f), typeof(br_f), typeof(mom_solver),
-                                          Float64, Vector{Float64}, Float64, typeof(tp)))
+                                          Float64, Vector{Float64}, typeof(tp)))
     t_alloc = time() - t0
 
     # ---- report -------------------------------------------------------------
@@ -231,7 +226,6 @@ function main()
                                    solver = mom_solver,
                                    initial_concentration = CriSTool.initial_concentration(e),
                                    save_idx = e.observables.concentration.time,
-                                   loading = e.loading,
                                    temp_profile = CriSTool.ConstantTemperature(e.temperature))
         end
         return nothing

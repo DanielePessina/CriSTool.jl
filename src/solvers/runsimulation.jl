@@ -4,7 +4,8 @@
                   aggregationfunction, breakagefunction, initialconc;
                   save_idx = 0:5.0:480.0,
                   solver = FiniteVol(; meshsize = 500, lmax = 50e-6),
-                  initial_state = nothing)
+                  initial_state = nothing,
+                  initial_crystals = nothing)
 
 Simulate batch crystallisation for a given set of kinetic models.
 
@@ -21,8 +22,10 @@ Simulate batch crystallisation for a given set of kinetic models.
   solution is saved. The number of time steps is `length(save_idx)`.
 - `solver::AbstractSolver`: numerical solver (finite volume or method of
   moments).
-- `initial_state::AbstractVector`: optional initial number density of
-  length equal to the solver mesh size when using a discretised solver.
+- `initial_state::AbstractVector`: optional complete solver state. The
+  population variables are followed by the named solvent-state values.
+- `initial_crystals::Union{Nothing,NamedTuple}`: optional initial seed
+  characteristics passed to `initial_state_from_characteristics`.
 
 # Returns
 A tuple `(problem, solution)` where `problem` is a
@@ -39,7 +42,8 @@ function runsimulation(parameters::AbstractArray{TPara},
                        diss::AbstractDissolutionFunction = nodissolution(),
                        save_idx = 0:5.0:480.0,
                        solver::AbstractSolver = FiniteVol(; meshsize = 500, lmax = 50e-6),
-                       initial_state::Union{Nothing, AbstractVector} = nothing) where {TPara <: Real}
+                       initial_state::Union{Nothing, AbstractVector} = nothing,
+                       initial_crystals::Union{Nothing, NamedTuple} = nothing) where {TPara <: Real}
     flat_parameters = vec(parameters)
     expected_nparams = nucleationfunction.nparams + growthfunction.nparams +
                        diss.nparams + aggregationfunction.nparams + breakagefunction.nparams
@@ -65,6 +69,7 @@ function runsimulation(parameters::AbstractArray{TPara},
                          solver = solver,
                          initial_concentration = initialconc,
                          initial_state = initial_state,
+                         initial_crystals = initial_crystals,
                          save_idx = save_idx)
 end
 
@@ -98,7 +103,8 @@ function runsimulation(nucleationfunction::AbstractDDNucleationFunction,
                        diss::AbstractDissolutionFunction = nodissolution(),
                        save_idx::S = 0:5.0:480.0,
                        solver::AbstractSolver = FiniteVol(; meshsize = 500, lmax = 50e-6),
-                       initial_state::Union{Nothing, AbstractArray{<:Real}} = nothing) where {S <:
+                       initial_state::Union{Nothing, AbstractArray{<:Real}} = nothing,
+                       initial_crystals::Union{Nothing, NamedTuple} = nothing) where {S <:
                                                                                               AbstractArray{<:Real}}
 
     return runsimulation(Float64[],
@@ -110,7 +116,8 @@ function runsimulation(nucleationfunction::AbstractDDNucleationFunction,
                          diss = diss,
                          save_idx = save_idx,
                          solver = solver,
-                         initial_state = initial_state)
+                         initial_state = initial_state,
+                         initial_crystals = initial_crystals)
 end
 """
     runsimulation(parameters, nucleationfunction::AbstractFPNucleationFunction,
@@ -129,7 +136,8 @@ function runsimulation(parameters::AbstractVector{TPara},
                        diss::AbstractDissolutionFunction = nodissolution(),
                        save_idx = 0:5.0:480.0,
                        solver::AbstractSolver = MoM(),
-                       initial_state::Union{Nothing, AbstractVector} = nothing) where {TPara <: Real}
+                       initial_state::Union{Nothing, AbstractVector} = nothing,
+                       initial_crystals::Union{Nothing, NamedTuple} = nothing) where {TPara <: Real}
     return runsimulation(parameters,
                          nucleationfunction,
                          growthfunction,
@@ -139,12 +147,14 @@ function runsimulation(parameters::AbstractVector{TPara},
                          diss = diss,
                          save_idx = save_idx,
                          solver = solver,
-                         initial_state = initial_state)
+                         initial_state = initial_state,
+                         initial_crystals = initial_crystals)
 end
 
 """
     runsimulation(parameters::ComponentArray; nucl, gr, diss, agg, br, solver,
                   initial_concentration = 18.0, initial_state = nothing,
+                  initial_crystals = nothing,
                   save_idx = 0:5.0:480.0, cry_kwargs...)
 
 Core kwarg-form entry. Expects `parameters` to be a ComponentArray laid out
@@ -164,8 +174,11 @@ function runsimulation(parameters::ComponentArrays.ComponentArray;
                        solver::AbstractSolver = FiniteVol(meshsize = 500, lmax = 50e-6),
                        initial_concentration = 18.0,
                        initial_state::Union{Nothing, AbstractVector} = nothing,
+                       initial_crystals::Union{Nothing, NamedTuple} = nothing,
                        save_idx = 0:5.0:480.0,
                        cry_kwargs...)
+    isnothing(initial_state) || isnothing(initial_crystals) ||
+        throw(ArgumentError("Provide either initial_state or initial_crystals, not both."))
     cry = CrystallisationProblem(; kinetics_nucleationfunction = nucl,
                                  kinetics_growthfunction = gr,
                                  kinetics_dissolutionfunction = diss,
@@ -181,6 +194,11 @@ function runsimulation(parameters::ComponentArrays.ComponentArray;
                                  initial_concentration,
                                  initial_state,
                                  cry_kwargs...)
+
+    if !isnothing(initial_crystals)
+        generated_state = initial_state_from_characteristics(cry, initial_crystals)
+        cry = _problem_with_initial_state(cry, generated_state)
+    end
 
     _validate_crystallisation_problem(cry)
 

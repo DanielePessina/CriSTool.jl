@@ -451,7 +451,7 @@ function _ABCmeasurementplot(abcres, lossfunction::AbstractPELossFunction,
                                          solver = solver,
                                          save_idx = ensembleresults[m].time,
                                          temp_profile = ConstantTemperature(measurements[m].temperature),
-                                         loading = measurements[m].loading))
+                                         initial_crystals = measurements[m].initial_crystals))
                          for m in eachindex(measurements)]
 
     plot_measurements_vs_ensemble(measurements, ensembleresults, optimal_solutions;
@@ -497,7 +497,7 @@ function _ABCmeasurementplot_ps(abcres, lossfunction::AbstractPELossFunction,
                                          solver = solver,
                                          save_idx = ensembleresults[m].time,
                                          temp_profile = ConstantTemperature(measurements[m].temperature),
-                                         loading = measurements[m].loading))
+                                         initial_crystals = measurements[m].initial_crystals))
                          for m in eachindex(measurements)]
 
     plot_ps_measurements_vs_ensemble(measurements, ensembleresults, optimal_solutions;

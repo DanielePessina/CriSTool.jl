@@ -13,12 +13,12 @@ julia --project=benchmark benchmark/run_benchmarks.jl
 The script:
 
 1. Loads the gold fixture (`test/fixtures/real-experimental-dataset.xlsx`,
-   sheet `Unseeded_PE`, loading 0.0 → 7 experiments).
+   sheet `Unseeded_PE` → 7 experiments).
 2. Benchmarks three solvers with Chairmarks (`@be`, `evals=1`, `seconds=5`,
    like the original `Thesis - Benchmarks/benchmarks.jl` script):
    - **MoM** — the oracle: canonical params `[38.0, 0.6, 1.0, 3.0]`
      (nucl_CNT + growth_empirical + noaggregation + nobreakage), per-experiment
-     time grids, `loading`/`temp_profile` from each experiment.
+     time grids and `temp_profile` from each experiment.
    - **FiniteVol(200)** and **WENO(200)** — same 7 experiments and params on a
      fixed common grid `0:30:270`.
 3. Prints per-solver median time, allocation count and bytes (Chairmarks

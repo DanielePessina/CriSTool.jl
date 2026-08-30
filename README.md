@@ -9,7 +9,8 @@ The package provides:
 - population-balance solvers based on the Method of Moments (MoM), the
   Quadrature Method of Moments (QMOM), finite volumes, and WENO;
 - nucleation, growth, aggregation, breakage, and signed dissolution kinetics;
-- measurement loading from Excel workbooks and typed experiment containers;
+- measurement ingestion from Excel workbooks and typed experiment containers;
+- solver-aware initial crystal states from mass, d43, and distribution characteristics;
 - parameter estimation with Metaheuristics.jl and Optimization.jl;
 - likelihood-free ABCDE and Turing NUTS workflows;
 - sensitivity analysis, ensemble simulation, and Makie plotting utilities.

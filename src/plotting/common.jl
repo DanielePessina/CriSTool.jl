@@ -391,10 +391,9 @@ function build_simulation_thesis_table_data(measurements,
                                                           show_uncertainty = show_measurement_uncertainty)
         end
 
-        loading_str = string(round(measurements[m].loading, sigdigits = 3))
         temp_str = string(round(measurements[m].temperature - 273, digits = 2))
         exp_id = hasproperty(measurements[m], :exp_id) ? measurements[m].exp_id : m
-        push!(thesis_rows, [string(exp_id), loading_str, temp_str, pred_text, meas_text])
+        push!(thesis_rows, [string(exp_id), temp_str, pred_text, meas_text])
     end
 
     return (; rows = thesis_rows, size_label = size_label)

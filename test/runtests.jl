@@ -1,6 +1,8 @@
 using CriSTool
 using Test
 using Distributions
+using DataFrames
+using XLSX
 import DifferentiationInterface as DI
 import ForwardDiff
 import FiniteDifferences
@@ -8,6 +10,7 @@ import StaticArrays
 
 @testset "CriSTool.jl" begin
     include("test_structs.jl")
+    include("test_initial_state.jl")
     include("test_saturation.jl")
     include("test_kinetics.jl")
     include("test_dissolution.jl")
