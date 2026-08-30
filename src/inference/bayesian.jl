@@ -501,7 +501,7 @@ function MCMC_Routine(measurements::Vector{<:AbstractExperiment},
                                              breakagefunction;
                                              extrastring = extrastring,
                                              symbols = inferred_symbols)
-    print_start_panel("MCMC (NUTS)", start_content; verbosity = verbosity)
+    print_start_panel("MCMC", start_content; verbosity = verbosity)
 
     model = nuts_model(measurements, prior, nucleationfunction, growthfunction,
                        aggregationfunction, breakagefunction;
@@ -515,7 +515,7 @@ function MCMC_Routine(measurements::Vector{<:AbstractExperiment},
     end
 
     end_content = build_mcmc_end_content(named_chain)
-    print_end_panel("MCMC (NUTS)", end_content; verbosity = verbosity)
+    print_end_panel("MCMC", end_content; verbosity = verbosity)
 
     if outputdir !== nothing
         outdir = String(outputdir)

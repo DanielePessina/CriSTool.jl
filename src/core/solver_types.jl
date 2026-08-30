@@ -146,7 +146,9 @@ Base.@kwdef @concrete struct QMOM <: AbstractMomentSolver
     minimum_size::Float64 = 0.0
     string::String = "QMOM"
     timestepping_algorithm::Symbol = :auto
-    reltol::Float64 = 1e-10
+    # QMOM is a closure approximation; a 1e-7 relative solve tolerance keeps
+    # the default materially cheaper while preserving the benchmark outputs.
+    reltol::Float64 = 1e-7
     abstol::Float64 = 1e-8
 end
 

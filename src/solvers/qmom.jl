@@ -615,6 +615,39 @@ function _qmom_stage_quadrature(moment_values::AbstractVector, solver::QMOM)
     end
 end
 
+"""Allocation-free scalar QMOM3 RHS for the ordinary concentration path.
+
+When growth is size independent and there are no binary sources, the moment
+equations are closed analytically and do not need a quadrature reconstruction.
+This specialized six-moment/seven-state form also keeps the derivative in an
+`SVector`, matching the optimized MoM path.
+"""
+@inline function _qmom_scalar_model_3(problem::CrystallisationProblem,
+                                      state,
+                                      parameters,
+                                      time)
+    scalar_growth_rate = net_growth_rate(problem.kinetics_growthfunction,
+                                          parameters.gr,
+                                          problem.kinetics_dissolutionfunction,
+                                          parameters.diss,
+                                          problem,
+                                          state,
+                                          time)
+    nucleation_rate_value = nucleationrate(problem.kinetics_nucleationfunction,
+                                           parameters.nucl,
+                                           problem,
+                                           state,
+                                           time)
+    concentration_rate = -3 * problem.kv * problem.ρ * scalar_growth_rate * state[3]
+    return SVector(nucleation_rate_value,
+                   scalar_growth_rate * state[1],
+                   2 * scalar_growth_rate * state[2],
+                   3 * scalar_growth_rate * state[3],
+                   4 * scalar_growth_rate * state[4],
+                   5 * scalar_growth_rate * state[5],
+                   concentration_rate)
+end
+
 """Construct the QMOM ODE problem and selected time-stepping algorithm."""
 function crystallisation_odeproblem(problem::CrystallisationProblem{NuclF, GrF, BrF,
                                                                     AggF, QMOM,
@@ -644,73 +677,82 @@ function crystallisation_odeproblem(problem::CrystallisationProblem{NuclF, GrF, 
     initial_moments[1] > problem.solver.empty_population_tolerance &&
         invert_moments(initial_moments, problem.solver)
 
-    function QMOM_model(state, parameters, time)
-        moment_values = @view state[1:n_moments]
-        scalar_growth_rate = net_growth_rate(problem.kinetics_growthfunction,
-                                             parameters.gr,
-                                             problem.kinetics_dissolutionfunction,
-                                             parameters.diss,
-                                             problem,
-                                             state,
-                                             time)
-        nucleation_rate_value = nucleationrate(problem.kinetics_nucleationfunction,
-                                               parameters.nucl,
-                                               problem,
-                                               state,
-                                               time)
-        no_binary_sources = problem.kinetics_aggregationfunction isa noaggregation &&
-                            problem.kinetics_breakagefunction isa nobreakage
-        if no_binary_sources
-            moment_derivatives = _qmom_scalar_growth_moment_source(
-                moment_values,
-                scalar_growth_rate,
-                nucleation_rate_value,
-                moment_order(problem.solver))
-            volume_rate = 3 * scalar_growth_rate * moment_values[3]
-        else
-            reconstructed_rule = _qmom_stage_quadrature(moment_values,
-                                                         problem.solver)
-            moment_derivatives = _qmom_growth_moment_source(
-                reconstructed_rule,
-                problem.kinetics_growthfunction,
-                parameters.gr,
-                problem.kinetics_dissolutionfunction,
-                parameters.diss,
-                problem,
-                state,
-                time,
-                nucleation_rate_value,
-                moment_order(problem.solver))
-            moment_derivatives .+= aggregation_moment_source(
-                problem.kinetics_aggregationfunction,
-                parameters.agg,
-                reconstructed_rule,
-                moment_order(problem.solver);
-                shape_factor = problem.kv)
-            moment_derivatives .+= breakage_moment_source(
-                problem.kinetics_breakagefunction,
-                parameters.br,
-                reconstructed_rule,
-                moment_order(problem.solver))
-            volume_rate = _qmom_volume_rate(reconstructed_rule,
-                                            problem.kinetics_growthfunction,
-                                            parameters.gr,
-                                            problem.kinetics_dissolutionfunction,
-                                            parameters.diss,
-                                            problem,
-                                            state,
-                                            time)
-        end
+    no_binary_sources = problem.kinetics_aggregationfunction isa noaggregation &&
+                        problem.kinetics_breakagefunction isa nobreakage
+    fast_scalar_path = no_binary_sources && n_moments == 6 && n_solvent == 1 &&
+                       propertynames(problem.initial_solvent_state) == (:concentration,) &&
+                       problem.solvent_dynamics isa DefaultSolventDynamics
 
-        solvent_derivatives = _qmom_solvent_derivatives(problem,
-                                                        state,
-                                                        time,
-                                                        scalar_growth_rate,
-                                                        volume_rate)
-        return SVector(ntuple(Val(n_states)) do state_index
-            state_index <= n_moments ? moment_derivatives[state_index] :
-            solvent_derivatives[state_index - n_moments]
-        end)
+    if fast_scalar_path
+        QMOM_model = (state, parameters, time) ->
+            _qmom_scalar_model_3(problem, state, parameters, time)
+    else
+        function QMOM_model(state, parameters, time)
+            moment_values = @view state[1:n_moments]
+            scalar_growth_rate = net_growth_rate(problem.kinetics_growthfunction,
+                                                 parameters.gr,
+                                                 problem.kinetics_dissolutionfunction,
+                                                 parameters.diss,
+                                                 problem,
+                                                 state,
+                                                 time)
+            nucleation_rate_value = nucleationrate(problem.kinetics_nucleationfunction,
+                                                   parameters.nucl,
+                                                   problem,
+                                                   state,
+                                                   time)
+            if no_binary_sources
+                moment_derivatives = _qmom_scalar_growth_moment_source(
+                    moment_values,
+                    scalar_growth_rate,
+                    nucleation_rate_value,
+                    moment_order(problem.solver))
+                volume_rate = 3 * scalar_growth_rate * moment_values[3]
+            else
+                reconstructed_rule = _qmom_stage_quadrature(moment_values,
+                                                             problem.solver)
+                moment_derivatives = _qmom_growth_moment_source(
+                    reconstructed_rule,
+                    problem.kinetics_growthfunction,
+                    parameters.gr,
+                    problem.kinetics_dissolutionfunction,
+                    parameters.diss,
+                    problem,
+                    state,
+                    time,
+                    nucleation_rate_value,
+                    moment_order(problem.solver))
+                moment_derivatives .+= aggregation_moment_source(
+                    problem.kinetics_aggregationfunction,
+                    parameters.agg,
+                    reconstructed_rule,
+                    moment_order(problem.solver);
+                    shape_factor = problem.kv)
+                moment_derivatives .+= breakage_moment_source(
+                    problem.kinetics_breakagefunction,
+                    parameters.br,
+                    reconstructed_rule,
+                    moment_order(problem.solver))
+                volume_rate = _qmom_volume_rate(reconstructed_rule,
+                                                problem.kinetics_growthfunction,
+                                                parameters.gr,
+                                                problem.kinetics_dissolutionfunction,
+                                                parameters.diss,
+                                                problem,
+                                                state,
+                                                time)
+            end
+
+            solvent_derivatives = _qmom_solvent_derivatives(problem,
+                                                            state,
+                                                            time,
+                                                            scalar_growth_rate,
+                                                            volume_rate)
+            return SVector(ntuple(Val(n_states)) do state_index
+                state_index <= n_moments ? moment_derivatives[state_index] :
+                solvent_derivatives[state_index - n_moments]
+            end)
+        end
     end
 
     parameters = ComponentArray(; nucl = problem.parameterset_nucleation,

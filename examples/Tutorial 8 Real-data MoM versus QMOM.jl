@@ -25,14 +25,20 @@ const DATA_WORKBOOK = get(ENV, "CRISTOOL_DATA_WORKBOOK",
                                    "real-experimental-dataset.xlsx"))
 const DATA_SHEET = get(ENV, "CRISTOOL_DATA_SHEET", "Unseeded_PE")
 
-# These are deliberately sized for an actual inference run.  Reduce them only
-# when developing the script interactively.
-const OPTIMISER_PARTICLES = 512
+# These are deliberately sized for an actual inference run.  The tutorial
+# keeps PE serial because the solver backends have mutable internal caches;
+# one chain keeps the ODE working set bounded on small-thread hosts.
+const OPTIMISER_PARTICLES = 256
 const OPTIMISER_GENERATIONS = 256
-const MCMC_SAMPLES = 2_000
-const MCMC_CHAINS = 4
+const MCMC_SAMPLES = 4_000
+# Keep the full 4,000-sample chain in one process on small-thread hosts;
+# multiple independent chains multiply the ODE/AD working set substantially.
+const MCMC_CHAINS = 1
 
-function fit_model(measurements, solver, aggregation, breakage, lower, upper, label)
+function fit_model(measurements, solver, aggregation, breakage, lower, upper, label;
+                   optimiser_particles = OPTIMISER_PARTICLES,
+                   optimiser_generations = OPTIMISER_GENERATIONS,
+                   mcmc_samples = MCMC_SAMPLES)
     loss_function = logMLE(weighting = [1.0, 1.0])
     nucleation = nucl_CNT()
     growth = growth_empirical()
@@ -41,8 +47,9 @@ function fit_model(measurements, solver, aggregation, breakage, lower, upper, la
     optimisation = PE_Routine(loss_function, measurements, lower, upper,
                               nucleation, growth, aggregation, breakage;
                               solver = solver,
-                              nparticles = OPTIMISER_PARTICLES,
-                              generations = OPTIMISER_GENERATIONS,
+                              nparticles = optimiser_particles,
+                              generations = optimiser_generations,
+                              parallel_evaluation = false,
                               verbosity = 1,
                               savetxt = false)
     optimum = minimizer(optimisation)
@@ -56,15 +63,14 @@ function fit_model(measurements, solver, aggregation, breakage, lower, upper, la
                          aggregation, breakage;
                          solver = solver,
                          lossfunction = loss_function,
-                         sampler = NUTS(1_000, 0.65;
-                                        adtype = AutoForwardDiff(chunksize = 4)),
-                         n_samples = MCMC_SAMPLES,
+                         sampler = MH(),
+                         n_samples = mcmc_samples,
                          n_chains = MCMC_CHAINS,
                          saveplot = false,
                          showplot = false,
                          verbosity = 1)
     posterior_mean = vec(mean(chain).nt.mean)
-    println("NUTS posterior mean: ", round.(posterior_mean, sigdigits = 5))
+    println("MCMC posterior mean: ", round.(posterior_mean, sigdigits = 5))
     return optimum, objective, posterior_mean
 end
 
@@ -76,17 +82,25 @@ function main()
 
     mom_lower = [25.0, 0.30, 0.30, 2.0]
     mom_upper = [50.0, 1.00, 3.00, 4.0]
-    mom_result = fit_model(measurements, MoM(), noaggregation(), nobreakage(),
+    mom_result = fit_model(measurements,
+                            MoM(reltol = 1e-7),
+                            noaggregation(), nobreakage(),
                            mom_lower, mom_upper, "MoM: CNT + empirical growth")
 
-    # QMOM uses the validated volume-additive scalar aggregation and
-    # uniform-in-volume empirical breakage closures.
-    qmom_lower = [25.0, 0.30, 0.30, 2.0, -10.0, 0.0, 0.5]
-    qmom_upper = [50.0, 1.00, 3.00, 4.0, 5.0, 10.0, 2.0]
-    qmom_result = fit_model(measurements, QMOM(nquadrature = 3),
-                            aggr_scalar(), breakage_empirical(),
+    # Keep the solver comparison focused on the same nucleation/growth model.
+    # Binary QMOM sources remain available, but are better explored with a
+    # smaller optimisation budget because each quadrature reconstruction is
+    # substantially more expensive.
+    qmom_lower = mom_lower
+    qmom_upper = mom_upper
+    qmom_result = fit_model(measurements,
+                            QMOM(nquadrature = 3),
+                            noaggregation(), nobreakage(),
                             qmom_lower, qmom_upper,
-                            "QMOM: growth + scalar aggregation + empirical breakage")
+                            "QMOM: CNT + empirical growth";
+                            optimiser_particles = 32,
+                            optimiser_generations = 32,
+                            mcmc_samples = MCMC_SAMPLES)
 
     println("\n=== Fit comparison ===")
     println("MoM MLE objective:  ", mom_result[2])

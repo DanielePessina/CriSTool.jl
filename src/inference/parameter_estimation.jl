@@ -27,6 +27,9 @@ population-based metaheuristic search.
   for the optimisation algorithm.
 - `extrastring`, `HPC`, `savetxt`: options for logging and reproducible
   runs.
+- `parallel_evaluation`: evaluate Metaheuristics populations concurrently.
+  Disable this for large, allocation-heavy fits when a serial solve is more
+  robust on the available memory/threads.
 
 # Returns
 The optimisation result from Metaheuristics.jl containing the best-fit
@@ -47,13 +50,14 @@ function PE_Routine(lossfunction::AbstractPELossFunction,
                     savetxt::Bool = true,
                     verbosity::Int64 = 1,
                     HPC::Bool = false,
-                    outputdir::Union{Nothing, AbstractString} = nothing)
+                    outputdir::Union{Nothing, AbstractString} = nothing,
+                    parallel_evaluation::Bool = true)
 
     parameter_bounds = boxconstraints(lb, ub)
 
     MHOptions = Metaheuristics.Options(iterations = generations, store_convergence = false,
                                        verbose = (verbosity > 1 && !HPC),
-                                       parallel_evaluation = true,
+                                       parallel_evaluation = parallel_evaluation,
                                        f_calls_limit = CRISTOOL_MAX_OPTIMISER_CALLS)
 
     start_content = build_pe_start_content(lb, ub, lossfunction, solver,
@@ -320,13 +324,42 @@ function batchLF_procSO(lossfunction::AbstractPELossFunction,
                         parameter_mat::AbstractArray{Float64})
 
     fx = zeros(Float64, size(parameter_mat, 1))
+    thread_setups = _thread_local_loss_setups(setup)
 
-    @floop for (i, θ) in enumerate(eachrow(parameter_mat))
-        fx[i] = loss(lossfunction, setup, θ)
+    # Use Julia's static scheduler for independent ODE solves.  The FLoops
+    # transducer path creates many short-lived task/reduction objects here;
+    # under Julia 1.12 those objects can drive the parallel GC into a native
+    # crash during large optimisation batches.
+    Threads.@threads :static for i in axes(parameter_mat, 1)
+        try
+            fx[i] = loss(lossfunction, thread_setups[Threads.threadid()],
+                         @view parameter_mat[i, :])
+        catch exception
+            @debug "Candidate simulation failed during parameter estimation" exception =
+                (exception, catch_backtrace())
+            fx[i] = CRISTOOL_FAILED_SIMULATION_PENALTY
+        end
     end
 
     return fx
 
+end
+
+function _thread_local_loss_setups(setup::LossSetup)
+    Threads.nthreads() == 1 && return (setup,)
+    return ntuple(_ -> deepcopy(setup), Threads.nthreads())
+end
+
+function batchLF_procSO(lossfunction::AbstractPELossFunction,
+                        setup::LossSetup,
+                        parameters::AbstractVector{<:Real})
+    try
+        return loss(lossfunction, setup, parameters)
+    catch exception
+        @debug "Candidate simulation failed during parameter estimation" exception =
+            (exception, catch_backtrace())
+        return CRISTOOL_FAILED_SIMULATION_PENALTY
+    end
 end
 
 """
@@ -343,19 +376,34 @@ function batchLF_procMO(lossfunction::AbstractPELossFunction,
     Nt = size(parameter_mat, 1)
     objective_names = _loss_observable_names(first(setup.experiments), setup.problem.solver)
     fx = zeros(Nt, length(objective_names))
+    thread_setups = _thread_local_loss_setups(setup)
 
-    @floop for i in 1:Nt
-        for (prep, expt) in zip(setup.prepared, setup.experiments)
-            objectives = _experiment_objectives(lossfunction, expt,
-                                                _solve_prepared(prep, parameter_mat[i, :]))
-            for j in eachindex(objectives)
-                fx[i, j] += objectives[j]
+    Threads.@threads :static for i in 1:Nt
+        try
+            local_setup = thread_setups[Threads.threadid()]
+            for (prep, expt) in zip(local_setup.prepared, local_setup.experiments)
+                objectives = _experiment_objectives(lossfunction, expt,
+                                                    _solve_prepared(prep, parameter_mat[i, :]))
+                for j in eachindex(objectives)
+                    fx[i, j] += objectives[j]
+                end
             end
+        catch exception
+            @debug "Candidate simulation failed during multi-objective parameter estimation" exception =
+                (exception, catch_backtrace())
+            fx[i, :] .= CRISTOOL_FAILED_SIMULATION_PENALTY
         end
     end
 
     return fx
 
+end
+
+function batchLF_procMO(lossfunction::AbstractPELossFunction,
+                        setup::LossSetup,
+                        parameters::AbstractVector{<:Real})
+    return vec(batchLF_procMO(lossfunction, setup,
+                              reshape(parameters, 1, length(parameters))))
 end
 
 """
@@ -478,9 +526,10 @@ function _params_to_p(prob::CrystallisationProblem, params)
     return ComponentArray(params, paramaxis(prob))
 end
 
-_solve_kwargs(solver::MoM) = (reltol = solver.reltol, abstol = solver.abstol)
 _solve_kwargs(solver::AbstractMomentSolver) =
-    (reltol = solver.reltol, abstol = solver.abstol)
+    (reltol = solver.reltol, abstol = solver.abstol, dense = false,
+     maxiters = CRISTOOL_MAX_PREPARED_SOLVER_ITERS,
+     maxtime = CRISTOOL_MAX_PREPARED_SOLVER_SECONDS)
 _solve_kwargs(solver::AbstractDiscretisedSolver) =
     (reltol = solver.reltol, abstol = solver.abstol, dense = false,
      alg_hints = [:stiff], maxiters = CRISTOOL_MAX_SOLVER_ITERS)
@@ -663,8 +712,16 @@ matching the legacy `parameterestimation_lossfunction` semantics.
 function loss(lf::logMLE, setup::LossSetup, params)
     total = 0.0
     for (prep, expt) in zip(setup.prepared, setup.experiments)
-        solution = _solve_prepared(prep, params)
-        total += sum(_experiment_objectives(lf, expt, solution))
+        try
+            solution = _solve_prepared(prep, params)
+            if solution.success
+                total += sum(_experiment_objectives(lf, expt, solution))
+            else
+                total += CRISTOOL_FAILED_SIMULATION_PENALTY
+            end
+        catch
+            total += CRISTOOL_FAILED_SIMULATION_PENALTY
+        end
     end
     return total
 end
@@ -682,19 +739,24 @@ function loss(lf::mae, setup::LossSetup, params)
     error_sums = [zero(eltype(params)) for _ in objective_names]
     error_counts = zeros(Int, length(objective_names))
     for (prep, expt) in zip(setup.prepared, setup.experiments)
-        solution = _solve_prepared(prep, params)
-        for (observable_index, name) in enumerate(_loss_observable_names(expt, solution))
-            measured = getproperty(expt.observables, name)
-            measured_time, measured_mean = _measurement_data(measured)
-            if solution.success
-                simulated_mean = _simulated_at(solution, name, measured_time)
-                error_sums[observable_index] +=
-                    sum(abs.(simulated_mean .- measured_mean))
-                error_counts[observable_index] += length(measured_mean)
-            else
-                error_sums[observable_index] += CRISTOOL_FAILED_SIMULATION_PENALTY
-                error_counts[observable_index] += 1
+        try
+            solution = _solve_prepared(prep, params)
+            for (observable_index, name) in enumerate(_loss_observable_names(expt, solution))
+                measured = getproperty(expt.observables, name)
+                measured_time, measured_mean = _measurement_data(measured)
+                if solution.success
+                    simulated_mean = _simulated_at(solution, name, measured_time)
+                    error_sums[observable_index] +=
+                        sum(abs.(simulated_mean .- measured_mean))
+                    error_counts[observable_index] += length(measured_mean)
+                else
+                    error_sums[observable_index] += CRISTOOL_FAILED_SIMULATION_PENALTY
+                    error_counts[observable_index] += 1
+                end
             end
+        catch
+            error_sums .+= CRISTOOL_FAILED_SIMULATION_PENALTY
+            error_counts .+= 1
         end
     end
     return sum(_observable_weight(lf, i) * error_sums[i] / error_counts[i]
