@@ -1,3 +1,29 @@
+@inline _fv_scalar_net_growth_rate(growthfunction,
+                                   growth_parameters,
+                                   ::nodissolution,
+                                   dissolution_parameters,
+                                   problem,
+                                   state,
+                                   time) = growthrate(growthfunction,
+                                                      growth_parameters,
+                                                      problem,
+                                                      state,
+                                                      time)
+
+@inline _fv_scalar_net_growth_rate(growthfunction,
+                                   growth_parameters,
+                                   dissolutionfunction::AbstractDissolutionFunction,
+                                   dissolution_parameters,
+                                   problem,
+                                   state,
+                                   time) = net_growth_rate(growthfunction,
+                                                           growth_parameters,
+                                                           dissolutionfunction,
+                                                           dissolution_parameters,
+                                                           problem,
+                                                           state,
+                                                           time)
+
 """
     _simulatecrystallisation(CryProblem::CrystallisationProblem{..., FiniteVol, ...}, saveat) -> CrystallisationFVSolution
 
@@ -13,13 +39,15 @@ finite volume method with flux limiters.
 # Returns
 - `CrystallisationFVSolution` containing time, concentration, number density, and size quantiles
 """
+
     function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
                                                                       FiniteVol, NuP, GrP,
-                                                                      BrP, AggP, TP},
+           BrP, AggP, TP, SM, SS, SD, DissF, DissP},
                                    saveat) where {NuclF <:
                                                                              AbstractNucleationFunction,
                                                                              GrF <:
-                                                                             AbstractFPScalarGrowthFunction,
+                                                                             Union{AbstractFPScalarGrowthFunction,
+                                                                                   AbstractFPScalarDissolutionFunction},
                                                                              BrF <:
                                                                              AbstractBreakageFunction,
                                                                              AggF <:
@@ -32,12 +60,17 @@ finite volume method with flux limiters.
                                                                              AbstractVector{<:Real},
                                                                              AggP <:
                                                                              AbstractVector{<:Real},
-                                                                             TP <:
-                                                                             AbstractTemperature}
+                  TP <: AbstractTemperature,
+                  SM <: AbstractSolubilityModel,
+                  SS <: NamedTuple,
+                  SD,
+                  DissF <: AbstractDissolutionFunction,
+                  DissP <: AbstractVector{<:Real}}
 
     # Pre-allocate flux cache using DiffCache for ForwardDiff compatibility
     # DiffCache automatically handles type conversion for dual numbers during AD
     _flux_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 1))
+    _growth_rate_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize))
 
     function HRFV_FLWmodel(dstdt, st, p, t)
         # Get properly-typed cache based on state vector type
@@ -46,30 +79,77 @@ finite volume method with flux limiters.
     numberdensity = crystal_state(CryProblem, st)
 
         cell_centre = CryProblem.solver.cell_centre
+        dissolutionfunction = CryProblem.kinetics_dissolutionfunction
 
-        scalargrowth = growthrate(CryProblem.kinetics_growthfunction, p.gr,
-                                  CryProblem, st, t)
+        if DissF <: AbstractFPLengthDissolutionFunction
+            net_growth_rates = get_tmp(_growth_rate_cache_dc, st)
+            net_growth_rate!(net_growth_rates,
+                                   CryProblem.kinetics_growthfunction,
+                                   p.gr,
+                                   dissolutionfunction,
+                                   p.diss,
+                                   CryProblem,
+                                   st,
+                                   t,
+                                   cell_centre)
+            _fill_signed_first_order_flux!(_flux_cache,
+                                           numberdensity,
+                                           net_growth_rates,
+                                           nucleationrate(CryProblem.kinetics_nucleationfunction,
+                                                          p.nucl,
+                                                          CryProblem,
+                                                          st,
+                                                          t))
+            scalar_growth_rate = net_growth_rates
+        else
+            # Keep the legacy no-dissolution scalar path on the original
+            # growth-rate seam.  Besides avoiding an unnecessary signed-rate
+            # dispatch, this preserves the established FV RHS cost exactly;
+            # the independent contribution is evaluated only when a model was
+            # explicitly supplied in the `diss` slot.
+            scalar_growth_rate = _fv_scalar_net_growth_rate(
+                CryProblem.kinetics_growthfunction,
+                p.gr,
+                dissolutionfunction,
+                p.diss,
+                CryProblem,
+                st,
+                t)
+            if scalar_growth_rate > zero(scalar_growth_rate)
+            # Positive growth fast path: preserve the existing high-resolution
+            # lower-boundary/nucleation convention.
+            _flux_cache[1] = nucleationrate(CryProblem.kinetics_nucleationfunction,
+                                            p.nucl,
+                                            CryProblem, st, t)
+            _flux_cache[2] = scalar_growth_rate * 0.5 * (numberdensity[1] + numberdensity[2])
 
-        # Calculate flux into _flux_cache
-        _flux_cache[1] = nucleationrate(CryProblem.kinetics_nucleationfunction,
-                                        p.nucl,
-                                        CryProblem, st, t) ## Inflow
+            for idx_cell in 3:length(numberdensity)
+                grad_up = numberdensity[idx_cell - 1] - numberdensity[idx_cell - 2]
+                grad_down = numberdensity[idx_cell] - numberdensity[idx_cell - 1]
+                r = grad_up / max(eps(eltype(st)), grad_down)
+                _flux_cache[idx_cell] = scalar_growth_rate * (numberdensity[idx_cell - 1] +
+                                          0.5 *
+                                          fluxlimiter_ospre(r) *
+                                          grad_down)
+            end
 
-        _flux_cache[2] = scalargrowth * 0.5 * (numberdensity[1] + numberdensity[2])
-
-        for idx_cell in 3:length(numberdensity) # Corresponds to _flux_cache[idx_cell]
-            grad_up = numberdensity[idx_cell - 1] - numberdensity[idx_cell - 2]
-            grad_down = numberdensity[idx_cell] - numberdensity[idx_cell - 1]
-            r = grad_up / max(eps(eltype(st)), grad_down)
-            _flux_cache[idx_cell] = scalargrowth * (numberdensity[idx_cell - 1] +
-                                      0.5 *
-                                      fluxlimiter_ospre(r) *
-                                      grad_down)
+            _flux_cache[length(numberdensity) + 1] = scalar_growth_rate *
+                                                       (numberdensity[end] +
+                                                        0.5 * (numberdensity[end] -
+                                                         numberdensity[end - 1]))
+            elseif scalar_growth_rate < zero(scalar_growth_rate)
+            # Negative growth is outflow at L=lmin and zero-inflow at L=lmax.
+            # First-order right upwinding is deliberately used for this new
+            # signed branch until a positivity-preserving limiter is selected.
+            _flux_cache[1] = scalar_growth_rate * numberdensity[1]
+            @inbounds for face in 2:length(numberdensity)
+                _flux_cache[face] = scalar_growth_rate * numberdensity[face]
+            end
+            _flux_cache[end] = zero(scalar_growth_rate)
+            else
+                fill!(_flux_cache, zero(scalar_growth_rate))
+            end
         end
-
-        _flux_cache[length(numberdensity) + 1] = scalargrowth * (numberdensity[end] +
-                                                   0.5 * (numberdensity[end] -
-                                                    numberdensity[end - 1]))
 
         # Calculate dstdt for numberdensity part
         dstdt_nd_view = crystal_state(CryProblem, dstdt)
@@ -94,7 +174,7 @@ finite volume method with flux limiters.
             dstdt_nd_view .+= br_rate
         end
 
-        solvent_rates = _solvent_derivatives(CryProblem, st, t, scalargrowth)
+        solvent_rates = _solvent_derivatives(CryProblem, st, t, scalar_growth_rate)
         _write_solvent_derivatives!(dstdt, CryProblem, solvent_rates)
 
         return nothing
@@ -109,14 +189,34 @@ finite volume method with flux limiters.
     #                       zeros(Float64, CryProblem.solver.meshsize))
     # end
     function CFLcallback(u, integrator, p, t)
-        return 0.99 * CryProblem.solver.cell_dL[1] /
-               growthrate(CryProblem.kinetics_growthfunction,
-                          p.gr, CryProblem, u, t)
+        if DissF <: AbstractFPLengthDissolutionFunction
+            net_growth_rates = get_tmp(_growth_rate_cache_dc, u)
+            net_growth_rate!(net_growth_rates,
+                                   CryProblem.kinetics_growthfunction,
+                                   p.gr,
+                                   CryProblem.kinetics_dissolutionfunction,
+                                   p.diss,
+                                   CryProblem,
+                                   u,
+                                   t,
+                                   CryProblem.solver.cell_centre)
+            return _signed_cfl(CryProblem.solver.cell_dL, net_growth_rates)
+        end
+        scalar_growth_rate = _fv_scalar_net_growth_rate(
+            CryProblem.kinetics_growthfunction,
+            p.gr,
+            CryProblem.kinetics_dissolutionfunction,
+            p.diss,
+            CryProblem,
+            u,
+            t)
+        return _signed_cfl(CryProblem.solver.cell_dL, scalar_growth_rate)
     end
 
     θ = (;
                        nucl = CryProblem.parameterset_nucleation,
                        gr = CryProblem.parameterset_growth,
+                       diss = CryProblem.parameterset_dissolution,
                        br = CryProblem.parameterset_breakage,
                        agg = CryProblem.parameterset_aggregation)
 
@@ -139,7 +239,8 @@ function _wrap_solution(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF
                                     sol) where {NuclF <:
                                                                               AbstractNucleationFunction,
                                                                               GrF <:
-                                                                              AbstractFPScalarGrowthFunction,
+                                                                              Union{AbstractFPScalarGrowthFunction,
+                                                                                    AbstractFPScalarDissolutionFunction},
                                                                               BrF <:
                                                                               AbstractBreakageFunction,
                                                                               AggF <:
@@ -191,7 +292,8 @@ function _simulatecrystallisation(CryProblem::CrystallisationProblem{NuclF, GrF,
                                    saveat)::CrystallisationFVSolution where {NuclF <:
                                                                              AbstractNucleationFunction,
                                                                              GrF <:
-                                                                             AbstractFPScalarGrowthFunction,
+                                                                             Union{AbstractFPScalarGrowthFunction,
+                                                                                   AbstractFPScalarDissolutionFunction},
                                                                              BrF <:
                                                                              AbstractBreakageFunction,
                                                                              AggF <:
@@ -240,7 +342,8 @@ finite volume method with size-dependent growth rates.
                                    saveat) where {NuclF <:
                                                                              AbstractNucleationFunction,
                                                                              GrF <:
-                                                                             AbstractFPLengthGrowthFunction,
+                                                                             Union{AbstractFPLengthGrowthFunction,
+                                                                                   AbstractFPLengthDissolutionFunction},
                                                                              BrF <:
                                                                              AbstractBreakageFunction,
                                                                              AggF <:
@@ -257,6 +360,7 @@ finite volume method with size-dependent growth rates.
                                                                              AbstractTemperature}
     # Pre-allocate flux cache using DiffCache for ForwardDiff compatibility
     _flux_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 1))
+    _growth_rate_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize))
 
     function HRFV_FLWmodel(dstdt, st, p, t)
         # Get properly-typed cache based on state vector type
@@ -266,36 +370,25 @@ finite volume method with size-dependent growth rates.
 
         cell_centre = CryProblem.solver.cell_centre
 
-        lengthbasedgrowth = growthrate(CryProblem.kinetics_growthfunction,
-                                       p.gr, CryProblem, st, t)
+        net_growth_rates = get_tmp(_growth_rate_cache_dc, st)
+        net_growth_rate!(net_growth_rates,
+                               CryProblem.kinetics_growthfunction,
+                               p.gr,
+                               CryProblem.kinetics_dissolutionfunction,
+                               p.diss,
+                               CryProblem,
+                               st,
+                               t,
+                               cell_centre)
 
-        # Calculate flux into _flux_cache
-        _flux_cache[1] = nucleationrate(CryProblem.kinetics_nucleationfunction,
-                                        p.nucl, CryProblem, st, t) ## Inflow
-
-        # Central difference for flux at first interior interface
-        g_interface = 0.5 * (lengthbasedgrowth[1] + lengthbasedgrowth[2])
-        _flux_cache[2] = g_interface * 0.5 * (numberdensity[1] + numberdensity[2])
-
-        # High-resolution scheme for other interior interfaces
-        for idx_cell in 3:length(numberdensity) # Corresponds to _flux_cache[idx_cell]
-            g_interface = 0.5 *
-                          (lengthbasedgrowth[idx_cell - 1] + lengthbasedgrowth[idx_cell])
-            grad_up = numberdensity[idx_cell - 1] - numberdensity[idx_cell - 2]
-            grad_down = numberdensity[idx_cell] - numberdensity[idx_cell - 1]
-            r = grad_up / max(eps(eltype(st)), grad_down)
-            reconstructed_n = numberdensity[idx_cell - 1] +
-                              0.5 *
-                              fluxlimiter_ospre(r) *
-                              grad_down
-            _flux_cache[idx_cell] = g_interface * reconstructed_n
-        end
-
-        # Outflow boundary condition
-        _flux_cache[length(numberdensity) + 1] = lengthbasedgrowth[end] *
-                                                 (numberdensity[end] +
-                                                  0.5 * (numberdensity[end] -
-                                                   numberdensity[end - 1]))
+        _fill_signed_first_order_flux!(_flux_cache,
+                                       numberdensity,
+                                       net_growth_rates,
+                                       nucleationrate(CryProblem.kinetics_nucleationfunction,
+                                                      p.nucl,
+                                                      CryProblem,
+                                                      st,
+                                                      t))
 
         # Calculate dstdt for numberdensity part
         dstdt_nd_view = crystal_state(CryProblem, dstdt)
@@ -320,21 +413,30 @@ finite volume method with size-dependent growth rates.
             dstdt_nd_view .+= br_rate
         end
 
-        solvent_rates = _solvent_derivatives(CryProblem, st, t, lengthbasedgrowth)
+        solvent_rates = _solvent_derivatives(CryProblem, st, t, net_growth_rates)
         _write_solvent_derivatives!(dstdt, CryProblem, solvent_rates)
 
         return nothing
     end
 
     function CFLcallback(u, integrator, p, t)
-        g_vec = growthrate(CryProblem.kinetics_growthfunction, p.gr,
-                           CryProblem, u, t)
-        return 0.99 * CryProblem.solver.cell_dL / maximum(g_vec)
+        net_growth_rates = get_tmp(_growth_rate_cache_dc, u)
+        net_growth_rate!(net_growth_rates,
+                               CryProblem.kinetics_growthfunction,
+                               p.gr,
+                               CryProblem.kinetics_dissolutionfunction,
+                               p.diss,
+                               CryProblem,
+                               u,
+                               t,
+                               CryProblem.solver.cell_centre)
+        return _signed_cfl(CryProblem.solver.cell_dL, net_growth_rates)
     end
 
     θ = (;
                        nucl = CryProblem.parameterset_nucleation,
                        gr = CryProblem.parameterset_growth,
+                       diss = CryProblem.parameterset_dissolution,
                        br = CryProblem.parameterset_breakage,
                        agg = CryProblem.parameterset_aggregation)
 
@@ -355,7 +457,8 @@ function _wrap_solution(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF
                                    sol) where {NuclF <:
                                                                              AbstractNucleationFunction,
                                                                              GrF <:
-                                                                             AbstractFPLengthGrowthFunction,
+                                                                             Union{AbstractFPLengthGrowthFunction,
+                                                                                   AbstractFPLengthDissolutionFunction},
                                                                              BrF <:
                                                                              AbstractBreakageFunction,
                                                                              AggF <:
@@ -398,6 +501,7 @@ function _wrap_solution(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF
                                      moments.mu2,
                                      solvent_solution_state,
                                      vec(sol[:, end]),
+                                     sol.stats,
                                      OrdinaryDiffEq.SciMLBase.successful_retcode(sol.retcode))
 end
 function _simulatecrystallisation(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
@@ -406,7 +510,8 @@ function _simulatecrystallisation(CryProblem::CrystallisationProblem{NuclF, GrF,
                                    saveat)::CrystallisationFVSolution where {NuclF <:
                                                                              AbstractNucleationFunction,
                                                                              GrF <:
-                                                                             AbstractFPLengthGrowthFunction,
+                                                                             Union{AbstractFPLengthGrowthFunction,
+                                                                                   AbstractFPLengthDissolutionFunction},
                                                                              BrF <:
                                                                              AbstractBreakageFunction,
                                                                              AggF <:

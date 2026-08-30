@@ -2,8 +2,8 @@
     prof = CriSTool.ConstantTemperature(290.15)
 
     # Hand-computed polynomial values: 0.3705 + 7.171e-2 x - 1.924e-3 x^2 + 17.97e-5 x^3
-    sm = lysozyme_saturation()
-    @test sm isa PolynomialSaturation
+    sm = lysozyme_solubility()
+    @test sm isa PolynomialSolubility
     for T in (288.15, 290.15, 294.15, 298.15)
         x = T - 273.15
         expected = 0.3705 + 7.171e-2 * x - 1.924e-3 * x^2 + 17.97e-5 * x^3
@@ -11,14 +11,14 @@
     end
 
     # Constant model ignores temperature and time
-    @test saturation_concentration(ConstantSaturation(2.47), prof, 500.0) == 2.47
+    @test saturation_concentration(ConstantSolubility(2.47), prof, 500.0) == 2.47
 
     # Callable model receives (T_K, t)
-    callable = CallableSaturation((T, t) -> 1.0 + 1e-3 * t)
+    callable = CallableSolubility((T, t) -> 1.0 + 1e-3 * t)
     @test saturation_concentration(callable, prof, 30.0) ≈ 1.03
 
     # supersaturation dispatch on the problem
-    problem = CrystallisationProblem(; saturation_model = ConstantSaturation(2.47),
+    problem = CrystallisationProblem(; saturation_model = ConstantSolubility(2.47),
                                      solver = MoM())
     @test supersaturation(problem, [0.0, 0.0, 0.0, 0.0, 0.0, 4.94], 0.0) ≈ 2.0
 end

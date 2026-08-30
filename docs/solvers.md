@@ -1,14 +1,24 @@
 # Solvers
 
-CriSTool provides three solvers for the population balance equation:
+CriSTool provides four solvers for the population balance equation:
 
 - `MoM()` (Method of Moments): fast, returns moments only.
+- `QMOM(nquadrature=...)`: evolves raw moments and reconstructs a Gaussian
+  quadrature for moment-source closures.
 - `FiniteVol(meshsize=..., lmax=...)`: full PSD, moderate cost.
 - `WENO(meshsize=..., lmax=...)`: higher-order finite volume, more accurate for sharp fronts.
+
+The full runnable examples are [Tutorial 6](<../examples/Tutorial 6 Dissolution.jl>)
+for signed dissolution across the three solver families and
+[Tutorial 7](<../examples/Tutorial 7 QMOM.jl>) for moment inversion and
+quadrature output.
 
 ## Outputs by solver
 
 - **MoM**: `concentration`, `d10`, `d32`, `d43`, `mu2`.
+- **QMOM**: `concentration`, raw `moments`, reconstructed
+  `quadrature_nodes`/`quadrature_weights`, and the moment-derived
+  `d10`, `d32`, `d43`, `mu2` metrics. A three-node QMOM evolves `M₀:M₅`.
 - **FiniteVol/WENO**: `concentration`, `numberdensity`, `voldensity`,
   volume-density quantiles `d10q`, `d50q`, `d90q`, **and** the
   moment-derived sizes `d10`, `d32`, `d43`, `mu2` (computed once at
@@ -17,13 +27,44 @@ CriSTool provides three solvers for the population balance equation:
 ## Mesh storage
 
 For `FiniteVol` and `WENO`, the mesh data (`cell_face`, `cell_centre`,
-`cell_dL`, `meshsize`, `lmin`, `lmax`) lives as fields on the solver
-struct alongside the algorithm config. See
-[`docs/adr/0001-mesh-stays-on-discretised-solver.md`](../../docs/adr/0001-mesh-stays-on-discretised-solver.md)
-for the rationale (no separate `Mesh` type until a second mesh shape
-lands). The single rate function that needed mesh access from outside
-the solver, `growth_dissolution_length`, takes an explicit
-`mesh::AbstractVector` argument rather than reaching into the solver.
+`cell_dL`, `meshsize`, `lmin`, and `lmax`) is stored on the solver. The
+length-dependent dissolution rate accepts an explicit mesh argument when it
+is evaluated outside the solver; use the solver-owned scratch buffer with
+`growthrate!` in custom discretised code.
+
+## QMOM and signed rates
+
+QMOM stores raw physical moments in the state and uses `coordinate_scale` only
+while inverting those moments. The public quadrature values are crystal
+lengths in metres and particle-number weights. Use `quadrature(solution, i)`
+to reconstruct the active rule at saved time index `i`.
+
+QMOM currently accepts scalar growth or dissolution kinetics and the supported
+volume-additive aggregation and uniform-in-volume breakage closures. The
+length-dependent `growth_dissolution_length` model is intentionally a
+FiniteVol/WENO model and is rejected by QMOM with an `ArgumentError`.
+
+## Example: QMOM
+
+```julia
+using CriSTool
+
+params = [38.0, 0.7, 1.0, 3.0]
+problem, solution = runsimulation(
+    params;
+    nucl = nucl_CNT(),
+    gr = growth_empirical(),
+    agg = noaggregation(),
+    br = nobreakage(),
+    solver = QMOM(nquadrature = 3),
+    initial_concentration = 18.0,
+    save_idx = 0.0:60.0:480.0,
+)
+
+@show solution.moments[:, end]
+@show quadrature(solution, length(solution.time)).nodes
+@show solution.d43[end]
+```
 
 ## Example: choosing solvers
 

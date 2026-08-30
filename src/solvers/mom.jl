@@ -13,22 +13,69 @@ without aggregation or breakage.
 # Returns
 - `CrystallisationMoMSolution` containing time, concentration, and moment-derived sizes
 """
-@inline function _mom_rhs(CryProblem, scalargrowth, B, solvent_rates, u::SVector{6})
-    return SVector(B, scalargrowth * u[1], 2 * scalargrowth * u[2],
-                   3 * scalargrowth * u[3], 4 * scalargrowth * u[4],
+@inline function _mom_rhs(CryProblem, scalar_growth_rate, B, solvent_rates, u::SVector{6})
+    return SVector(B, scalar_growth_rate * u[1], 2 * scalar_growth_rate * u[2],
+                   3 * scalar_growth_rate * u[3], 4 * scalar_growth_rate * u[4],
                    solvent_rates[1])
 end
 
-@inline function _mom_rhs(CryProblem, scalargrowth, B, solvent_rates,
+@inline function _mom_rhs(CryProblem, scalar_growth_rate, B, solvent_rates,
                           u::SVector{N}) where {N}
     n_states = N
     n_solvent = length(solvent_rates)
     n_population = n_states - n_solvent
     return SVector(ntuple(Val(n_states)) do k
         k <= n_population ?
-            (k == 1 ? B : (k - 1) * scalargrowth * u[k - 1]) :
+            (k == 1 ? B : (k - 1) * scalar_growth_rate * u[k - 1]) :
             solvent_rates[k - n_population]
     end)
+end
+
+function _mom_extinction_callback(CryProblem::CrystallisationProblem)
+    # Extinction handling is only meaningful for explicitly signed scalar
+    # kinetics.  Keeping the callback off the ordinary positive-growth path
+    # avoids changing its event/counter behavior.
+    dissolution_enabled = !(CryProblem.kinetics_dissolutionfunction isa nodissolution) ||
+                          (CryProblem.kinetics_growthfunction isa
+                           AbstractFPScalarDissolutionFunction)
+    dissolution_enabled ||
+        return nothing
+
+    n_mom = CryProblem.solver.nmoments
+    n_mom < 3 && return nothing
+
+    n_solvent = length(propertynames(CryProblem.initial_solvent_state))
+    n_population = n_mom + 1
+    n_states = n_population + n_solvent
+    solvent_names = propertynames(CryProblem.initial_solvent_state)
+    concentration_position = findfirst(==(Symbol(:concentration)), solvent_names)
+    concentration_position === nothing &&
+        throw(ArgumentError("initial_solvent_state must define :concentration."))
+    concentration_index = n_population + concentration_position
+    solid_volume_threshold = _validate_solid_volume_threshold(CryProblem)
+
+    condition = (state, time, integrator) ->
+        CryProblem.ρ * CryProblem.kv * state[4] - solid_volume_threshold
+    affect! = integrator -> nothing
+    affect_neg! = integrator -> begin
+        state = integrator.u
+        # Transfer the actual residual solid mass represented by µ3.  Do not
+        # clamp it: an unexpected negative crossing must remain observable as
+        # a failed physical state rather than being silently hidden.
+        residual_mass = CryProblem.ρ * CryProblem.kv * state[4]
+        integrator.u = SVector(ntuple(Val(n_states)) do index
+            if index <= n_population
+                zero(state[index])
+            elseif index == concentration_index
+                state[index] + residual_mass
+            else
+                state[index]
+            end
+        end)
+        nothing
+    end
+    return ContinuousCallback(condition, affect!, affect_neg!;
+                              save_positions = (false, true))
 end
 
 function _solvent_derivatives(problem::CrystallisationProblem, state, time, growth)
@@ -43,7 +90,7 @@ function _solvent_derivatives(problem::CrystallisationProblem, state, time, grow
     if rates isa NamedTuple
         return ntuple(index -> begin
             name = names[index]
-            hasproperty(rates, name) ? getproperty(rates, name) : zero(growth)
+            hasproperty(rates, name) ? getproperty(rates, name) : _rate_zero(growth)
         end, Val(length(names)))
     end
     length(rates) == length(names) ||
@@ -94,29 +141,65 @@ function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, Gr
                                                    AbstractTemperature}
     n_mom = CryProblem.solver.nmoments
     @assert n_mom >= 2 "MoM solver requires nmoments >= 2 (concentration closure uses µ2)"
+    if (CryProblem.kinetics_growthfunction isa AbstractFPLengthGrowthFunction ||
+        CryProblem.kinetics_growthfunction isa AbstractFPLengthDissolutionFunction ||
+        CryProblem.kinetics_dissolutionfunction isa AbstractFPLengthDissolutionFunction)
+        throw(ArgumentError("Length-dependent kinetics are not supported by MoM; " *
+                            "use FiniteVol or WENO."))
+    end
+    if ((!(CryProblem.kinetics_dissolutionfunction isa nodissolution) &&
+         CryProblem.kinetics_dissolutionfunction isa AbstractFPScalarDissolutionFunction) ||
+        CryProblem.kinetics_growthfunction isa AbstractFPScalarDissolutionFunction) && n_mom < 3
+        throw(ArgumentError("MoM dissolution requires nmoments >= 3 to track crystal volume."))
+    end
 
     function MoM_model(u, p, t)
-        scalargrowth = growthrate(CryProblem.kinetics_growthfunction, p.gr,
-                                  CryProblem, u, t)
+        scalar_growth_rate = net_growth_rate(CryProblem.kinetics_growthfunction,
+                                             p.gr,
+                                             CryProblem.kinetics_dissolutionfunction,
+                                             p.diss,
+                                             CryProblem,
+                                             u,
+                                             t)
         B = nucleationrate(CryProblem.kinetics_nucleationfunction, p.nucl,
                            CryProblem, u, t)
-        solvent_rates = _solvent_derivatives(CryProblem, u, t, scalargrowth)
-        return _mom_rhs(CryProblem, scalargrowth, B, solvent_rates, u)
+        solvent_rates = _solvent_derivatives(CryProblem, u, t, scalar_growth_rate)
+        return _mom_rhs(CryProblem, scalar_growth_rate, B, solvent_rates, u)
     end
 
     θ = ComponentArray(;
                        nucl = CryProblem.parameterset_nucleation,
-                       gr = CryProblem.parameterset_growth)
+                       gr = CryProblem.parameterset_growth,
+                       diss = CryProblem.parameterset_dissolution)
 
     ET = eltype(CryProblem.parameterset_nucleation)
     n_mom = CryProblem.solver.nmoments
     u0_vec = ET.(_get_initial_state(CryProblem))
     n_states = n_mom + 1 + length(propertynames(CryProblem.initial_solvent_state))
     u0_typed = SVector(ntuple(k -> u0_vec[k], Val(n_states)))
-    ODEprob = ODEProblem(MoM_model, u0_typed, (saveat[1], saveat[end]), θ)
+    ODEprob = ODEProblem(MoM_model,
+                         u0_typed,
+                         (saveat[1], saveat[end]),
+                         θ;
+                         callback = _mom_extinction_callback(CryProblem))
 
     tstep_solver = _resolve_timestepping_algorithm(CryProblem.solver, :tsit5)
     return (ODEprob, tstep_solver)
+end
+
+function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, GrF, nobreakage,
+                                                                       noaggregation, MoM,
+                                                                       NuP, GrP, BrP, AggP,
+                                                                       TP},
+                                    saveat) where {NuclF <: AbstractNucleationFunction,
+                                                   GrF <: AbstractFPLengthGrowthFunction,
+                                                   NuP <: AbstractVector{<:Real},
+                                                   GrP <: AbstractVector{<:Real},
+                                                   BrP <: AbstractVector{<:Real},
+                                                   AggP <: AbstractVector{<:Real},
+                                                   TP <: AbstractTemperature}
+    throw(ArgumentError("$(GrF) is length-dependent and is not supported by MoM; " *
+                        "use FiniteVol or WENO."))
 end
 
 function _wrap_solution(CryProblem::CrystallisationProblem{NuclF, GrF, nobreakage,

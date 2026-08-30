@@ -20,7 +20,7 @@ Run ensemble simulations by sampling parameters from a distribution.
 - `growthfunction::AbstractGrowthFunction`: Growth kinetic model
 - `aggregationfunction::AbstractAggregationFunction`: Aggregation kinetic model
 - `breakagefunction::AbstractBreakageFunction`: Breakage kinetic model
-- `solver::AbstractSolver`: Numerical solver (MoM, FiniteVol, or WENO)
+- `solver::AbstractSolver`: Numerical solver (MoM, QMOM, FiniteVol, or WENO)
 - `n_samples::Int64=2048`: Number of parameter samples to draw
 - `HPC::Bool=false`: Whether running on HPC (disables progress bar)
 - `verbosity::Int64=1`: Verbosity level (0 = silent)
@@ -30,7 +30,8 @@ Run ensemble simulations by sampling parameters from a distribution.
 - `use_measurement_time::Bool=true`: When true, infer time grid from measurements
 
 # Returns
-- `Vector{Union{EnsembleFVSolution, EnsembleMoMSolution}}`: Ensemble solutions for each measurement
+- `Vector{Union{EnsembleFVSolution, EnsembleMoMSolution}}`: Ensemble solutions for each measurement;
+  QMOM uses the moment-based `EnsembleMoMSolution` representation.
 """
 function run_ensemble(distribution::D,
                       measurements,
@@ -79,7 +80,7 @@ Run ensemble simulations from pre-sampled parameter matrix.
 - `growthfunction::AbstractGrowthFunction`: Growth kinetic model
 - `aggregationfunction::AbstractAggregationFunction`: Aggregation kinetic model
 - `breakagefunction::AbstractBreakageFunction`: Breakage kinetic model
-- `solver::AbstractSolver`: Numerical solver (MoM, FiniteVol, or WENO)
+- `solver::AbstractSolver`: Numerical solver (MoM, QMOM, FiniteVol, or WENO)
 - `HPC::Bool=false`: Whether running on HPC (disables progress bar)
 - `verbosity::Int64=1`: Verbosity level (0 = silent)
 - `time_idx::T=0:5:305`: Time points for saving results
@@ -88,7 +89,8 @@ Run ensemble simulations from pre-sampled parameter matrix.
 - `use_measurement_time::Bool=true`: When true, infer time grid from measurements
 
 # Returns
-- `Vector{Union{EnsembleFVSolution, EnsembleMoMSolution}}`: Ensemble solutions for each measurement
+- `Vector{Union{EnsembleFVSolution, EnsembleMoMSolution}}`: Ensemble solutions for each measurement;
+  QMOM uses the moment-based `EnsembleMoMSolution` representation.
 """
 function run_ensemble(samples::Matrix{Float64},
                       measurements,
@@ -151,9 +153,9 @@ function _create_ensemble_solution(time, concentration, d43, d32, d50q,
 end
 
 """
-    _create_ensemble_solution(time, concentration, d43, d32, _, solver::MoM) -> EnsembleMoMSolution
+    _create_ensemble_solution(time, concentration, d43, d32, _, solver::AbstractMomentSolver) -> EnsembleMoMSolution
 
-Create ensemble solution object for Method of Moments solver.
+Create ensemble solution object for a moment solver (MoM or QMOM).
 
 # Arguments
 - `time`: Time vector
@@ -161,12 +163,13 @@ Create ensemble solution object for Method of Moments solver.
 - `d43`: D43 matrix (n_time, n_samples)
 - `d32`: D32 matrix (n_time, n_samples)
 - `_`: Unused (d50q not available for MoM)
-- `solver::MoM`: Method of Moments solver instance
+- `solver::AbstractMomentSolver`: Moment solver instance
 
 # Returns
 - `EnsembleMoMSolution`: Solution with mean, std, and 95% confidence bounds
 """
-function _create_ensemble_solution(time, concentration, d43, d32, _, solver::MoM)
+function _create_ensemble_solution(time, concentration, d43, d32, _,
+                                   solver::AbstractMomentSolver)
     concentration_mean = vec(mean(concentration, dims = 2))
     concentration_std = vec(std(concentration, dims = 2))
     concentration_lb = concentration_mean - CRISTOOL_CONFIDENCE_Z95 * concentration_std
@@ -288,19 +291,19 @@ end
 """
     _d50q_buffer(solver, n_timepoints, n_samples)
 
-d50q accumulation buffer: `nothing` for the MoM solver (no quantiles),
+d50q accumulation buffer: `nothing` for moment solvers (no quantiles),
 a `Matrix{Float64}` for discretised solvers (solver-type dispatch).
 """
-_d50q_buffer(solver::MoM, n_timepoints, n_samples) = nothing
+_d50q_buffer(solver::AbstractMomentSolver, n_timepoints, n_samples) = nothing
 _d50q_buffer(solver::AbstractDiscretisedSolver, n_timepoints, n_samples) =
     Matrix{Float64}(undef, n_timepoints, n_samples)
 
 """
     _store_d50q!(buffer, sol, i, solver)
 
-Store the i-th d50q trajectory into the buffer (no-op for MoM).
+Store the i-th d50q trajectory into the buffer (no-op for moment solvers).
 """
-_store_d50q!(buffer, sol, i, solver::MoM) = nothing
+_store_d50q!(buffer, sol, i, solver::AbstractMomentSolver) = nothing
 _store_d50q!(buffer::AbstractMatrix, sol, i, solver::AbstractDiscretisedSolver) =
     (buffer[:, i] = sol.d50q; nothing)
 
@@ -502,10 +505,11 @@ end
 """
     _simulateensembleuncertainty(samples::Matrix{Float64}, c_array::Vector{Float64},
                                  nucleationfunction, growthfunction, aggregationfunction,
-                                 breakagefunction, solver::MoM;
+                                 breakagefunction, solver::AbstractMomentSolver;
                                  time_idx::T=0:5:305, HPC::Bool=false) -> Vector{EnsembleMoMSolution} where {T<:AbstractArray}
 
-Simulate ensemble uncertainty for multiple initial concentrations using MoM solver.
+Simulate ensemble uncertainty for multiple initial concentrations using a
+moment solver (MoM or QMOM).
 
 # Arguments
 - `samples::Matrix{Float64}`: Parameter matrix of size (n_params, n_samples)
@@ -514,7 +518,7 @@ Simulate ensemble uncertainty for multiple initial concentrations using MoM solv
 - `growthfunction::AbstractGrowthFunction`: Growth kinetic model
 - `aggregationfunction::AbstractAggregationFunction`: Aggregation kinetic model
 - `breakagefunction::AbstractBreakageFunction`: Breakage kinetic model
-- `solver::MoM`: Method of Moments solver
+- `solver::AbstractMomentSolver`: Moment solver
 - `time_idx::T=0:5:305`: Time points for saving results
 - `HPC::Bool=false`: Whether running on HPC
 
@@ -526,7 +530,7 @@ function _simulateensembleuncertainty(samples::Matrix{Float64}, c_array::Vector{
                                       growthfunction::AbstractGrowthFunction,
                                       aggregationfunction::AbstractAggregationFunction,
                                       breakagefunction::AbstractBreakageFunction,
-                                      solver::MoM; time_idx::T = 0:5:305,
+                                      solver::AbstractMomentSolver; time_idx::T = 0:5:305,
                                       HPC::Bool = false) where {T <: AbstractArray}
 
     n_samples = size(samples, 2)
@@ -707,10 +711,11 @@ end
 """
     _simulateensembleuncertainty(samples::Matrix{Float64}, conc::Real,
                                  nucleationfunction, growthfunction, aggregationfunction,
-                                 breakagefunction, solver::MoM;
+                                 breakagefunction, solver::AbstractMomentSolver;
                                  time_idx::T=0:5:305, HPC::Bool=false) -> EnsembleMoMSolution where {T<:AbstractArray}
 
-Simulate ensemble uncertainty for a single initial concentration using MoM solver.
+Simulate ensemble uncertainty for a single initial concentration using a
+moment solver (MoM or QMOM).
 
 # Arguments
 - `samples::Matrix{Float64}`: Parameter matrix of size (n_params, n_samples)
@@ -719,7 +724,7 @@ Simulate ensemble uncertainty for a single initial concentration using MoM solve
 - `growthfunction::AbstractGrowthFunction`: Growth kinetic model
 - `aggregationfunction::AbstractAggregationFunction`: Aggregation kinetic model
 - `breakagefunction::AbstractBreakageFunction`: Breakage kinetic model
-- `solver::MoM`: Method of Moments solver
+- `solver::AbstractMomentSolver`: Moment solver
 - `time_idx::T=0:5:305`: Time points for saving results
 - `HPC::Bool=false`: Whether running on HPC
 
@@ -731,7 +736,7 @@ function _simulateensembleuncertainty(samples::Matrix{Float64}, conc::Real,
                                       growthfunction::AbstractGrowthFunction,
                                       aggregationfunction::AbstractAggregationFunction,
                                       breakagefunction::AbstractBreakageFunction,
-                                      solver::MoM; time_idx::T = 0:5:305,
+                                      solver::AbstractMomentSolver; time_idx::T = 0:5:305,
                                       HPC::Bool = false) where {T <: AbstractArray}
 
     n_samples = size(samples, 2)

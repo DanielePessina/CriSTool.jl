@@ -1,8 +1,8 @@
-# Saturation models and supersaturation
+# Solubility models and supersaturation
 
 The solubility of the solute in the solvent is a property of the *system*,
 not the solver. `CrystallisationProblem` therefore carries a
-`saturation_model::AbstractSaturationModel` field instead of a hardcoded
+`saturation_model::AbstractSolubilityModel` field instead of a hardcoded
 solubility curve. All ODE right-hand sides compute the supersaturation through
 a single dispatch point:
 
@@ -14,21 +14,24 @@ supersaturation(prob, state, t) = state[end] / saturation_concentration(prob, t)
 
 ```julia
 # Constant solubility (kg/m³)
-prob = CrystallisationProblem(; saturation_model = ConstantSaturation(2.47))
+prob = CrystallisationProblem(; saturation_model = ConstantSolubility(2.47))
 
 # Polynomial in (T_K - Tref): coeffs[1] + coeffs[2] x + coeffs[3] x² + ...
 # (default Tref = 273.15, i.e. temperature in Celsius), Horner evaluation
 prob = CrystallisationProblem(;
-    saturation_model = PolynomialSaturation(coeffs = [1.0, -0.1, 0.002]))
+    saturation_model = PolynomialSolubility(coeffs = [1.0, -0.1, 0.002]))
 
 # Arbitrary function f(T_K, t)
 prob = CrystallisationProblem(;
-    saturation_model = CallableSaturation((T, t) -> 1.0 + 0.01 * (T - 273.15)))
+    saturation_model = CallableSolubility((T, t) -> 1.0 + 0.01 * (T - 273.15)))
 ```
 
-`lysozyme_saturation()` returns the legacy lysozyme solubility polynomial
+`lysozyme_solubility()` returns the legacy lysozyme solubility polynomial
 (`0.3705 + 7.171e-2 ΔT - 1.924e-3 ΔT² + 17.97e-5 ΔT³`, ΔT in °C) and is the
 default, so existing models and the gold fixture reproduce identically.
+
+For a reversible seeded run using a constant saturation value, see
+[Tutorial 6 — Dissolution](<../examples/Tutorial 6 Dissolution.jl>).
 
 ## Querying
 

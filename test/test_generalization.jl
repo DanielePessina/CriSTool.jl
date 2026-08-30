@@ -9,11 +9,11 @@ import CriSTool: paramaxis, growthrate
 import CriSTool: observable_values
 
 # Custom saturation: solubility that scales linearly with temperature
-struct TestSaturation <: CriSTool.AbstractSaturationModel
+struct TestSolubility <: CriSTool.AbstractSolubilityModel
     slope::Float64
     intercept::Float64
 end
-function CriSTool.saturation_concentration(sm::TestSaturation, temp_profile, t)
+function CriSTool.saturation_concentration(sm::TestSolubility, temp_profile, t)
     return sm.slope * (CriSTool.temperature(temp_profile, t) - 273.15) + sm.intercept
 end
 
@@ -46,7 +46,7 @@ end
 
 @testset "Bring your own system (non-lysozyme)" begin
     # Saturation: hand-computed value at 293.15 K (20 °C)
-    sat = TestSaturation(0.25, 2.0)
+    sat = TestSolubility(0.25, 2.0)
     prof = CriSTool.ConstantTemperature(293.15)
     @test saturation_concentration(sat, prof, 0.0) == 0.25 * 20.0 + 2.0
 

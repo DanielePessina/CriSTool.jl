@@ -148,22 +148,26 @@ function main()
     global mom_solver = CriSTool.MoM()
     fv200  = CriSTool.FiniteVol(meshsize = 200)
     weno200 = CriSTool.WENO(meshsize = 200)
+    qmom3 = CriSTool.QMOM(nquadrature = 3)
 
     # warm-up / compile (excluded from timing)
     run_mom_fit(exps, CANONICAL_θ)
     run_fixed_grid_fit(exps, CANONICAL_θ, fv200)
     run_fixed_grid_fit(exps, CANONICAL_θ, weno200)
+    run_fixed_grid_fit(exps, CANONICAL_θ, qmom3)
 
     # ---- benchmarks (Chairmarks, evals=1 like the original script) --------
     println("Benchmarking (Chairmarks, evals=1, seconds=$SECONDS)...")
     bm_mom   = @be run_mom_fit($exps, $CANONICAL_θ) evals=1 seconds=SECONDS
     bm_fv    = @be run_fixed_grid_fit($exps, $CANONICAL_θ, $fv200) evals=1 seconds=SECONDS
     bm_weno  = @be run_fixed_grid_fit($exps, $CANONICAL_θ, $weno200) evals=1 seconds=SECONDS
+    bm_qmom  = @be run_fixed_grid_fit($exps, $CANONICAL_θ, $qmom3) evals=1 seconds=SECONDS
 
     # ---- ODE stats (single warm run each) ---------------------------------
     stats_mom  = fit_ode_stats(exps, CANONICAL_θ, mom_solver)
     stats_fv   = fit_ode_stats(exps, CANONICAL_θ, fv200; grid = FIXED_GRID)
     stats_weno = fit_ode_stats(exps, CANONICAL_θ, weno200; grid = FIXED_GRID)
+    stats_qmom = fit_ode_stats(exps, CANONICAL_θ, qmom3; grid = FIXED_GRID)
 
     # ---- AllocCheck on a representative warm MoM call ----------------------
     println("Running AllocCheck on the warm MoM call (flat-vector path)...")
@@ -188,7 +192,8 @@ function main()
     println(io, "-"^100)
     for (name, bm, st) in (("MoM", bm_mom, stats_mom),
                            ("FV200", bm_fv, stats_fv),
-                           ("WENO200", bm_weno, stats_weno))
+                           ("WENO200", bm_weno, stats_weno),
+                           ("QMOM3", bm_qmom, stats_qmom))
         ms = median_sample(bm)
         @printf(io, "%-6s %10.3f ms %12d %14.1f %8d %8d %8d %8d %10d %10s\n",
                 name, ms.time * 1e3, ms.allocs, ms.bytes,

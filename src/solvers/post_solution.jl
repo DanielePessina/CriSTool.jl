@@ -74,7 +74,7 @@ function quantilecalculator(cellcentre::AbstractVector{T}, voldensity::AbstractV
                             quantile::W) where {T <: Real, K <: Real, W <: Real}
     # Early return if voldensity is approximately zero
     if all(x -> abs(x) < eps(K), voldensity)
-        return cellcentre[1] * CRISTOOL_MICROMETER_SCALE
+        return zero(K)
     end
 
     step_size = cellcentre[2] - cellcentre[1]
@@ -86,7 +86,7 @@ function quantilecalculator(cellcentre::AbstractVector{T}, voldensity::AbstractV
     end
 
     if total ≈ 0
-        return cellcentre[1] * CRISTOOL_MICROMETER_SCALE
+        return zero(K)
     end
 
     # Find quantile by iterating through cumulative sum
@@ -98,7 +98,7 @@ function quantilecalculator(cellcentre::AbstractVector{T}, voldensity::AbstractV
 
         if cumulative >= target
             if i == 1
-                return cellcentre[1] * CRISTOOL_MICROMETER_SCALE
+                return zero(K)
             else
                 # Linear interpolation
                 x0, x1 = prev_cumulative / total, cumulative / total

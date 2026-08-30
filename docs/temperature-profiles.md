@@ -1,11 +1,11 @@
 # Temperature profiles
 
 Crystallisation problems store temperature as a `temp_profile`, which is
-an `AbstractTemperature`. The default is a constant 25 C.
+an `AbstractTemperature`. The default is a constant 20 °C (`293.15` K).
 
 You can pass a custom profile to `runsimulation` via `temp_profile`. For
 side-by-side runs across constant, ramp, and arbitrary `T(t)` profiles,
-see `../examples/Tutorial 1 Running Simulations.jl`.
+see [Tutorial 1 — Running Simulations](<../examples/Tutorial 1 Running Simulations.jl>).
 
 ## Built-in profiles
 

@@ -290,7 +290,8 @@ Compare measured particle sizes against ensemble simulation trajectories.
 - `measurements::Vector{<:AbstractExperiment}`: experimental datasets, one per
   batch.
 - `ensemble_results::Vector{<:Union{EnsembleFVSolution, EnsembleMoMSolution}}`:
-  ensemble simulation outputs containing particle-size trajectories.
+  ensemble simulation outputs containing particle-size trajectories. QMOM
+  supplies its d43 trajectory through the moment-based representation.
 - `optimal_solutions`: vector of `(problem, solution)` tuples for the nominal
   parameter set.
 - `showtext`: toggle annotation textbox.
@@ -533,8 +534,8 @@ and overlays the simulated trajectories on the experimental data.
 - `growthfunction::AbstractGrowthFunction`: growth kinetic model.
 - `aggregationfunction::AbstractAggregationFunction`: aggregation kinetic model.
 - `breakagefunction::AbstractBreakageFunction`: breakage kinetic model.
-- `solver::AbstractSolver`: population balance solver ([`MoM`](@ref), [`FiniteVol`](@ref),
-  or [`WENO`](@ref)).
+- `solver::AbstractSolver`: population balance solver ([`MoM`](@ref), [`QMOM`](@ref),
+  [`FiniteVol`](@ref), or [`WENO`](@ref)).
 
 # Keyword Arguments
 - `title::String`: figure title (default `""`).

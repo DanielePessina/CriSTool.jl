@@ -61,6 +61,8 @@ const CRISTOOL_MOMENT_RATIO_FLOOR = 1e-6
 const CRISTOOL_MOMENT_DENSITY_FLOOR = 1e-8
 const CRISTOOL_MICROMETER_SCALE = 1e6
 const CRISTOOL_WENO_EPSILON = 1e-6
+const CRISTOOL_DISSOLUTION_EQUILIBRIUM_TOLERANCE = 1e-3
+const CRISTOOL_DISSOLUTION_LREF = 1e-6
 const CRISTOOL_CONFIDENCE_Z95 = 1.96
 const CRISTOOL_FAILED_SIMULATION_PENALTY = 1e6
 const CRISTOOL_MAX_SOLVER_ITERS = 1e8
@@ -71,15 +73,25 @@ const CRISTOOL_MISSING_SIZE_VALUE = 10.0
 const CRISTOOL_MISSING_SIZE_VARIANCE = 100.0
 
 ## Export stuff
-export CrystallisationFVSolution, CrystallisationMoMSolution, CrystallisationProblem
+export CrystallisationFVSolution, CrystallisationMoMSolution,
+       CrystallisationQMOMSolution, EnsembleFVSolution, EnsembleMoMSolution,
+       CrystallisationProblem
 export Observable, CrystallisationExperiment, AbstractExperiment,
        initial_concentration
-export AbstractSaturationModel, ConstantSaturation, PolynomialSaturation, CallableSaturation,
-       lysozyme_saturation, saturation_concentration, supersaturation
+export AbstractSolubilityModel, ConstantSolubility, PolynomialSolubility, CallableSolubility,
+       AbstractSaturationModel, ConstantSaturation, PolynomialSaturation, CallableSaturation,
+       lysozyme_solubility, lysozyme_saturation, saturation_concentration, supersaturation
 export AbstractSolution, state_vars, size_metrics, observable_values, solvent_state,
        default_solvent_dynamics
 export AbstractNucleationFunction, AbstractGrowthFunction, nucl_CNT,
-       nucl_empirical, nucl_CNTnoS, growth_empirical, growth_BpS, growth_BCF
+       nucl_empirical, nucl_CNTnoS, AbstractDissolutionFunction,
+       AbstractFPScalarDissolutionFunction, AbstractFPLengthDissolutionFunction,
+       AbstractScalarDissolutionFunction, AbstractLengthDissolutionFunction,
+       nodissolution, nondissolution, dissolutionrate, dissolutionrate!, dissolutionrate_at_length,
+       net_growth_rate, net_growth_rate!, net_growth_rate_at_length,
+       growth_empirical, growth_BpS, growth_BCF,
+       growth_dissolution, growth_dissolution_length, growth_energy_dissolution,
+       growthrate!, growthrate_at_length, net_growthrate
 export AbstractAggregationFunction, AbstractBreakageFunction, nobreakage,
        breakage_empirical, breakage_uniform, noaggregation,
        aggr_scalar, aggr_linear, aggr_linearvol, aggr_avg
@@ -90,8 +102,12 @@ export AbstractPELossFunction, AbstractVarianceModel, MeasuredVariance, Relative
 export load_measurements, load_experiments, load_experiments_legacy, load_experiments_legacy_single,
        bootstrap_repeatmeasurements, balance_variances, repeatmeasurementbalancer,
        psd_measurementbalancer, bootstrap_measurements
-export AbstractSolver, FiniteVol, MoM, WENO
+export AbstractSolver, AbstractMomentSolver, FiniteVol, MoM, QMOM, WENO,
+       QMOMQuadrature, QMOMInversionDiagnostics, invert_moments,
+       moment_order, moment_count, nmoments, quadrature, qmom_quadrature,
+       aggregation_moment_source, breakage_moment_source
 export run_abc, AbstractABCSampler, ABCDESampler, ABCDETurnerSampler
+export run_ensemble, run_ensemble_fixed
 export PE_Routine, PE_Routine_Optimisation, ABCDE_Routine, ABCDE_Turner_Routine,
        plot_posterior_pairplot, plot_measurements_vs_ensemble
 export ChainPairPlots, ChainStatsPlots, ChainMeasurementPlots
@@ -128,6 +144,7 @@ include("physics/aggregation_breakage_rates.jl")
 
 # Numerical solver implementations and public simulation wrappers.
 include("solvers/solver_helpers.jl")
+include("solvers/qmom.jl")
 include("solvers/mom.jl")
 include("solvers/finite_volume.jl")
 include("solvers/weno.jl")

@@ -63,6 +63,56 @@ Abstract supertype for first-principles length-based growth functions.
 abstract type AbstractFPLengthGrowthFunction <: AbstractFPGrowthFunction end
 
 """
+    AbstractDissolutionFunction
+
+Abstract supertype for dissolution laws.  Dissolution is represented in a
+separate parameter block from growth, but it remains below
+`AbstractGrowthFunction` for source compatibility with the original
+`growth_dissolution` names and runners.
+"""
+abstract type AbstractDissolutionFunction <: AbstractGrowthFunction end
+
+"""
+    AbstractFPScalarDissolutionFunction <: AbstractDissolutionFunction
+
+Abstract family for first-principles scalar dissolution laws.  The returned
+dissolution rate is negative below saturation and zero in the equilibrium
+deadband.
+"""
+abstract type AbstractFPScalarDissolutionFunction <: AbstractDissolutionFunction end
+
+"""
+    AbstractFPLengthDissolutionFunction <: AbstractDissolutionFunction
+
+Abstract family for first-principles length-dependent dissolution laws.  These
+laws return a dissolution rate for each mesh length and are currently
+supported by the discretised solvers only.
+"""
+abstract type AbstractFPLengthDissolutionFunction <: AbstractDissolutionFunction end
+
+# Short aliases make the scalar/length distinction easy to discover while the
+# FP-prefixed names remain consistent with the existing growth hierarchy.
+const AbstractScalarDissolutionFunction = AbstractFPScalarDissolutionFunction
+const AbstractLengthDissolutionFunction = AbstractFPLengthDissolutionFunction
+
+"""
+    nodissolution <: AbstractFPScalarDissolutionFunction
+
+Zero-rate dissolution model.  It deliberately has no parameters, so adding
+the independent dissolution block does not change the length of legacy
+parameter vectors or the behaviour of existing simulations.
+"""
+Base.@kwdef @concrete struct nodissolution <: AbstractFPScalarDissolutionFunction
+    nparams::Int64 = 0
+    string::String = "No Dissolution"
+    symbols::Vector{Symbol} = Symbol[]
+end
+
+paramaxis(::nodissolution) = ComponentArrays.Axis()
+
+const nondissolution = nodissolution
+
+"""
     AbstractAggregationFunction
 
 Abstract supertype for all crystal aggregation functions.
@@ -547,7 +597,7 @@ Fields:
 - `string::String`: String identifier ("GrDissolution")
 - `symbols::Vector{Symbol}`: Parameter symbols [:Ad, :Ead, :d]
 """
-Base.@kwdef @concrete struct growth_dissolution <: AbstractFPScalarGrowthFunction
+Base.@kwdef @concrete struct growth_dissolution <: AbstractFPScalarDissolutionFunction
     nparams::Int64 = 3
     string::String = "GrDissolution"
     symbols::Vector{Symbol} = [:Ad, :Ead, :d]
@@ -564,25 +614,26 @@ Fields:
 - `string::String`: String identifier ("GrDissolution_length")
 - `symbols::Vector{Symbol}`: Parameter symbols [:Ad, :Ead, :d, :κ, :p]
 """
-Base.@kwdef @concrete struct growth_dissolution_length <: AbstractFPLengthGrowthFunction
+Base.@kwdef @concrete struct growth_dissolution_length <: AbstractFPLengthDissolutionFunction
     nparams::Int64 = 5
     string::String = "GrDissolution_length"
     symbols::Vector{Symbol} = [:Ad, :Ead, :d, :κ, :p]
+    Lref::Float64 = CRISTOOL_DISSOLUTION_LREF
 end
 
 paramaxis(::growth_dissolution_length) = ComponentArrays.Axis(Ad = 1, Ead = 2, d = 3, κ = 4, p = 5)
 
 """
-    growth_dissolution <: AbstractFPScalarGrowthFunction
+    growth_energy_dissolution <: AbstractFPScalarGrowthFunction
 
-Empirical crystal growth rate function with activation energy.
+Combined scalar growth and dissolution rate function.
 
 Fields:
-- `nparams::Int64`: Number of parameters (2)
-- `string::String`: String identifier ("GrDissolution")
-- `symbols::Vector{Symbol}`: Parameter symbols [:Ad, :Ead, :d]
+- `nparams::Int64`: Number of parameters (5)
+- `string::String`: String identifier ("GrEnergyDissolution")
+- `symbols::Vector{Symbol}`: Parameter symbols [:Ag, :g, :Ad, :Ead, :d]
 """
-Base.@kwdef @concrete struct growth_energy_dissolution <: AbstractFPScalarGrowthFunction
+Base.@kwdef @concrete struct growth_energy_dissolution <: AbstractFPScalarDissolutionFunction
     nparams::Int64 = 5
     string::String = "GrEnergyDissolution"
     symbols::Vector{Symbol} = [:Ag, :g, :Ad, :Ead, :d]

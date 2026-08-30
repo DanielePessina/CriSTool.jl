@@ -35,6 +35,11 @@ ens1 = ensemble[1]
 @show ens1.d43_mean[end]
 ```
 
+Set `solver = QMOM(nquadrature = 3)` to run the same ensemble workflow with a
+moment/quadrature solver. QMOM ensemble results use the moment-based
+`EnsembleMoMSolution` container, so `d43`, `d32`, and concentration summaries
+are available in the same fields. QMOM does not produce a `d50q` quantile.
+
 ## Example: ensemble from an explicit sample matrix
 
 ```julia
@@ -56,5 +61,5 @@ ensemble = run_ensemble(samples, measurements,
 
 - The ensemble uses each measurement's `temperature` and `loading` fields
   when running simulations.
-- The returned objects are `EnsembleMoMSolution` or `EnsembleFVSolution`
-  depending on the solver.
+- The returned objects are `EnsembleMoMSolution` for MoM/QMOM and
+  `EnsembleFVSolution` for FiniteVol/WENO.

@@ -95,6 +95,34 @@ end
 end
 
 """
+    CrystallisationQMOMSolution
+
+Stores a raw-moment QMOM trajectory together with the Gaussian quadrature
+reconstructed at every saved time.  `moments` has shape `(2N, nt)`, while the
+quadrature arrays have shape `(N, nt)`; inactive nodes in an empty or
+rank-deficient rule are represented by zero node/weight entries.  The
+corresponding active rank and inversion status are available in
+`inversion_diagnostics` and through `quadrature(solution, index)`.
+"""
+struct CrystallisationQMOMSolution{Tt, TCo, TM, TN, TW, TD1, TD3, TD4, TMu2,
+                                   TL, TF, TS, TDiag} <: AbstractSolution
+    time::Tt
+    concentration::TCo
+    moments::TM
+    quadrature_nodes::TN
+    quadrature_weights::TW
+    d10::TD1
+    d32::TD3
+    d43::TD4
+    mu2::TMu2
+    solvent_state::TL
+    final_state::TF
+    ode_stats::TS
+    success::Bool
+    inversion_diagnostics::TDiag
+end
+
+"""
     EnsembleFVSolution{T<:AbstractFloat} <: AbstractSolution
 
     Stores ensemble simulation results and statistics from finite volume solver.

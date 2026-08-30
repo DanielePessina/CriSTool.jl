@@ -177,7 +177,7 @@
         problem = CrystallisationProblem(;
             kinetics_nucleationfunction = nucl_CNT(),
             kinetics_growthfunction = CriSTool.growth_dissolution(),
-            saturation_model = ConstantSaturation(10.0),
+            saturation_model = ConstantSolubility(10.0),
             initial_concentration = 5.0,
             solver = solver)
         state = [zeros(solver.meshsize); 5.0]
@@ -191,12 +191,12 @@
         length_problem = CrystallisationProblem(;
             kinetics_nucleationfunction = nucl_CNT(),
             kinetics_growthfunction = CriSTool.growth_dissolution_length(),
-            saturation_model = ConstantSaturation(10.0),
+            saturation_model = ConstantSolubility(10.0),
             initial_concentration = 5.0,
             solver = solver)
-        expected_length = -(2.0e-9) .* exp(-(4.0e3) ./ (8.314 .* temperature)) .*
-                          (10.0 - 5.0)^1.5 .*
-                          (1.0 .+ 1.0 * 1.0e3 .* solver.cell_centre) .^ 2.0
+        expected_length = -(2.0e-9) .* exp(-(4.0e3) ./ (problem.R .* temperature)) .*
+                          (1.0 - 0.5)^1.5 .*
+                          (1.0 .+ solver.cell_centre ./ 1.0e-6) .^ 2.0
         @test CriSTool.growthrate(CriSTool.growth_dissolution_length(),
                                   [2.0, 4.0, 1.5, 1.0, 2.0],
                                   length_problem, state, 0.0) ≈ expected_length
@@ -215,7 +215,7 @@
         under_problem = CrystallisationProblem(;
             kinetics_nucleationfunction = nucl_CNT(),
             kinetics_growthfunction = combined,
-            saturation_model = ConstantSaturation(10.0),
+            saturation_model = ConstantSolubility(10.0),
             initial_concentration = 5.0,
             solver = MoM())
         under_state = [zeros(5); 5.0]

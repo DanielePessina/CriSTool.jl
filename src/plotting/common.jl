@@ -230,7 +230,8 @@ Compare experimental measurements against ensemble simulation results.
   one per batch.
 - `ensemble_results::Vector{<:Union{EnsembleFVSolution, EnsembleMoMSolution}}`:
   simulation outputs where each `concentration` field is a matrix of size
-  `(ensemble_size, n_tsteps)`.
+  `(ensemble_size, n_tsteps)`. QMOM uses the moment-based
+  `EnsembleMoMSolution` representation.
 - `optimal_solutions`: vector of `(problem, solution)` tuples for the
   mean or optimal parameter set.
 - Keyword arguments control plot appearance and may include the kinetic
@@ -376,7 +377,7 @@ function build_simulation_thesis_table_data(measurements,
         pred_text = "NA"
         meas_text = "NA"
 
-        if sol isa CrystallisationMoMSolution
+        if sol isa CrystallisationMoMSolution || sol isa CrystallisationQMOMSolution
             size_label = "d43"
             pred_text = string(round(get_characteristic_size(sol), sigdigits = 3))
                             meas_text = format_plot_measurement_value(measurements[m].observables.d43.mean,

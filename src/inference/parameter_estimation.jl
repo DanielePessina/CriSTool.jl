@@ -472,6 +472,8 @@ function _params_to_p(prob::CrystallisationProblem, params)
 end
 
 _solve_kwargs(solver::MoM) = (reltol = solver.reltol, abstol = solver.abstol)
+_solve_kwargs(solver::AbstractMomentSolver) =
+    (reltol = solver.reltol, abstol = solver.abstol)
 _solve_kwargs(solver::AbstractDiscretisedSolver) =
     (reltol = solver.reltol, abstol = solver.abstol, dense = false,
      alg_hints = [:stiff], maxiters = CRISTOOL_MAX_SOLVER_ITERS)
@@ -512,7 +514,9 @@ solver-appropriate one; all other observable fields participate in the loss.
 function _loss_observable_names(expt::CrystallisationExperiment,
                                 solver::AbstractSolver)
     names = Symbol[]
-    active_size = solver isa MoM ? :d43 : :d50q
+    # Both MoM and QMOM expose moment-derived d43.  Only discretised solvers
+    # expose the volume-distribution quantile d50q.
+    active_size = solver isa AbstractMomentSolver ? :d43 : :d50q
     has_d43 = hasproperty(expt.observables, :d43)
     has_d50q = hasproperty(expt.observables, :d50q)
     for name in propertynames(expt.observables)
@@ -527,6 +531,8 @@ end
 
 _loss_observable_names(expt::CrystallisationExperiment,
                        ::CrystallisationMoMSolution) = _loss_observable_names(expt, MoM())
+_loss_observable_names(expt::CrystallisationExperiment,
+                       ::CrystallisationQMOMSolution) = _loss_observable_names(expt, QMOM())
 _loss_observable_names(expt::CrystallisationExperiment,
                        ::CrystallisationFVSolution) =
     _loss_observable_names(expt, FiniteVol(meshsize = 2))

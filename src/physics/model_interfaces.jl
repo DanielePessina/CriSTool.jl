@@ -19,10 +19,32 @@ fluxlimiter_ospre(r) = (1.5 * (r^2) + r) / (r^2 + r + 1)
 # Generates `θ1, θ2, ...` from `model.nparams`. Specific paramaxis methods
 # (e.g. `paramaxis(::nucl_CNT) = ComponentArrays.Axis(Aj=1, γ=2)`) take precedence.
 function paramaxis(model::Union{AbstractNucleationFunction, AbstractGrowthFunction,
+                                AbstractDissolutionFunction,
                                 AbstractAggregationFunction, AbstractBreakageFunction})
     n = model.nparams
     n == 0 && return ComponentArrays.Axis()
     return ComponentArrays.Axis(NamedTuple{Tuple(Symbol("θ", i) for i in 1:n)}(Tuple(1:n)))
+end
+
+"""Composite parameter axis for nucleation, growth, and dissolution models.
+
+The independent dissolution block is inserted between growth and the binary
+population-balance terms.  This is the canonical axis for new callers.
+"""
+function paramaxis(nucl::AbstractNucleationFunction,
+                   gr::AbstractGrowthFunction,
+                   diss::AbstractDissolutionFunction,
+                   agg::AbstractAggregationFunction,
+                   br::AbstractBreakageFunction)
+    nν, ng, nd, na, nb = nucl.nparams, gr.nparams, diss.nparams,
+                         agg.nparams, br.nparams
+    return ComponentArrays.Axis(
+        nucl = ViewAxis(1:nν, paramaxis(nucl)),
+        gr = ViewAxis((nν + 1):(nν + ng), paramaxis(gr)),
+        diss = ViewAxis((nν + ng + 1):(nν + ng + nd), paramaxis(diss)),
+        agg = ViewAxis((nν + ng + nd + 1):(nν + ng + nd + na), paramaxis(agg)),
+        br = ViewAxis((nν + ng + nd + na + 1):(nν + ng + nd + na + nb),
+                      paramaxis(br)))
 end
 
 # Composite axis spanning the four kinetic families. Slot order (nucl, gr,
@@ -40,6 +62,7 @@ end
 
 paramaxis(prob::CrystallisationProblem) = paramaxis(prob.kinetics_nucleationfunction,
                                                     prob.kinetics_growthfunction,
+                                                    prob.kinetics_dissolutionfunction,
                                                     prob.kinetics_aggregationfunction,
                                                     prob.kinetics_breakagefunction)
 

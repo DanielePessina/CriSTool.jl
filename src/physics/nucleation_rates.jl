@@ -307,3 +307,5 @@ solver: volume-density quadrature for discretised solvers, `max(0, nd[4])`
 _secondary_third_moment(solver::AbstractDiscretisedSolver, prob, nd) =
     momentcalculator(solver.cell_centre, nd, 3)
 _secondary_third_moment(solver::MoM, prob, nd) = max(0, nd[4])  # µ3 stored at index 4
+_secondary_third_moment(solver::QMOM, prob, nd) =
+    max(zero(eltype(nd)), nd[4])  # µ3 stored at index 4

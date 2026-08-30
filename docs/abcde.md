@@ -22,7 +22,7 @@ All forms require:
 - a prior distribution (use `Distributions.product_distribution`)
 
 For a worked end-to-end example see
-`../examples/Tutorial 5 ABCDE and MCMC.jl`, which runs
+[Tutorial 5 — ABCDE and MCMC](<../examples/Tutorial 5 ABCDE and MCMC.jl>), which runs
 `run_abc` and Turing NUTS on the same synthetic dataset and compares
 posteriors side-by-side.
 
@@ -31,6 +31,7 @@ posteriors side-by-side.
 ```julia
 using CriSTool
 using Distributions
+using Metaheuristics
 
 path = joinpath(pkgdir(CriSTool), "examples", "fake-experimental-dataset.xlsx")
 measurements = load_experiments(path, "Unseeded_PE", 0.0)

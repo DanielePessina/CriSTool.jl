@@ -110,3 +110,88 @@ import FiniteDifferences
         assert_gradient_agreement("FV final concentration", g_fd, g_fwd; rtol = 0.15)
     end
 end
+
+@testset "Independent dissolution and QMOM gradient verification" begin
+    fd_backend = DI.AutoFiniteDifferences(FiniteDifferences.central_fdm(5, 1))
+    fwd_backend = DI.AutoForwardDiff()
+
+    fixed_no_nucleation = CriSTool.nucl_empirical_fixed(Aj = -Inf, j = 1.0)
+    dissolution_model = growth_dissolution()
+    growth_model = growth_empirical()
+    shared_problem = CrystallisationProblem(;
+        kinetics_nucleationfunction = fixed_no_nucleation,
+        kinetics_growthfunction = growth_model,
+        kinetics_dissolutionfunction = dissolution_model,
+        parameterset_nucleation = Float64[],
+        parameterset_growth = [1.0, 2.0],
+        parameterset_dissolution = [2.0, 0.0, 1.5],
+        saturation_model = ConstantSolubility(10.0),
+        initial_concentration = 5.0,
+        solver = MoM())
+    seeded_moments = [1.0e12, 1.0e6, 1.0, 1.0e-6, 1.0e-12]
+    qmom_seeded_moments = vcat(seeded_moments, 1.0e-18)
+    seeded_state = vcat(seeded_moments, 5.0)
+
+    @testset "Independent net rate" begin
+        rate_objective(parameters) = net_growth_rate(
+            growth_model, parameters[1:2], dissolution_model, parameters[3:5],
+            shared_problem, seeded_state, 0.0)
+        fd_gradient = DI.gradient(rate_objective, fd_backend,
+                                  [1.0, 2.0, 2.0, 0.0, 1.5])
+        fwd_gradient = DI.gradient(rate_objective, fwd_backend,
+                                   [1.0, 2.0, 2.0, 0.0, 1.5])
+        @test fwd_gradient ≈ fd_gradient rtol = 1e-4 atol = 1e-10
+    end
+
+    @testset "MoM independent dissolution simulation" begin
+        simulation_objective(parameters) = begin
+            _, solution = runsimulation(parameters;
+                nucl = fixed_no_nucleation,
+                gr = growth_model,
+                diss = dissolution_model,
+                agg = noaggregation(),
+                br = nobreakage(),
+                solver = MoM(),
+                initial_concentration = 5.0,
+                initial_state = seeded_state,
+                saturation_model = ConstantSolubility(10.0),
+                save_idx = [0.0, 0.1])
+            solution.concentration[end]
+        end
+        fd_gradient = DI.gradient(simulation_objective, fd_backend,
+                                  [1.0, 2.0, 2.0, 0.0, 1.5])
+        fwd_gradient = DI.gradient(simulation_objective, fwd_backend,
+                                   [1.0, 2.0, 2.0, 0.0, 1.5])
+        @test fwd_gradient ≈ fd_gradient rtol = 0.15 atol = 1e-9
+    end
+
+    @testset "QMOM simulation and binary source gradients" begin
+        qmom_objective(parameters) = begin
+            _, solution = runsimulation(parameters;
+                nucl = fixed_no_nucleation,
+                gr = growth_model,
+                diss = nodissolution(),
+                agg = noaggregation(),
+                br = nobreakage(),
+                solver = QMOM(nquadrature = 3),
+                initial_concentration = 20.0,
+                initial_state = [1.0e12, 1.0e6, 1.0, 1.0e-6, 1.0e-12, 1.0e-18, 20.0],
+                saturation_model = ConstantSolubility(10.0),
+                save_idx = [0.0, 0.1])
+            solution.d43[end]
+        end
+        qmom_fd = DI.gradient(qmom_objective, fd_backend, [1.0, 2.0])
+        qmom_fwd = DI.gradient(qmom_objective, fwd_backend, [1.0, 2.0])
+        @test qmom_fwd ≈ qmom_fd rtol = 0.2 atol = 1e-9
+
+        rule = QMOMQuadrature([0.5e-6, 1.5e-6], [2.0, 3.0])
+        aggregation_objective(parameters) = aggregation_moment_source(
+            aggr_scalar(), parameters, rule, 3)[1]
+        breakage_objective(parameters) = breakage_moment_source(
+            breakage_empirical(), parameters, rule, 3)[1]
+        @test DI.gradient(aggregation_objective, fwd_backend, [0.0]) ≈
+              DI.gradient(aggregation_objective, fd_backend, [0.0]) rtol = 1e-4
+        @test DI.gradient(breakage_objective, fwd_backend, [0.0, 1.0]) ≈
+              DI.gradient(breakage_objective, fd_backend, [0.0, 1.0]) rtol = 1e-4
+    end
+end

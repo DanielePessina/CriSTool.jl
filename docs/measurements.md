@@ -7,6 +7,9 @@ like d43) plus the run conditions (temperature, loading, `exp_id`). There is
 no `Dict{Symbol,Any}` anywhere; adding a new observable (pH, mass, PSD, ...)
 means adding a field to the `NamedTuple`, not a new container type.
 
+Tutorial 2 shows the complete path from the bundled workbook to parameter
+estimation: [Tutorial 2 — Parameter Estimation](<../examples/Tutorial 2 Parameter Estimation.jl>).
+
 ## Loading from the standard sheet format
 
 ```julia
@@ -42,6 +45,22 @@ loading levels into one `Vector{CrystallisationExperiment}`.
 The particle size (last timepoint) is stored twice as `d43` and `d50q`
 scalar observables: the MoM-based losses compare against `d43`, the
 discretised-solver losses against `d50q` (matching the legacy behaviour).
+
+The standard long-format sheet has one row per experiment, time, and
+observable sample. The columns used by the default loader are:
+
+| Column | Meaning |
+| --- | --- |
+| `Exp_ID` | experiment identifier used for grouping |
+| `Time` | observation time |
+| `Concentration` | measured concentration |
+| `Concentration_var` | concentration variance, when replicate measurements exist |
+| `PS`, `PS_var` | optional particle-size measurement and variance |
+| `Temperature` | experiment temperature |
+| `Loading` | experiment loading |
+
+Use `load_measurements` when the workbook uses different column names, has
+additional observables, or needs a temperature transform.
 
 ## Balancing repeated measurements and PSD variance
 

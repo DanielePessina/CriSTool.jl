@@ -4,6 +4,11 @@ This guide focuses on optimization-based parameter estimation using
 `PE_Routine_Optimisation`. It wraps Optimization.jl algorithms and uses
 the same loss functions and measurement data as `PE_Routine`.
 
+The adapter packages used in the example (`OptimizationBBO`,
+`OptimizationOptimJL`, and `Optim`) must be available in the environment where
+the example is run. They are not part of the package's core dependencies; add
+the adapters you need to your project before using this workflow.
+
 ## Example: compare BBO vs LBFGS
 
 ```julia

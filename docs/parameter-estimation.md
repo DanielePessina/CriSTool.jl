@@ -8,14 +8,15 @@ CriSTool provides two main entry points:
 Both routines minimize a loss function built from experimental measurements.
 
 For a fully worked end-to-end example (PE + ABCDE + NUTS) see
-`../examples/Tutorial 2 Parameter Estimation.jl` and
-`../examples/Tutorial 5 ABCDE and MCMC.jl`.
+[Tutorial 2 — Parameter Estimation](<../examples/Tutorial 2 Parameter Estimation.jl>)
+and [Tutorial 5 — ABCDE and MCMC](<../examples/Tutorial 5 ABCDE and MCMC.jl>).
 
 ## Basic workflow
 
 ```julia
 using CriSTool
 using Distributions
+using Metaheuristics
 
 # Load experiments (synthetic dataset shipped with the package)
 path = joinpath(pkgdir(CriSTool), "examples", "fake-experimental-dataset.xlsx")
@@ -40,6 +41,11 @@ optres = PE_Routine(lossfn, experiments, PE_lb, PE_ub,
 optimal_params = minimizer(optres)
 ```
 
+`PE_Routine` uses the supplied lower and upper bounds in the same flat
+parameter order used by `runsimulation`. The returned result is a
+Metaheuristics.jl optimisation result; `minimizer(optres)` extracts the
+parameter vector used by later ABCDE and MCMC steps.
+
 ## Loss functions
 
 Built-in loss function types (see `src/core/loss_types.jl` and
@@ -61,7 +67,9 @@ L = loss(lossfn, problem, optimal_params, experiments)
 
 Weights follow the observable field order. The default `[1.0, 1.0]` retains
 the concentration/size convention; additional observables receive weight 1.0
-unless explicit weights are supplied. `logMLE` uses measured variances by
+unless explicit weights are supplied. Moment solvers (`MoM` and `QMOM`) use
+the measured `d43` observable; discretised solvers use `d50q` when both legacy
+size fields are present. `logMLE` uses measured variances by
 default, with `RelativeVariance(percent)` available for relative-error data:
 
 ```julia

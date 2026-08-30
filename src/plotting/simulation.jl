@@ -162,7 +162,7 @@ function plot_measurements_vs_simulation(measurements::Vector{<:AbstractExperime
             exp_id = hasproperty(measurements[m], :exp_id) ? measurements[m].exp_id : m
 
             # Collect size information for text box
-            if sol isa CrystallisationMoMSolution
+            if sol isa CrystallisationMoMSolution || sol isa CrystallisationQMOMSolution
                 pred_str = "Exp. $(exp_id) T = $(round(measurements[m].temperature-273,digits = 2) )°C, L = $(round(measurements[m].loading, sigdigits=2)) g/L, Pred. d43 = $(round(predicted_size, sigdigits=2)) μm"
                                     meas_str = "Meas. = $(round(measurements[m].observables.d43.mean, sigdigits=3)) ± $(round(sqrt(measurements[m].observables.d43.variance), sigdigits=2)) μm"
                     combined_str = "$pred_str, $meas_str"
@@ -351,7 +351,7 @@ function plot_ps_measurements_vs_simulation(measurements::Vector{<:AbstractExper
                                 kwargs...)
 
             function get_characteristic_size(sol)
-                if sol isa CrystallisationMoMSolution
+                if sol isa CrystallisationMoMSolution || sol isa CrystallisationQMOMSolution
                     return sol.d43
                 elseif sol isa CrystallisationFVSolution
                     return sol.d50q
@@ -388,7 +388,7 @@ function plot_ps_measurements_vs_simulation(measurements::Vector{<:AbstractExper
             exp_id = hasproperty(measurements[m], :exp_id) ? measurements[m].exp_id : m
 
             # Collect size information for text box
-            if sol isa CrystallisationMoMSolution
+            if sol isa CrystallisationMoMSolution || sol isa CrystallisationQMOMSolution
                 pred_str = "Exp. $(exp_id) T = $(round(measurements[m].temperature-273,digits = 2) )°C, L = $(round(measurements[m].loading, sigdigits=2)) g/L, Pred. d43 = $(round(predicted_size, sigdigits=2)) μm"
                                     meas_str = "Meas. = $(round(measurements[m].observables.d43.mean, sigdigits=3)) ± $(round(sqrt(measurements[m].observables.d43.variance), sigdigits=2)) μm"
                     combined_str = "$pred_str, $meas_str"

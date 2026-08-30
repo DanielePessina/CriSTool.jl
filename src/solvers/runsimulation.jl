@@ -36,32 +36,50 @@ function runsimulation(parameters::AbstractArray{TPara},
                        aggregationfunction::AbstractAggregationFunction,
                        breakagefunction::AbstractBreakageFunction,
                        initialconc::Float64;
+                       diss::AbstractDissolutionFunction = nodissolution(),
                        save_idx = 0:5.0:480.0,
                        solver::AbstractSolver = FiniteVol(; meshsize = 500, lmax = 50e-6),
                        initial_state::Union{Nothing, AbstractVector} = nothing) where {TPara <: Real}
     flat_parameters = vec(parameters)
     expected_nparams = nucleationfunction.nparams + growthfunction.nparams +
-                       aggregationfunction.nparams + breakagefunction.nparams
+                       diss.nparams + aggregationfunction.nparams + breakagefunction.nparams
     if length(flat_parameters) != expected_nparams
         throw(ArgumentError("Parameter vector has length $(length(flat_parameters)) but expected $expected_nparams " *
                             "(nucleation: $(nucleationfunction.nparams), growth: $(growthfunction.nparams), " *
+                            "dissolution: $(diss.nparams), " *
                             "aggregation: $(aggregationfunction.nparams), breakage: $(breakagefunction.nparams))"))
     end
 
     structured_parameters = ComponentArray(flat_parameters,
                                            paramaxis(nucleationfunction,
                                                      growthfunction,
+                                                     diss,
                                                      aggregationfunction,
                                                      breakagefunction))
     return runsimulation(structured_parameters;
                          nucl = nucleationfunction,
                          gr = growthfunction,
+                         diss = diss,
                          agg = aggregationfunction,
                          br = breakagefunction,
                          solver = solver,
                          initial_concentration = initialconc,
                          initial_state = initial_state,
                          save_idx = save_idx)
+end
+
+"""Canonical positional form including the independent dissolution model."""
+function runsimulation(parameters::AbstractArray{TPara},
+                       nucleationfunction::AbstractNucleationFunction,
+                       growthfunction::AbstractGrowthFunction,
+                       dissolutionfunction::AbstractDissolutionFunction,
+                       aggregationfunction::AbstractAggregationFunction,
+                       breakagefunction::AbstractBreakageFunction,
+                       initialconc::Float64;
+                       kwargs...) where {TPara <: Real}
+    return runsimulation(parameters, nucleationfunction, growthfunction,
+                         aggregationfunction, breakagefunction, initialconc;
+                         diss = dissolutionfunction, kwargs...)
 end
 """
     runsimulation(nucleationfunction::AbstractDDNucleationFunction,
@@ -77,6 +95,7 @@ function runsimulation(nucleationfunction::AbstractDDNucleationFunction,
                        aggregationfunction::noaggregation,
                        breakagefunction::nobreakage,
                        initialconc::Float64;
+                       diss::AbstractDissolutionFunction = nodissolution(),
                        save_idx::S = 0:5.0:480.0,
                        solver::AbstractSolver = FiniteVol(; meshsize = 500, lmax = 50e-6),
                        initial_state::Union{Nothing, AbstractArray{<:Real}} = nothing) where {S <:
@@ -88,6 +107,7 @@ function runsimulation(nucleationfunction::AbstractDDNucleationFunction,
                          aggregationfunction,
                          breakagefunction,
                          initialconc;
+                         diss = diss,
                          save_idx = save_idx,
                          solver = solver,
                          initial_state = initial_state)
@@ -106,6 +126,7 @@ function runsimulation(parameters::AbstractVector{TPara},
                        nucleationfunction::AbstractFPNucleationFunction,
                        growthfunction::AbstractFPGrowthFunction,
                        initialconc::Float64;
+                       diss::AbstractDissolutionFunction = nodissolution(),
                        save_idx = 0:5.0:480.0,
                        solver::AbstractSolver = MoM(),
                        initial_state::Union{Nothing, AbstractVector} = nothing) where {TPara <: Real}
@@ -115,13 +136,14 @@ function runsimulation(parameters::AbstractVector{TPara},
                          noaggregation(),
                          nobreakage(),
                          initialconc;
+                         diss = diss,
                          save_idx = save_idx,
                          solver = solver,
                          initial_state = initial_state)
 end
 
 """
-    runsimulation(parameters::ComponentArray; nucl, gr, agg, br, solver,
+    runsimulation(parameters::ComponentArray; nucl, gr, diss, agg, br, solver,
                   initial_concentration = 18.0, initial_state = nothing,
                   save_idx = 0:5.0:480.0, cry_kwargs...)
 
@@ -136,6 +158,7 @@ the AbstractVector overload — it wraps the input here.
 function runsimulation(parameters::ComponentArrays.ComponentArray;
                        nucl::AbstractNucleationFunction = noaggregation(),
                        gr::AbstractGrowthFunction = noaggregation(),
+                       diss::AbstractDissolutionFunction = nodissolution(),
                        agg::AbstractAggregationFunction = noaggregation(),
                        br::AbstractBreakageFunction = nobreakage(),
                        solver::AbstractSolver = FiniteVol(meshsize = 500, lmax = 50e-6),
@@ -145,16 +168,21 @@ function runsimulation(parameters::ComponentArrays.ComponentArray;
                        cry_kwargs...)
     cry = CrystallisationProblem(; kinetics_nucleationfunction = nucl,
                                  kinetics_growthfunction = gr,
+                                 kinetics_dissolutionfunction = diss,
                                  kinetics_aggregationfunction = agg,
                                  kinetics_breakagefunction = br,
                                  parameterset_nucleation = parameters.nucl,
                                  parameterset_growth = parameters.gr,
+                                 parameterset_dissolution = hasproperty(parameters, :diss) ?
+                                     parameters.diss : Float64[],
                                  parameterset_aggregation = parameters.agg,
                                  parameterset_breakage = parameters.br,
                                  solver = solver,
                                  initial_concentration,
                                  initial_state,
                                  cry_kwargs...)
+
+    _validate_crystallisation_problem(cry)
 
     return cry, _simulatecrystallisation(cry, save_idx)
 end
@@ -170,15 +198,30 @@ core. AD types (e.g. `Vector{Dual}`) flow through unchanged.
 function runsimulation(parameters::AbstractVector;
                        nucl::AbstractNucleationFunction = noaggregation(),
                        gr::AbstractGrowthFunction = noaggregation(),
+                       diss = nothing,
                        agg::AbstractAggregationFunction = noaggregation(),
                        br::AbstractBreakageFunction = nobreakage(),
                        kwargs...)
-    nν, ng, na, nb = nucl.nparams, gr.nparams, agg.nparams, br.nparams
-    expected_nparams = nν + ng + na + nb
+    if isnothing(diss)
+        nν, ng, na, nb = nucl.nparams, gr.nparams, agg.nparams, br.nparams
+        expected_nparams = nν + ng + na + nb
+        length(parameters) == expected_nparams ||
+            throw(ArgumentError("Parameter vector has length $(length(parameters)) but expected $expected_nparams " *
+                                "(nucleation: $nν, growth: $ng, aggregation: $na, breakage: $nb)"))
+        legacy_parameters = ComponentArray(parameters, paramaxis(nucl, gr, agg, br))
+        return runsimulation(legacy_parameters; nucl = nucl, gr = gr,
+                             diss = nodissolution(), agg = agg, br = br, kwargs...)
+    end
+    diss isa AbstractDissolutionFunction ||
+        throw(ArgumentError("diss must be an AbstractDissolutionFunction or nothing."))
+    nν, ng, nd, na, nb = nucl.nparams, gr.nparams, diss.nparams,
+                         agg.nparams, br.nparams
+    expected_nparams = nν + ng + nd + na + nb
     if length(parameters) != expected_nparams
         throw(ArgumentError("Parameter vector has length $(length(parameters)) but expected $expected_nparams " *
-                            "(nucleation: $nν, growth: $ng, aggregation: $na, breakage: $nb)"))
+                            "(nucleation: $nν, growth: $ng, dissolution: $nd, " *
+                            "aggregation: $na, breakage: $nb)"))
     end
-    p = ComponentArray(parameters, paramaxis(nucl, gr, agg, br))
-    return runsimulation(p; nucl = nucl, gr = gr, agg = agg, br = br, kwargs...)
+    p = ComponentArray(parameters, paramaxis(nucl, gr, diss, agg, br))
+    return runsimulation(p; nucl = nucl, gr = gr, diss = diss, agg = agg, br = br, kwargs...)
 end

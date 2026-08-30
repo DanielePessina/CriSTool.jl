@@ -5,6 +5,11 @@ implements a rate function by multiple dispatch in the corresponding
 `src/physics/*_rates.jl` file, and
 declares a `paramaxis` so its parameters can be accessed by name.
 
+For the shortest working example, see
+[Tutorial 1](<../examples/Tutorial 1 Running Simulations.jl>). To add a model
+from a user script, follow [Tutorial 4](<../examples/Tutorial 4 Defining a Custom Kinetic.jl>)
+and the custom-family section below.
+
 Key ideas:
 - Each kinetic struct has `nparams`, `string`, and often `symbols`.
 - Each struct also declares a `paramaxis(::T)` method returning a
@@ -24,6 +29,50 @@ nucl_emp = nucl_empirical()  # nparams = 2, axis Axis(Aj=1, j=2)
 growth   = growth_empirical()# nparams = 2, axis Axis(Ag=1, g=2)
 growth_E = growth_energy()   # nparams = 2, axis Axis(Ag=1, g=2) (with activation energy)
 ```
+
+Common parameter blocks are:
+
+| Family | Model | Parameter order |
+| --- | --- | --- |
+| Nucleation | `nucl_CNT()` | `Aj`, `γ` |
+| Nucleation | `nucl_empirical()` | `Aj`, `j` |
+| Nucleation | `nucl_empirical_energy()` | `Aj`, `Ea`, `j` |
+| Growth | `growth_empirical()` | `Ag`, `g` |
+| Growth | `growth_energy()` | `Ag`, `g`; activation energy is stored on the model |
+| Growth | `growth_energy_est()` | `Ag`, `Eag`, `g` |
+| Growth | `growth_BCF()` | `C3`, `C4` |
+| Growth | `growth_BpS()` | `C1`, `C2` |
+
+Use `nparams` and `paramaxis(model)` rather than hard-coding a block length
+when building a general fitting or sampling workflow. Fixed variants such as
+`growth_empirical_fixed` and `nucl_empirical_fixed` embed their parameters in
+the model and contribute no free parameter slots.
+
+## Signed growth and dissolution
+
+The built-in dissolution models use the same `growthrate` interface as growth,
+but return a signed crystal growth rate: positive values grow crystals and
+negative values dissolve them. The default equilibrium deadband is
+`|S - 1| ≤ 0.001`, where `S = c / saturation_concentration(problem, t)`.
+
+```julia
+dissolution = growth_dissolution()          # [Ad, Ead, d]
+combined    = growth_energy_dissolution()   # [Ag, g, Ad, Ead, d]
+length_dissolution = growth_dissolution_length() # [Ad, Ead, d, κ, p]
+```
+
+`growth_dissolution` uses the dimensionless undersaturation driving force
+`(1 - S)^d` and returns a scalar rate. `growth_energy_dissolution` uses the
+growth law above the deadband and the dissolution law below it. The
+length-dependent model evaluates
+`(1 + κ * L / Lref)^p` at each mesh length, with `Lref = 1e-6` m by default;
+it is supported by `FiniteVol` and `WENO`, while QMOM accepts scalar signed
+kinetics only.
+
+The scalar models can be used by all moment and discretised solvers. For a
+length-dependent model, call `growthrate!` from a solver-owned scratch buffer
+when writing a custom discretised RHS; the non-mutating `growthrate` convenience
+method allocates a vector for standalone inspection.
 
 ## The `paramaxis` API
 
@@ -61,7 +110,7 @@ Three pieces, all in your own user script:
    `_named_params(model, parameters)`.
 
 Worked example in
-`../examples/Tutorial 4 Defining a Custom Kinetic.jl`. Sketched
+[Tutorial 4](<../examples/Tutorial 4 Defining a Custom Kinetic.jl>). Sketched
 here for nucleation and growth:
 
 ```julia

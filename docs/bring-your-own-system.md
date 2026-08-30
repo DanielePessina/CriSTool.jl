@@ -1,29 +1,31 @@
 # Bringing your own system
 
 CriSTool's v1 API is system-agnostic: the lysozyme assumptions live in the
-defaults (`lysozyme_saturation()`, the default density/shape-factor
+defaults (`lysozyme_solubility()`, the default density/shape-factor
 constants), not in the machinery. This guide walks a minimal non-lysozyme
 system end-to-end — custom solubility, custom kinetics, a custom observable —
 using the same pattern as `test/test_generalization.jl`.
 
 ## 1. Solubility / supersaturation
 
-Define a `AbstractSaturationModel` and a `saturation_concentration` method:
+Define a `AbstractSolubilityModel` and a `saturation_concentration` method:
 
 ```julia
-struct LinearSaturation <: CriSTool.AbstractSaturationModel
+using ComponentArrays
+
+struct LinearSolubility <: CriSTool.AbstractSolubilityModel
     slope::Float64   # kg/m³ per °C
     intercept::Float64
 end
 function CriSTool.saturation_concentration(sm::LinearSaturation, temp_profile, t)
-    return sm.slope * (temperature(temp_profile, t) - 273.15) + sm.intercept
+    return sm.slope * (CriSTool.temperature(temp_profile, t) - 273.15) + sm.intercept
 end
 
 problem = CrystallisationProblem(; saturation_model = LinearSaturation(0.25, 2.0), ...)
 ```
 
-Built-ins: `ConstantSaturation(c)`, `PolynomialSaturation(coeffs, Tref)`,
-`CallableSaturation(f)` (see [Saturation models](saturation-models.md)).
+Built-ins: `ConstantSolubility(c)`, `PolynomialSolubility(coeffs, Tref)`,
+`CallableSolubility(f)` (see [Solubility models](saturation-models.md)).
 
 Coupled solvent variables are named in `initial_solvent_state`. The default
 `solvent_dynamics` updates solute concentration from crystal growth; a custom
@@ -41,6 +43,13 @@ problem = CrystallisationProblem(; initial_concentration = 25.0,
 
 The resulting solution exposes `solvent_state`, and `solvent_state(prob, state)`
 returns the named values from a numerical state.
+
+For reversible systems, use a signed scalar growth rate in the existing growth
+slot: `G > 0` grows crystals, `G < 0` dissolves them, and the built-in
+`growth_dissolution()` / `growth_energy_dissolution()` models apply the
+equilibrium deadband. Scalar signed rates work with MoM, QMOM, FiniteVol, and
+WENO. Length-dependent `growth_dissolution_length()` is a discretised-solver
+model; its `growthrate!` method fills a caller-owned mesh buffer.
 
 ## 2. Custom kinetics (Tutorial-4 pattern)
 

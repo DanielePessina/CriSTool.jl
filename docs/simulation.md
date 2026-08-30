@@ -3,6 +3,27 @@
 CriSTool's main entry point is `runsimulation`, which builds a
 `CrystallisationProblem` and returns a `(problem, solution)` tuple.
 
+For a complete comparison of temperature profiles, start with
+[Tutorial 1](<../examples/Tutorial 1 Running Simulations.jl>). The tutorial
+uses the same kinetics and initial condition for three different temperature
+profiles, which makes it a useful template for a first simulation script.
+
+## Choose a solver
+
+Choose the solver from the output you need:
+
+| Need | Solver | Main solution fields |
+| --- | --- | --- |
+| moment-derived size metrics with a compact state | `MoM()` | `concentration`, `d10`, `d32`, `d43`, `mu2` |
+| moments plus a reconstructed Gaussian rule | `QMOM(nquadrature = N)` | the MoM fields, `moments`, `quadrature_nodes`, `quadrature_weights` |
+| a resolved particle-size distribution | `FiniteVol(meshsize = ..., lmax = ...)` | `numberdensity`, `voldensity`, `d10q`, `d50q`, `d90q`, and moment-derived sizes |
+| a higher-order finite-volume discretisation | `WENO(meshsize = ..., lmax = ...)` | the finite-volume fields and quantiles |
+
+`MoM` and `QMOM` do not store a full size-distribution mesh. Use `FiniteVol`
+or `WENO` when you need length-dependent rates or distribution quantiles.
+Use `QMOM` when a compact moment state and a small set of reconstructed nodes
+are sufficient. See [Solvers](solvers.md) for the solver-specific details.
+
 ## Parameter ordering
 
 The parameter vector is always concatenated as:
@@ -81,7 +102,36 @@ problem, solution = runsimulation(
 ```
 
 MoM returns moment-based outputs (`d10`, `d32`, `d43`, `mu2`) and does not
-provide the full particle size distribution.
+provide the full particle size distribution. Check `solution.success` before
+treating a trajectory as a successful simulation.
+
+## QMOM simulation
+
+QMOM evolves `2N` raw moments and reconstructs an `N`-node Gaussian rule at
+the saved times. The default `QMOM(nquadrature = 3)` tracks `M₀:M₅`, which
+provides the same d32 and d43 observables used by the moment-based losses.
+
+```julia
+problem, solution = runsimulation(
+    [38.0, 0.7, 1.0, 3.0];
+    nucl = nucl_CNT(),
+    gr = growth_empirical(),
+    agg = noaggregation(),
+    br = nobreakage(),
+    solver = QMOM(nquadrature = 3),
+    initial_concentration = 18.0,
+    save_idx = 0.0:60.0:480.0,
+)
+
+@show solution.d43[end]
+@show solution.moments[:, end]
+@show quadrature(solution, length(solution.time)).nodes
+```
+
+QMOM accepts scalar signed growth/dissolution kinetics and the validated
+volume-additive aggregation and uniform-in-volume breakage closures. Use
+`FiniteVol` or `WENO` for `growth_dissolution_length`; QMOM rejects arbitrary
+length-dependent kinetics until a corresponding moment closure is defined.
 
 ## Finite-volume simulation with mesh and time-stepper
 
@@ -164,3 +214,10 @@ problem, solution = runsimulation(
     save_idx = 0.0:60.0:480.0,
 )
 ```
+
+`runsimulation` forwards additional keywords to `CrystallisationProblem`. This
+is the route for process settings such as `temp_profile`, `loading`,
+`saturation_model`, `initial_solvent_state`, and a custom `solvent_dynamics`
+callable. See [Temperature profiles](temperature-profiles.md), [Saturation
+models](saturation-models.md), and [Bringing your own system](bring-your-own-system.md)
+for those extensions.

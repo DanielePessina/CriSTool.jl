@@ -1,88 +1,119 @@
-# CriSTool.jl
+# CriSTool
 
-`CriSTool.jl` is a comprehensive Julia package for the simulation, parameter estimation, and uncertainty quantification of batch crystallisation processes. It provides a flexible framework for researchers and engineers to model complex crystallisation phenomena.
+CriSTool is a Julia package for simulating batch crystallisation, fitting
+kinetic parameters to measurements, and propagating parameter uncertainty
+through population-balance models.
 
-## High-Level Description
+The package provides:
 
-The package is designed to handle various aspects of crystallisation modeling:
+- population-balance solvers based on the Method of Moments (MoM), the
+  Quadrature Method of Moments (QMOM), finite volumes, and WENO;
+- nucleation, growth, aggregation, breakage, and signed dissolution kinetics;
+- measurement loading from Excel workbooks and typed experiment containers;
+- parameter estimation with Metaheuristics.jl and Optimization.jl;
+- likelihood-free ABCDE and Turing NUTS workflows;
+- sensitivity analysis, ensemble simulation, and Makie plotting utilities.
 
-*   **Population Balance Modeling:** Implements both the Method of Moments (MoM) and Finite Volume (FV) methods (with WENO option) to solve population balance equations, allowing for the tracking of particle size distribution over time.
-*   **Flexible Kinetics:** Supports a wide range of kinetic models for nucleation, growth, aggregation, and breakage, with named-parameter access via ComponentArrays. Users can select from built-in empirical and first-principles models or define their own (see Tutorial 4).
-*   **Parameter Estimation:** Includes routines for fitting model parameters to experimental data using metaheuristic optimization, Optimization.jl-based search, Turing NUTS, and Approximate Bayesian Computation. ABC inference is unified behind a single `run_abc` entry point with selectable samplers (`ABCDESampler`, `ABCDETurnerSampler`).
-*   **Uncertainty & Sensitivity Analysis:** Provides tools to perform uncertainty quantification through ensemble simulations and to analyze model sensitivity to different parameters.
-*   **Visualization:** Comes with plotting utilities built on `Makie.jl` for visualizing simulation results, posterior distributions, and measurement data.
+## Installation
 
+CriSTool declares Julia compatibility `^1.12` in `Project.toml`. From a
+repository checkout, instantiate the package environment with:
 
-## Example Usage
+```sh
+julia --project=. -e 'using Pkg; Pkg.instantiate()'
+```
 
-Here is a basic example of how to run a crystallisation simulation using the Method of Moments (MoM) solver.
+The runnable examples use a separate environment because some tutorials add
+`GlobalSensitivity`, `QuasiMonteCarlo`, and other tutorial-only dependencies:
+
+```sh
+julia --project=examples -e 'using Pkg; Pkg.instantiate()'
+```
+
+## Quick start: one simulation
+
+`runsimulation` takes kinetic models, a parameter vector, and a solver. The
+flat parameter vector is ordered as `[nucleation; growth; aggregation;
+breakage]`; no-op aggregation and breakage models contribute empty blocks.
 
 ```julia
 using CriSTool
 
-# 1. Define kinetic models for nucleation and growth
-# These structs hold information about the model, like the number of parameters.
-nucl_model = nucl_CNT() # Empirical nucleation model (2 parameters)
-grow_model = growth_empirical() # Empirical growth model (2 parameters)
+nucl = nucl_CNT()
+gr   = growth_empirical()
 
-# 2. Define a vector of kinetic parameters
-# The parameters are ordered: [nucleation_params..., growth_params...]
-parameters = [38, 0.7, 1.0, 3.0]
-
-# 3. Set up and run the simulation using the keyword-based `runsimulation` function
+parameters = [38.0, 0.6, 1.0, 3.0]
 problem, solution = runsimulation(
     parameters;
-    nucl = nucl_model,
-    gr = grow_model,
-    agg = noaggregation(), # Optional: defaults to no aggregation
-    br = nobreakage(),     # Optional: defaults to no breakage
-    solver = MoM(),        # Specify the Method of Moments solver
-    initial_concentration = 20.0,
-    save_idx = 0.0:1.0:100.0 # Time points to save results
+    nucl = nucl,
+    gr = gr,
+    agg = noaggregation(),
+    br = nobreakage(),
+    solver = MoM(),
+    initial_concentration = 18.0,
+    save_idx = 0.0:60.0:480.0,
 )
 
-# 4. Access and print the results
 if solution.success
-    println("Simulation completed successfully!")
     println("Final concentration: ", solution.concentration[end])
-    println("Final d43 (volume-weighted mean size): ", solution.d43[end])
-else
-    println("Simulation failed.")
+    println("Final d43: ", solution.d43[end], " μm")
 end
 ```
 
-`runsimulation` accepts either a flat `Vector{Float64}` (as above) or a structured `ComponentArray`. The flat form is forwarded into a `ComponentArray` view internally using the composite axis built from the four kinetic models — see [`docs/simulation.md`](docs/simulation.md) and [`docs/kinetics.md`](docs/kinetics.md) for the named-parameter API (`paramaxis`, `_named_params`).
+The function returns the constructed `CrystallisationProblem` and a solution
+trajectory. Moment solutions expose `concentration`, `d10`, `d32`, `d43`, and
+`mu2`; finite-volume and WENO solutions also expose the resolved size
+distribution and `d10q`, `d50q`, and `d90q` quantiles. QMOM additionally stores
+raw moments and reconstructed quadrature; see [Solvers](docs/solvers.md).
 
-This example demonstrates the core workflow for running a single simulation. The package provides extensive additional functionality for more advanced use cases like parameter estimation, ABC inference, and uncertainty analysis.
+## Choose a starting point
 
-## Tutorials
+| If you want to… | Read | Run |
+| --- | --- | --- |
+| run a simulation or choose a solver | [Running simulations](docs/simulation.md), [Solvers](docs/solvers.md) | [Tutorial 1](<examples/Tutorial 1 Running Simulations.jl>) |
+| load measurements from Excel | [Measurements and data loading](docs/measurements.md) | [Tutorial 2](<examples/Tutorial 2 Parameter Estimation.jl>) |
+| fit kinetic parameters | [Parameter estimation](docs/parameter-estimation.md) | [Tutorial 2](<examples/Tutorial 2 Parameter Estimation.jl>) |
+| compare ABCDE and NUTS | [ABCDE routine](docs/abcde.md), [Parameter estimation](docs/parameter-estimation.md) | [Tutorial 5](<examples/Tutorial 5 ABCDE and MCMC.jl>) |
+| define a temperature or saturation model | [Temperature profiles](docs/temperature-profiles.md), [Saturation models](docs/saturation-models.md) | [Tutorial 1](<examples/Tutorial 1 Running Simulations.jl>) |
+| add a kinetic family or other system component | [Kinetics](docs/kinetics.md), [Bringing your own system](docs/bring-your-own-system.md) | [Tutorial 4](<examples/Tutorial 4 Defining a Custom Kinetic.jl>) |
+| model dissolution | [Kinetics](docs/kinetics.md), [Solvers](docs/solvers.md) | [Tutorial 6](<examples/Tutorial 6 Dissolution.jl>) |
+| inspect QMOM nodes and weights | [Solvers](docs/solvers.md) | [Tutorial 7](<examples/Tutorial 7 QMOM.jl>) |
+| compare real-data MoM and QMOM fits | [Parameter estimation](docs/parameter-estimation.md), [Solvers](docs/solvers.md) | [Tutorial 8](<examples/Tutorial 8 Real-data MoM versus QMOM.jl>) |
+| run sensitivity studies | [Sensitivity analysis](docs/sensitivity.md) | [Tutorial 3](<examples/Tutorial 3 Sensitivity Analysis.jl>) |
+| run ensemble uncertainty studies | [Ensembles and uncertainty](docs/uq-ensembles.md) | — |
 
-Worked examples in `examples/`:
+The complete tutorial catalogue, dependencies, and run commands are in
+[Tutorials](docs/tutorials.md). The guides in `docs/` are short explanations
+of the same workflows; the scripts in `examples/` are the full runnable
+versions.
 
-- `Tutorial 1 Running Simulations.jl` — `runsimulation` under three temperature profiles.
-- `Tutorial 2 Parameter Estimation.jl` — PE + ABCDE + Turing NUTS on experimental data.
-- `Tutorial 3 Sensitivity Analysis.jl` — global and local sensitivity workflows.
-- `Tutorial 4 Defining a Custom Kinetic.jl` — three-step pattern (subtype + `paramaxis` + rate function) for adding a kinetic family from a user script.
-- `Tutorial 5 ABCDE and MCMC.jl` — `run_abc` and Turing NUTS on synthetic data, side-by-side posteriors. Self-contained.
+## A structured parameter vector
 
-Run them from the repository root with the dedicated example environment:
+The flat form is convenient for optimisers. When parameters need to be read or
+edited by name, wrap them with the composite axis built from the four kinetic
+models:
 
-```sh
-julia --project=examples -e 'using Pkg; Pkg.instantiate()'
-julia --project=examples "examples/Tutorial 1 Running Simulations.jl"
+```julia
+using ComponentArrays
+
+axis = paramaxis(nucl, gr, noaggregation(), nobreakage())
+parameters_named = ComponentArray(parameters, axis)
+
+parameters_named.nucl.Aj
+parameters_named.gr.g
 ```
 
-## Documentation guides
+See [Running simulations](docs/simulation.md) and [Kinetics](docs/kinetics.md)
+for parameter axes and custom model definitions.
 
-Short, usage-first guides live in `docs/`:
+## Documentation and development
 
-- `docs/index.md` (navigation)
-- `docs/simulation.md` (running simulations)
-- `docs/kinetics.md` (nucleation and growth, extending models)
-- `docs/solvers.md` (MoM / FiniteVol / WENO)
-- `docs/parameter-estimation.md` (loss functions + PE_Routine)
-- `docs/optimisation.md` (Optimization.jl routines)
-- `docs/abcde.md` (ABCDE and Turner variants)
-- `docs/measurements.md` (loading and balancing measurements)
-- `docs/temperature-profiles.md` (temperature profiles)
-- `docs/uq-ensembles.md` (ensemble UQ utilities)
+- [Documentation home](docs/index.md)
+- [Tutorial catalogue](docs/tutorials.md)
+- [Package audit and release checklist](AUDIT_v1.0.md) (development)
+
+Run the package test suite with:
+
+```sh
+julia --project=. -e 'using Pkg; Pkg.test()'
+```

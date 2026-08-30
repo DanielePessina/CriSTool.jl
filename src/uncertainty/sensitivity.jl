@@ -12,7 +12,7 @@ function forwardsensitivity(CryProblem::CrystallisationProblem{NuclF, GrF, nobre
                                            BrP <: AbstractVector{<:Real},
                                            AggP <: AbstractVector{<:Real},
                                            TP <: AbstractTemperature,
-                                           SM <: AbstractSaturationModel}
+                                           SM <: AbstractSolubilityModel}
 
     function MoM_model(du, u, p, t)
         scalargrowth = growthrate(CryProblem.kinetics_growthfunction,
@@ -62,30 +62,47 @@ function forwardsensitivity(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, 
                                            BrP <: AbstractVector{<:Real},
                                            AggP <: AbstractVector{<:Real},
                                            TP <: AbstractTemperature,
-                                           SM <: AbstractSaturationModel}
-
-    fluxlimiter_ospre(r) = (1.5(r^2) + r) / (r^2 + r + 1)
+                                           SM <: AbstractSolubilityModel}
 
     function HRFV_FLWmodel(dstdt, st, p, t)
 
         numberdensity = crystal_state(CryProblem, st)
+        # Parameter forward sensitivities keep the state Float64 while `p`
+        # carries Dual values, so a state-keyed DiffCache would return a
+        # Float64 buffer and discard derivative information.
+        flux = Vector{promote_type(eltype(st), eltype(p))}(undef,
+                                                            length(numberdensity) + 1)
 
         scalargrowth = growthrate(CryProblem.kinetics_growthfunction, p.gr,
                                   CryProblem, st, t)
 
-        flux = vcat(nucleationrate(CryProblem.kinetics_nucleationfunction, p.nucl,
-                                   CryProblem, st, t), ## Inflow
-                    scalargrowth * 0.5 * (numberdensity[1] + numberdensity[2]),
-                    [scalargrowth * (numberdensity[i-1] +
-                      0.5 *
-                      fluxlimiter_ospre((numberdensity[i-1] - numberdensity[i-2] + 1e-12) /
-                                        (numberdensity[i] - numberdensity[i-1] + 1e-12)) *
-                      (numberdensity[i] - numberdensity[i-1]))
-                     for i in 3:length(numberdensity)],
-                    scalargrowth *
-                    (numberdensity[end] + 0.5 * (numberdensity[end] - numberdensity[end-1])))
+        if scalargrowth > zero(scalargrowth)
+            flux[1] = nucleationrate(CryProblem.kinetics_nucleationfunction, p.nucl,
+                                     CryProblem, st, t)
+            flux[2] = scalargrowth * 0.5 * (numberdensity[1] + numberdensity[2])
+            for index in 3:length(numberdensity)
+                grad_up = numberdensity[index - 1] - numberdensity[index - 2]
+                grad_down = numberdensity[index] - numberdensity[index - 1]
+                r = grad_up / max(eps(eltype(st)), grad_down)
+                flux[index] = scalargrowth * (numberdensity[index - 1] +
+                             0.5 * fluxlimiter_ospre(r) * grad_down)
+            end
+            flux[end] = scalargrowth * (numberdensity[end] +
+                                        0.5 * (numberdensity[end] - numberdensity[end - 1]))
+        elseif scalargrowth < zero(scalargrowth)
+            flux[1] = scalargrowth * numberdensity[1]
+            @inbounds for face in 2:length(numberdensity)
+                flux[face] = scalargrowth * numberdensity[face]
+            end
+            flux[end] = zero(scalargrowth)
+        else
+            fill!(flux, zero(scalargrowth))
+        end
 
-        dstdt[1:length(numberdensity)] = -diff(flux) / CryProblem.solver.cell_dL
+        @inbounds for index in eachindex(numberdensity)
+            dstdt[index] = -(flux[index + 1] - flux[index]) /
+                           CryProblem.solver.cell_dL
+        end
         solvent_rates = _solvent_derivatives(CryProblem, st, t, scalargrowth)
         _write_solvent_derivatives!(dstdt, CryProblem, solvent_rates)
 
