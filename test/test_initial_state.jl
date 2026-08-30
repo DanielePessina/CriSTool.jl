@@ -1,3 +1,8 @@
+using Test
+using CriSTool
+using Distributions
+using XLSX
+
 @testset "Initial crystal state construction" begin
     lognormal_initial_crystals = (; mass_concentration = 0.25,
                                   d43 = 12.0,
