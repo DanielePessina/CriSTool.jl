@@ -29,7 +29,7 @@ using ProgressMeter
 
 # File I/O & Serialization
 using JLD2
-import XLSX
+import CSV
 
 # Visualization
 using PairPlots
@@ -71,9 +71,6 @@ const CRISTOOL_MAX_PREPARED_SOLVER_SECONDS = 5.0
 const CRISTOOL_PARALLEL_PE_BATCH_SIZE = 8
 const CRISTOOL_MAX_OPTIMISER_CALLS = 1e18
 const CRISTOOL_PRIOR_PLOT_SAMPLES = 2^18
-const CRISTOOL_MISSING_SIZE_SENTINEL = -1.0
-const CRISTOOL_MISSING_SIZE_VALUE = 10.0
-const CRISTOOL_MISSING_SIZE_VARIANCE = 100.0
 
 ## Export stuff
 export CrystallisationFVSolution, CrystallisationMoMSolution,
@@ -103,7 +100,7 @@ export runsimulation, paramaxis, crystallisation_odeproblem,
        initial_state_from_characteristics
 export AbstractPELossFunction, AbstractVarianceModel, MeasuredVariance, RelativeVariance,
        logMLE, mae, loss, prepare_loss, LossSetup
-export load_measurements, load_experiments, load_experiments_legacy, load_experiments_legacy_single,
+export experiments_from_table, load_measurements, load_experiments,
        bootstrap_repeatmeasurements, balance_variances, repeatmeasurementbalancer,
        psd_measurementbalancer, bootstrap_measurements
 export AbstractSolver, AbstractMomentSolver, FiniteVol, MoM, QMOM, WENO,
@@ -133,7 +130,6 @@ include("core/problem_types.jl")
 
 # Measurement ingestion and normalization.
 include("measurements/loaders.jl")
-include("measurements/legacy.jl")
 include("measurements/balancing.jl")
 include("measurements/bootstrap.jl")
 

@@ -10,8 +10,8 @@ and returns ensemble solution objects.
 using CriSTool
 using Distributions
 
-path = joinpath(pkgdir(CriSTool), "examples", "fake-experimental-dataset.xlsx")
-measurements = load_experiments(path, "Unseeded_PE")
+path = joinpath(pkgdir(CriSTool), "examples", "fake-experimental-dataset.csv")
+measurements = load_experiments(path)
 
 nucl_f = nucl_CNT()
 growth_f = growth_energy()

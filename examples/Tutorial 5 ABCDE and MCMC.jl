@@ -6,7 +6,7 @@ Two complementary inference routines on the same synthetic dataset:
   2. NUTS (gradient MCMC) via the `MCMC_Routine` wrapper around
      `nuts_model` (Turing).
 Same forward model, prior bounds, and loss function for both. Runs in
-~1 minute on `julia --threads=4`; no external workbook needed.
+~1 minute on `julia --threads=4`; no external data file needed.
 """
 
 using CriSTool
@@ -41,8 +41,8 @@ function main()
                                                           observables = (;
                                                           concentration = Observable(; time = save_grid, mean = noisy_c,
                                                           variance = σ2),
-                                                          d43 = Observable(; mean = ref.d43[end], variance = 0.1),
-                                                          d50q = Observable(; mean = ref.d43[end], variance = 0.1)),
+                                                          d43 = Observable(; time = save_grid, mean = ref.d43,
+                                                                            variance = fill(0.1, length(save_grid)))),
                                                           temperature = T_K, exp_id = 1)
 
     lb = [25.0, 0.30, 0.30, 2.0]

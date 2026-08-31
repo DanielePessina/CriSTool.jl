@@ -33,8 +33,8 @@ using CriSTool
 using Distributions
 using Metaheuristics
 
-path = joinpath(pkgdir(CriSTool), "examples", "fake-experimental-dataset.xlsx")
-measurements = load_experiments(path, "Unseeded_PE")
+path = joinpath(pkgdir(CriSTool), "examples", "fake-experimental-dataset.csv")
+measurements = load_experiments(path)
 
 nucl_f, growth_f = nucl_CNT(), growth_empirical()
 PE_lb = [10.0, 0.15, -10.0, 1.0]

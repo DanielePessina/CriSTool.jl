@@ -646,45 +646,21 @@ end
 """
     _loss_observable_names(experiment, solver) -> Vector{Symbol}
 
-Return the measured observables used by the loss. When a legacy loader has
-stored the same particle-size value under both `d43` and `d50q`, keep only the
-solver-appropriate one; all other observable fields participate in the loss.
+Return every measured observable in the order declared by the experiment's
+typed `NamedTuple`. Observable selection is data-driven: if two metrics such
+as `d43` and `d50q` are supplied, both are objective terms.
 """
-function _loss_observable_names(expt::CrystallisationExperiment,
-                                solver::AbstractSolver)
-    names = Symbol[]
-    # Both MoM and QMOM expose moment-derived d43.  Only discretised solvers
-    # expose the volume-distribution quantile d50q.
-    active_size = solver isa AbstractMomentSolver ? :d43 : :d50q
-    has_d43 = hasproperty(expt.observables, :d43)
-    has_d50q = hasproperty(expt.observables, :d50q)
-    for name in propertynames(expt.observables)
-        if (name === :d43 || name === :d50q) && has_d43 && has_d50q
-            name === active_size && push!(names, name)
-        else
-            push!(names, name)
-        end
-    end
-    return names
-end
+_loss_observable_names(expt::CrystallisationExperiment, ::AbstractSolver) =
+    collect(propertynames(expt.observables))
 
-_loss_observable_names(expt::CrystallisationExperiment,
-                       ::CrystallisationMoMSolution) = _loss_observable_names(expt, MoM())
-_loss_observable_names(expt::CrystallisationExperiment,
-                       ::CrystallisationQMOMSolution) = _loss_observable_names(expt, QMOM())
-_loss_observable_names(expt::CrystallisationExperiment,
-                       ::CrystallisationFVSolution) =
-    _loss_observable_names(expt, FiniteVol(meshsize = 2))
+_loss_observable_names(expt::CrystallisationExperiment, solution::AbstractSolution) =
+    _loss_observable_names(expt, MoM())
 
 function _loss_saveat(expt::CrystallisationExperiment, solver::AbstractSolver)
     times = Float64[]
     for name in _loss_observable_names(expt, solver)
         measured = getproperty(expt.observables, name)
-        if measured.mean isa AbstractArray
-            append!(times, Float64.(measured.time))
-        else
-            push!(times, Float64(measured.time))
-        end
+        append!(times, Float64.(measured.time))
     end
     saveat = sort!(unique!(times))
     length(saveat) >= 2 ||
@@ -692,20 +668,12 @@ function _loss_saveat(expt::CrystallisationExperiment, solver::AbstractSolver)
     return saveat
 end
 
-function _measurement_data(observable::Observable{T}) where {T <: AbstractArray}
+function _measurement_data(observable::Observable)
     return observable.time, observable.mean
 end
 
-function _measurement_data(observable::Observable{T}) where {T <: Real}
-    return [observable.time], [observable.mean]
-end
-
-function _variance_at(observable::Observable{T, Tt, Nothing}, index::Int) where {T, Tt}
-    return nothing
-end
-
-function _variance_at(observable::Observable{T, Tt, Tv}, index::Int) where {T, Tt, Tv}
-    return observable.variance isa AbstractArray ? observable.variance[index] : observable.variance
+function _variance_at(observable::Observable, index::Int)
+    return observable.variance === nothing ? nothing : observable.variance[index]
 end
 
 function _measurement_variance(observable, mean_value, index,
@@ -748,8 +716,8 @@ end
     _experiment_objectives(lf, expt, solution) -> Vector
 
 Return one weighted objective contribution per measured observable. The
-observable order is the `NamedTuple` field order, with the duplicated inactive
-legacy particle-size slot removed.
+observable order is the `NamedTuple` field order and every time point in each
+observable contributes to its objective.
 """
 function _experiment_objectives(lf::AbstractPELossFunction,
                                 expt::CrystallisationExperiment, solution)
@@ -784,13 +752,9 @@ end
 """
     loss(lf::logMLE, setup::LossSetup, params) -> Real
 
-Log Maximum Likelihood Estimation loss over all prepared experiments.
-
-Evaluates the negative log-likelihood combining concentration trajectory
-(measured times, first timepoint excluded) and final particle size
-(`d43` for MoM, `d50q` for discretised solvers), with the configured variance
-floor,
-matching the legacy `parameterestimation_lossfunction` semantics.
+Log Maximum Likelihood Estimation loss over all prepared experiments. The
+initial concentration point is excluded because it defines the experiment's
+initial condition; all points of every other observable contribute.
 """
 function loss(lf::logMLE, setup::LossSetup, params)
     total = 0.0
@@ -812,10 +776,9 @@ end
 """
     loss(lf::mae, setup::LossSetup, params) -> Real
 
-Mean Absolute Error loss over all prepared experiments: mean absolute
-concentration error over all timepoints plus mean absolute final
-particle-size error (`d43` for MoM, `d50q` for discretised solvers). Failed
-failed simulations contribute the configured failure penalty per observable.
+Mean Absolute Error loss over all prepared experiments. Every point of every
+observable contributes to its observable-specific mean absolute error. Failed
+simulations contribute the configured failure penalty per observable.
 """
 function loss(lf::mae, setup::LossSetup, params)
     objective_names = _loss_observable_names(first(setup.experiments), setup.problem.solver)

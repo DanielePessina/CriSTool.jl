@@ -2,7 +2,7 @@
 Tutorial 8: real-data comparison of MoM and FiniteVol parameter estimation.
 
 This is an intentionally substantial workflow, not a smoke test.  Set
-`CRISTOOL_DATA_WORKBOOK` to your workbook (the shipped fixture is the default),
+`CRISTOOL_DATA_FILE` to your CSV file (the shipped fixture is the default),
 then run this script in the examples environment. It performs a point
 optimization and a four-chain NUTS run for MoM, plus derivative-free ABCDE
 for the FV comparison:
@@ -23,10 +23,9 @@ using Random
 using Statistics
 using Turing
 
-const DATA_WORKBOOK = get(ENV, "CRISTOOL_DATA_WORKBOOK",
-                          joinpath(pkgdir(CriSTool), "test", "fixtures",
-                                   "real-experimental-dataset.xlsx"))
-const DATA_SHEET = get(ENV, "CRISTOOL_DATA_SHEET", "Unseeded_PE")
+const DATA_FILE = get(ENV, "CRISTOOL_DATA_FILE",
+                      joinpath(pkgdir(CriSTool), "test", "fixtures",
+                               "real-experimental-dataset.csv"))
 const RESULTS_DIR = get(ENV, "CRISTOOL_RESULTS_DIR",
                         joinpath(@__DIR__, "results", "tutorial8"))
 
@@ -85,7 +84,7 @@ function fit_model(measurements, solver, aggregation, breakage, lower, upper, la
                          n_chains = MCMC_CHAINS,
                          extrastring = label,
                          outputdir = RESULTS_DIR,
-                         saveplot = false,
+                         saveplot = true,
                          showplot = false,
                          verbosity = 1)
     posterior_mean = vec(mean(chain).nt.mean)
@@ -114,7 +113,7 @@ function fit_finite_volume_with_abcde(measurements, solver, aggregation, breakag
                               test = :f,
                               extrastring = "FiniteVol ABCDE",
                               outputdir = RESULTS_DIR,
-                              saveplot = false,
+                              saveplot = true,
                               verbosity = 1)
     representative = abc_metadata["meanparameters"]
     problem = CriSTool._build_loss_problem(nucleation, growth, aggregation, breakage,
@@ -128,9 +127,9 @@ end
 
 function main()
     Random.seed!(20260830)
-    measurements = load_experiments(DATA_WORKBOOK, DATA_SHEET)
-    isempty(measurements) && error("No experiments found in $DATA_WORKBOOK [$DATA_SHEET]")
-    println("Loaded ", length(measurements), " experiments from ", DATA_WORKBOOK)
+    measurements = load_experiments(DATA_FILE)
+    isempty(measurements) && error("No experiments found in $DATA_FILE")
+    println("Loaded ", length(measurements), " experiments from ", DATA_FILE)
 
     mom_lower = [25.0, 0.30, 0.30, 2.0]
     mom_upper = [50.0, 1.00, 3.00, 4.0]

@@ -1,28 +1,17 @@
-function _variance_floor_observable(observable::Observable{T, Tt, Nothing},
-                                    min_rel_std_pc) where {T <: AbstractArray, Tt}
+"""
+    _variance_floor_observable(observable, min_rel_std_pc) -> Observable
+
+Raise an observable's variance to at least `(min_rel_std_pc% of mean)^2` at
+each measured time point. A missing variance becomes a per-point variance
+vector.
+"""
+function _variance_floor_observable(observable::Observable,
+                                    min_rel_std_pc)
     floor = (min_rel_std_pc * 1e-2 .* abs.(observable.mean)) .^ 2
+    variance = observable.variance === nothing ? floor :
+               max.(observable.variance, floor)
     return Observable(; time = observable.time, mean = observable.mean,
-                      variance = floor)
-end
-
-function _variance_floor_observable(observable::Observable{T, Tt, Tv},
-                                    min_rel_std_pc) where {T <: AbstractArray, Tt, Tv}
-    floor = (min_rel_std_pc * 1e-2 .* abs.(observable.mean)) .^ 2
-    variance = max.(observable.variance, floor)
-    return Observable(; time = observable.time, mean = observable.mean, variance = variance)
-end
-
-function _variance_floor_observable(observable::Observable{T, Tt, Nothing},
-                                    min_rel_std_pc) where {T <: Real, Tt}
-    floor = (min_rel_std_pc * 1e-2 * abs(observable.mean))^2
-    return Observable(; time = observable.time, mean = observable.mean, variance = floor)
-end
-
-function _variance_floor_observable(observable::Observable{T, Tt, Tv},
-                                    min_rel_std_pc) where {T <: Real, Tt, Tv}
-    floor = (min_rel_std_pc * 1e-2 * abs(observable.mean))^2
-    variance = max(observable.variance, floor)
-    return Observable(; time = observable.time, mean = observable.mean, variance = variance)
+                      variance = variance)
 end
 
 """
@@ -67,8 +56,7 @@ end
     psd_measurementbalancer(experiments::Vector{CrystallisationExperiment}, psd_std_pc::Real=10) -> Vector{CrystallisationExperiment}
 
 Balance particle size measurement variances by enforcing a minimum relative
-variance (at least `psd_std_pc`% of the value for the `d43`/`d50q` scalar
-observables).
+variance (at least `psd_std_pc`% of the value) at every measured time point.
 """
 function psd_measurementbalancer(experiments::Vector{CrystallisationExperiment},
                                  psd_std_pc::Real = 10)

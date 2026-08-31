@@ -1,19 +1,18 @@
 """
 Generate a synthetic experimental crystallisation dataset for CriSTool's
-`load_experiments(workbook, sheet_name)` loader.
+`load_experiments(csv_path)` loader.
 
 Truth model:
     nucl = nucl_CNT(),         params = [Aj=38.0, γ=0.6]
     gr   = growth_empirical(), params = [Ag=1.0, g=3.0]
     agg  = noaggregation(), br = nobreakage(), solver = MoM()
 
-Workbook layout matches `CriSTool.load_experiments(filepath, sheet_name)`:
-sheet "Unseeded_PE" with columns
+CSV layout matches `CriSTool.load_experiments(filepath)` (long format):
     Exp_ID | System | Temperature [°C] | Time [min]
     | Concentration [mg/mL] | Concentration_var | PS [μm] | PS_var
     | SeedMass [kg/m³] | SeedD43 [μm] | SeedDistribution | SeedSpread
-PS / PS_var are populated only on the LAST timepoint of each experiment
-(loader picks them up at the last row, all earlier rows store -1.0 sentinels).
+PS / PS_var are populated at every sampled timepoint, exercising the
+time-series particle-size observable path.
 Temperature is stored in Celsius — the loader adds 273.15 to convert to K.
 """
 
@@ -21,13 +20,11 @@ using Pkg
 Pkg.activate(joinpath(@__DIR__, ".."))
 
 using CriSTool
-using XLSX
+using CSV
 using DataFrames
 using Random
-using Statistics
 
-const OUT_PATH = joinpath(@__DIR__, "fake-experimental-dataset.xlsx")
-const SHEET_NAME = "Unseeded_PE"
+const OUT_PATH = joinpath(@__DIR__, "fake-experimental-dataset.csv")
 
 # ----------------------------------------------------------------------
 # Truth parameters and kinetics
@@ -127,16 +124,15 @@ for (idx, (T_K, c0)) in enumerate(exp_conditions)
         c_var[j] = σ^2
     end
 
-    # Heteroscedastic d43 noise (single value per experiment, attached to last point)
-    σ_d = SIGMA_D_REL * d43_true_final
-    d43_obs = max(d43_true_final + σ_d * randn(rng), 1e-12)
-    d43_var = σ_d^2
+    # Heteroscedastic d43 noise at every sampled time point.
+    σ_d = SIGMA_D_REL .* max.(solution.d43, 1e-12)
+    d43_obs = max.(solution.d43 .+ σ_d .* randn(rng, length(times)), 1e-12)
+    d43_var = σ_d .^ 2
 
     # Convert temperature to Celsius for storage (loader adds 273.15)
     T_C = T_K - 273.15
 
     for j in eachindex(times)
-        is_last = j == length(times)
         push!(rows, (
             Exp_ID            = idx,
             System            = "FAKE_SYS_A",
@@ -144,8 +140,8 @@ for (idx, (T_K, c0)) in enumerate(exp_conditions)
             Time              = times[j],
             Concentration     = round(c_obs[j], digits = 6),
             Concentration_var = round(c_var[j], digits = 8),
-            PS                = is_last ? round(d43_obs, digits = 6) : -1.0,
-            PS_var            = is_last ? round(d43_var, digits = 8) : -1.0,
+            PS                = round(d43_obs[j], digits = 6),
+            PS_var            = round(d43_var[j], digits = 8),
             SeedMass          = 0.0,
             SeedD43           = 0.0,
             SeedDistribution  = "lognormal",
@@ -159,36 +155,19 @@ df = DataFrame(rows)
 @info "Built dataframe" nrows = nrow(df) nexp = length(unique(df.Exp_ID))
 
 # ----------------------------------------------------------------------
-# Write workbook
+# Write CSV
 # ----------------------------------------------------------------------
 
-isfile(OUT_PATH) && rm(OUT_PATH)
+CSV.write(OUT_PATH, df)
 
-XLSX.openxlsx(OUT_PATH, mode = "w") do xf
-    sheet = xf[1]
-    XLSX.rename!(sheet, SHEET_NAME)
-    cols = names(df)
-    # Header
-    for (k, name) in enumerate(cols)
-        sheet[1, k] = name
-    end
-    # Data
-    for (i, row) in enumerate(eachrow(df))
-        for (k, name) in enumerate(cols)
-            sheet[i + 1, k] = row[name]
-        end
-    end
-end
-
-@info "Wrote workbook" path = OUT_PATH
+@info "Wrote CSV" path = OUT_PATH
 
 # ----------------------------------------------------------------------
 # Verify by loading back through CriSTool.load_experiments
 # ----------------------------------------------------------------------
 
 loaded = CriSTool.load_experiments(
-    OUT_PATH,
-    SHEET_NAME;
+    OUT_PATH;
     initial_crystals_cols = (; mass_concentration = :SeedMass,
                              d43 = :SeedD43,
                              distribution = :SeedDistribution,
@@ -206,7 +185,7 @@ for (i, m) in enumerate(loaded)
     println("  time grid   = ", conc.time)
     println("  conc mean   = ", round.(conc.mean, digits = 4))
     println("  conc var    = ", round.(conc.variance, digits = 6))
-    println("  d43         = ", round(m.observables.d43.mean, digits = 4),
-            "  d43var = ", round(m.observables.d43.variance, digits = 6))
+    println("  d43         = ", round.(m.observables.d43.mean, digits = 4),
+            "  d43var = ", round.(m.observables.d43.variance, digits = 6))
 end
 println("===================================")

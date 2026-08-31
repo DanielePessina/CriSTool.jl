@@ -330,6 +330,53 @@ function format_plot_measurement_value(mean_value,
     return "$(mean_text) ± $(round(std_value, sigdigits = std_sigdigits))"
 end
 
+function _measured_size_observable(expt::CrystallisationExperiment,
+                                   solution::AbstractSolution)
+    preferred_names = solution isa CrystallisationFVSolution ? (:d50q, :d43) :
+                      (:d43, :d50q)
+    for name in preferred_names
+        hasproperty(expt.observables, name) &&
+            return name, getproperty(expt.observables, name)
+    end
+    return nothing, nothing
+end
+
+function _solution_observable_trajectory(solution::AbstractSolution, name::Symbol)
+    trajectory = observable_values(solution, name)
+    trajectory isa AbstractVector ||
+        throw(ArgumentError("Simulated observable :$name must be a trajectory."))
+    return trajectory
+end
+
+function _ensemble_size_fields(solution::EnsembleMoMSolution, ::Val{:d43})
+    return solution.d43, solution.d43_mean, solution.d43_std, "D43"
+end
+
+function _ensemble_size_fields(solution::EnsembleFVSolution, ::Val{:d43})
+    return solution.d43, solution.d43_mean, solution.d43_std, "D43"
+end
+
+function _ensemble_size_fields(solution::EnsembleFVSolution, ::Val{:d50q})
+    return solution.d50q, solution.d50q_mean, solution.d50q_std, "D50"
+end
+
+function _ensemble_size_fields(solution::EnsembleMoMSolution, ::Val{:d50q})
+    throw(ArgumentError("MoM ensembles do not provide d50q."))
+end
+
+function _ensemble_size_fields(solution::AbstractSolution, ::Nothing)
+    throw(ArgumentError("No particle-size metric is available for $(typeof(solution))."))
+end
+
+function _ensemble_size_fields_for_experiment(ensemble_solution,
+                                              experiment::CrystallisationExperiment,
+                                              optimal_solution::AbstractSolution)
+    measured_name, _ = _measured_size_observable(experiment, optimal_solution)
+    size_name = measured_name === nothing ?
+                (ensemble_solution isa EnsembleFVSolution ? :d50q : :d43) : measured_name
+    return _ensemble_size_fields(ensemble_solution, Val(size_name))
+end
+
 """
     build_parameter_value_table(parameters::AbstractVector{<:Real},
                                 param_symbols::Vector{Symbol};
@@ -377,18 +424,17 @@ function build_simulation_thesis_table_data(measurements,
         pred_text = "NA"
         meas_text = "NA"
 
-        if sol isa CrystallisationMoMSolution || sol isa CrystallisationQMOMSolution
-            size_label = "d43"
-            pred_text = string(round(get_characteristic_size(sol), sigdigits = 3))
-                            meas_text = format_plot_measurement_value(measurements[m].observables.d43.mean,
-                                                          measurements[m].observables.d43.variance;
-                                                          show_uncertainty = show_measurement_uncertainty)
-        elseif sol isa CrystallisationFVSolution
-            size_label = "d50"
-            pred_text = string(round(get_characteristic_size(sol), sigdigits = 3))
-                            meas_text = format_plot_measurement_value(measurements[m].observables.d50q.mean,
-                                                          measurements[m].observables.d50q.variance;
-                                                          show_uncertainty = show_measurement_uncertainty)
+        size_name, measured_size = _measured_size_observable(measurements[m], sol)
+        if measured_size !== nothing
+            size_label = size_name === :d50q ? "d50" : string(size_name)
+            predicted_size = _solution_observable_trajectory(sol, size_name)[end]
+            pred_text = string(round(predicted_size, sigdigits = 3))
+            final_variance = measured_size.variance === nothing ? nothing :
+                             measured_size.variance[end]
+            meas_text = final_variance === nothing ?
+                        string(round(measured_size.mean[end], sigdigits = 3)) :
+                        format_plot_measurement_value(measured_size.mean[end], final_variance;
+                                                      show_uncertainty = show_measurement_uncertainty)
         end
 
         temp_str = string(round(measurements[m].temperature - 273, digits = 2))

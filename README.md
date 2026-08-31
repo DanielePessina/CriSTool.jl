@@ -9,7 +9,7 @@ The package provides:
 - population-balance solvers based on the Method of Moments (MoM), the
   Quadrature Method of Moments (QMOM), finite volumes, and WENO;
 - nucleation, growth, aggregation, breakage, and signed dissolution kinetics;
-- measurement ingestion from Excel workbooks and typed experiment containers;
+- measurement ingestion from CSV/table sources and typed experiment containers;
 - solver-aware initial crystal states from mass, d43, and distribution characteristics;
 - parameter estimation with Metaheuristics.jl and Optimization.jl;
 - likelihood-free ABCDE and Turing NUTS workflows;
@@ -72,7 +72,7 @@ raw moments and reconstructed quadrature; see [Solvers](docs/solvers.md).
 | If you want to… | Read | Run |
 | --- | --- | --- |
 | run a simulation or choose a solver | [Running simulations](docs/simulation.md), [Solvers](docs/solvers.md) | [Tutorial 1](<examples/Tutorial 1 Running Simulations.jl>) |
-| load measurements from Excel | [Measurements and data loading](docs/measurements.md) | [Tutorial 2](<examples/Tutorial 2 Parameter Estimation.jl>) |
+| load measurements from CSV | [Measurements and data loading](docs/measurements.md) | [Tutorial 2](<examples/Tutorial 2 Parameter Estimation.jl>) |
 | fit kinetic parameters | [Parameter estimation](docs/parameter-estimation.md) | [Tutorial 2](<examples/Tutorial 2 Parameter Estimation.jl>) |
 | compare ABCDE and NUTS | [ABCDE routine](docs/abcde.md), [Parameter estimation](docs/parameter-estimation.md) | [Tutorial 5](<examples/Tutorial 5 ABCDE and MCMC.jl>) |
 | define a temperature or saturation model | [Temperature profiles](docs/temperature-profiles.md), [Saturation models](docs/saturation-models.md) | [Tutorial 1](<examples/Tutorial 1 Running Simulations.jl>) |

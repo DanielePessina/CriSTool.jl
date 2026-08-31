@@ -12,8 +12,8 @@ julia --project=benchmark benchmark/run_benchmarks.jl
 
 The script:
 
-1. Loads the gold fixture (`test/fixtures/real-experimental-dataset.xlsx`,
-   sheet `Unseeded_PE` → 7 experiments).
+1. Loads the gold fixture (`test/fixtures/real-experimental-dataset.csv`,
+   7 experiments).
 2. Benchmarks three solvers with Chairmarks (`@be`, `evals=1`, `seconds=5`,
    like the original `Thesis - Benchmarks/benchmarks.jl` script):
    - **MoM** — the oracle: canonical params `[38.0, 0.6, 1.0, 3.0]`

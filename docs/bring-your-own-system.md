@@ -83,9 +83,9 @@ Nucleation, aggregation and breakage follow the same shape
 
 ## 3. Measurements with a custom observable
 
-The `Observable` container carries any observable by shape: a time series has
-vector `time`/`mean`/`variance`, a final-state scalar has scalar `time`/`mean`.
-Adding an observable (pH, mass, PSD, ...) means adding a field to the
+The `Observable` container carries any observable as a time series with vector
+`time`/`mean`/`variance`. A single measurement is represented by a one-point
+series. Adding an observable (pH, mass, PSD, ...) means adding a field to the
 experiment's `NamedTuple` — nothing else:
 
 ```julia
@@ -96,17 +96,18 @@ expt = CrystallisationExperiment(;
                                    variance = [0.5, 0.5, 0.5]),
         mass = Observable(; time = [0.0, 30.0, 60.0],     # custom observable
                           mean = [0.0, 5.0, 9.0]),
-        d43 = Observable(; mean = 8.0, variance = 1.0),   # size observables
-        d50q = Observable(; mean = 8.0, variance = 1.0)), # used by the losses
+        d43 = Observable(; time = [30.0, 60.0], mean = [6.0, 8.0],
+                         variance = [1.0, 1.0]))
     temperature = 293.15, exp_id = 1)
 ```
 
 The losses read every simulated observable exposed by `observable_values`.
 Built-in concentration and size metrics are available automatically; define an
 `observable_values` method for a custom solution observable such as pH or mass.
-Loaders for the standard Excel long format use
-`load_experiments(path, sheet)`, while custom column layouts use
-`load_measurements` and its `initial_crystals_cols` mapping.
+Loaders for the standard CSV long format use
+`load_experiments(path)`, while custom column layouts use
+`load_measurements(path)` / `experiments_from_table(table)` and the
+`initial_crystals_cols` mapping.
 
 ## 4. Simulation, loss, estimation
 

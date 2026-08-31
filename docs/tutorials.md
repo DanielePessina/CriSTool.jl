@@ -29,13 +29,13 @@ of particles, generations, samples, and chains configured in the script.
 | Tutorial | What it demonstrates | Extra input or dependency |
 | --- | --- | --- |
 | [1 — Running Simulations](<../examples/Tutorial 1 Running Simulations.jl>) | Runs the same kinetics under constant, ramp, and callable temperature profiles and compares concentration and `d43`. | CairoMakie |
-| [2 — Parameter Estimation](<../examples/Tutorial 2 Parameter Estimation.jl>) | Loads an Excel workbook, balances measurement variance, estimates a point optimum with `PE_Routine`, then runs ABCDE and NUTS. | `examples/fake-experimental-dataset.xlsx`, Metaheuristics, Turing |
+| [2 — Parameter Estimation](<../examples/Tutorial 2 Parameter Estimation.jl>) | Loads a CSV dataset, balances measurement variance, estimates a point optimum with `PE_Routine`, then runs ABCDE and NUTS. | `examples/fake-experimental-dataset.csv`, Metaheuristics, Turing |
 | [3 — Sensitivity Analysis](<../examples/Tutorial 3 Sensitivity Analysis.jl>) | Builds a parameter-to-output forward map and computes Sobol and DGSM sensitivity measures. | GlobalSensitivity, QuasiMonteCarlo |
 | [4 — Defining a Custom Kinetic](<../examples/Tutorial 4 Defining a Custom Kinetic.jl>) | Adds a growth model from a user script using a subtype, `paramaxis`, and `growthrate`. | ComponentArrays, CairoMakie |
 | [5 — ABCDE and MCMC](<../examples/Tutorial 5 ABCDE and MCMC.jl>) | Creates a noisy synthetic experiment and compares likelihood-free ABCDE with Turing NUTS using the same forward model and loss. | Turing, Distributions; no workbook |
 | [6 — Dissolution](<../examples/Tutorial 6 Dissolution.jl>) | Runs signed scalar dissolution with MoM, finite volume, and WENO from a seeded initial population. | CairoMakie |
 | [7 — QMOM](<../examples/Tutorial 7 QMOM.jl>) | Evolves raw moments, reconstructs a Gaussian quadrature, and plots the nodes alongside `d43`. | CairoMakie |
-| [8 — Real-data MoM versus FiniteVol](<../examples/Tutorial 8 Real-data MoM versus QMOM.jl>) | Runs substantial MoM optimization plus a four-chain NUTS posterior, then a 64×64 derivative-free ABCDE fit for a scalar-aggregation/uniform-breakage FiniteVol model. Results are saved under the configured results directory. | Metaheuristics, Turing, your workbook |
+| [8 — Real-data MoM versus FiniteVol](<../examples/Tutorial 8 Real-data MoM versus QMOM.jl>) | Runs substantial MoM optimization plus a four-chain NUTS posterior, then a 64×64 derivative-free ABCDE fit for a scalar-aggregation/uniform-breakage FiniteVol model. Results are saved under the configured results directory. | Metaheuristics, Turing, your CSV dataset |
 
 The scripts call `main()` at the end, so they can be run directly from the
 command line. They also keep setup values near the top of `main()` to make it
@@ -57,8 +57,8 @@ easy to replace the kinetics, parameters, time grid, or experiment data.
 
 ## Synthetic data
 
-Tutorial 2 reads `examples/fake-experimental-dataset.xlsx`, using the
-`Unseeded_PE` sheet. Tutorial 5 creates its experiment in memory, so it does
-not depend on a workbook. The workbook is a tutorial fixture; use the loader
+Tutorial 2 reads `examples/fake-experimental-dataset.csv` (long format).
+Tutorial 5 creates its experiment in memory, so it does
+not depend on a data file. The CSV is a tutorial fixture; use the loader
 options in [Measurements and data loading](measurements.md) to adapt the
 workflow to another table layout.

@@ -1,7 +1,7 @@
 using Test
 using CriSTool
 using Distributions
-using XLSX
+using DataFrames
 
 @testset "Initial crystal state construction" begin
     lognormal_initial_crystals = (; mass_concentration = 0.25,
@@ -102,13 +102,13 @@ using XLSX
                                                  initial_crystals = lognormal_initial_crystals,
                                                  save_idx = [0.0, 0.1])
 
-        experiment = CrystallisationExperiment(;
+experiment = CrystallisationExperiment(;
             observables = (;
                 concentration = Observable(; time = [0.0, 0.1],
                                            mean = [18.0, solution.concentration[end]],
                                            variance = [1.0, 1.0]),
-                d43 = Observable(; time = 0.1, mean = solution.d43[end], variance = 1.0),
-                d50q = Observable(; time = 0.1, mean = solution.d43[end], variance = 1.0)),
+                d43 = Observable(; time = [0.1], mean = [solution.d43[end]],
+                                 variance = [1.0])),
             temperature = 293.15,
             initial_crystals = lognormal_initial_crystals,
             exp_id = 1)
@@ -131,42 +131,38 @@ using XLSX
     end
 
     @testset "Table loader initial-crystal mapping" begin
-        mktempdir() do directory
-            filepath = joinpath(directory, "seeded.xlsx")
-            columns = [:Exp_ID, :Time, :Concentration, :Temperature,
-                       :SeedMass, :SeedD43, :SeedDistribution, :SeedSpread]
-            rows = [
-                (1, 0.0, 18.0, 20.0, 0.25, 12.0, "gaussian", 2.0),
-                (1, 30.0, 16.0, 20.0, 0.25, 12.0, "gaussian", 2.0),
-            ]
-            XLSX.openxlsx(filepath, mode = "w") do workbook
-                sheet = workbook[1]
-                XLSX.rename!(sheet, "Seeded")
-                for (column_index, column) in enumerate(columns)
-                    sheet[1, column_index] = String(column)
-                end
-                for (row_index, row) in enumerate(rows)
-                    for (column_index, value) in enumerate(row)
-                        sheet[row_index + 1, column_index] = value
-                    end
-                end
-            end
+        rows = DataFrame(;
+            Exp_ID = [1, 1],
+            Time = [0.0, 30.0],
+            Concentration = [18.0, 16.0],
+            Temperature = [20.0, 20.0],
+            SeedMass = [0.25, 0.25],
+            SeedD43 = [12.0, 12.0],
+            SeedDistribution = ["gaussian", "gaussian"],
+            SeedSpread = [2.0, 2.0])
 
-            experiments = load_measurements(
-                filepath,
-                "Seeded";
-                observables = (; concentration = :Concentration),
-                metadata_cols = (; temperature = :Temperature),
-                initial_crystals_cols = (; mass_concentration = :SeedMass,
-                                         d43 = :SeedD43,
-                                         distribution = :SeedDistribution,
-                                         spread = :SeedSpread),
-                temperature_transform = value -> value + 273.15)
-            @test length(experiments) == 1
-            @test experiments[1].initial_crystals ==
-                  (; mass_concentration = 0.25, d43 = 12.0,
-                     distribution = :gaussian, spread = 2.0)
-            @test experiments[1].temperature == 293.15
-        end
+        experiments = experiments_from_table(
+            rows;
+            observables = (; concentration = :Concentration),
+            metadata_cols = (; temperature = :Temperature),
+            initial_crystals_cols = (; mass_concentration = :SeedMass,
+                                     d43 = :SeedD43,
+                                     distribution = :SeedDistribution,
+                                     spread = :SeedSpread),
+            temperature_transform = value -> value + 273.15)
+        @test length(experiments) == 1
+        @test experiments[1].temperature == 293.15
+        initial_crystals = experiments[1].initial_crystals
+
+        # Values are stored raw (distribution stays a string); interpretation
+        # and validation are deferred to state construction.
+        @test initial_crystals == (; mass_concentration = 0.25, d43 = 12.0,
+                                    distribution = "gaussian", spread = 2.0)
+        problem = CrystallisationProblem(; solver = MoM(),
+                                         initial_concentration = 18.0)
+        state = initial_state_from_characteristics(problem, initial_crystals)
+        moment_values = state[1:moment_count(problem.solver)]
+        @test problem.ρ * problem.kv * moment_values[4] ≈ 0.25 rtol = 1e-12
+        @test 1e6 * moment_values[5] / moment_values[4] ≈ 12.0 rtol = 1e-12
     end
 end

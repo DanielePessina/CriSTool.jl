@@ -37,10 +37,8 @@ using JLD2
                                           concentration = Observable(; time = save_grid,
                                                                      mean = noisy_c,
                                                                      variance = σ2),
-                                          d43 = Observable(; time = save_grid[end], mean = ref.d43[end],
-                                                           variance = 0.1),
-                                          d50q = Observable(; time = save_grid[end], mean = ref.d43[end],
-                                                            variance = 0.1)),
+                                          d43 = Observable(; time = save_grid, mean = ref.d43,
+                                                           variance = fill(0.1, length(save_grid)))),
                                       temperature = 295.0, exp_id = 1)]
 
     prior = [TriangularDist(25.0, 50.0, 38.0), TriangularDist(0.3, 1.0, 0.6),

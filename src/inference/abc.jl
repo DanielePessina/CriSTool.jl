@@ -2,7 +2,9 @@
 Approximate Bayesian computation routines for parameter inference in crystallisation models. Implements the ABCDE algorithm and related plotting helpers.
 """
 function _dofcalculator(::AbstractPELossFunction, datasets::Vector{<:AbstractExperiment})
-    return sum([length(set.observables.concentration.time) + 1 for set in datasets]) #length(datasets) * (length(datasets[1].time) + 1)
+    return sum(length(observable.mean)
+               for experiment in datasets
+               for observable in values(experiment.observables))
 end
 
 function _abcde_target(optimallossfunction::Real, dof::Integer, nparams::Integer,
@@ -217,7 +219,7 @@ function run_abc(lossfunction::AbstractPELossFunction,
     end
 
     if has_particles && saveplot && output_dir !== nothing
-        ABCplot(res, optimalpara, lossfunction, prior;
+        ABCplot(res, optimalpara, lossfunction; prior = prior,
                 title = Makie.rich("$(now_str) $(extrastring)$(panel_suffix)\n MLE",
                                    Makie.subscript("minimum"), " = $optmle_round MLE",
                                    Makie.subscript(confidenceinterval_str),

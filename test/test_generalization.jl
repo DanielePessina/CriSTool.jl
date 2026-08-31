@@ -109,8 +109,8 @@ end
                                     sol.solvent_state.pH[2],
                                     sol.solvent_state.pH[end]] .+ 0.05,
                             variance = fill(0.01, 3)),
-            d43 = Observable(; time = 120.0, mean = 8.0, variance = 1.0),
-            d50q = Observable(; time = 120.0, mean = 8.0, variance = 1.0)),
+            d43 = Observable(; time = [30.0, 120.0],
+                             mean = [8.0, 8.5], variance = [1.0, 1.0])),
         temperature = 293.15, exp_id = 1)
     @test expt.observables.mass.mean[2] > 0
     L = loss(logMLE(), problem, [8.0, 2.0, 1.0, 2.0], [expt])
@@ -121,9 +121,24 @@ end
     setup = prepare_loss(problem, [expt])
     @test loss(logMLE(), setup, [8.0, 2.0, 1.0, 2.0]) ≈ L
 
-    # The custom `mass` observable rides along in the container untouched
-    # by the loss machinery (only concentration/d43 are read).
+    # Every measured observable contributes to the loss, including the custom
+    # `mass` and `pH` series.
     objectives = CriSTool._experiment_objectives(logMLE(), expt, sol)
     @test objectives isa Vector
     @test length(objectives) == 4
+
+    # The size objective uses every d43 observation, not only the endpoint.
+    size_offsets = [1.0, 2.0]
+    size_measurement = Observable(; time = [30.0, 120.0],
+                                  mean = [sol.d43[2], sol.d43[end]] .+ size_offsets,
+                                  variance = [1.0, 4.0])
+    size_experiment = CrystallisationExperiment(;
+        observables = merge(expt.observables, (; d43 = size_measurement)),
+        temperature = expt.temperature, exp_id = expt.exp_id)
+    weighted_objectives = CriSTool._experiment_objectives(
+        logMLE(weighting = [0.0, 0.0, 0.0, 1.0]), size_experiment, sol)
+    expected_size_objective = 0.5 * sum(
+        log.(2π .* ([1.0, 4.0] .+ CriSTool.CRISTOOL_VARIANCE_FLOOR)) .+
+        size_offsets .^ 2 ./ ([1.0, 4.0] .+ CriSTool.CRISTOOL_VARIANCE_FLOOR))
+    @test weighted_objectives[4] ≈ expected_size_objective
 end

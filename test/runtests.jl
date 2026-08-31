@@ -2,7 +2,6 @@ using CriSTool
 using Test
 using Distributions
 using DataFrames
-using XLSX
 import DifferentiationInterface as DI
 import ForwardDiff
 import FiniteDifferences

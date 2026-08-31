@@ -19,8 +19,8 @@ using Distributions
 using Metaheuristics
 
 # Load experiments (synthetic dataset shipped with the package)
-path = joinpath(pkgdir(CriSTool), "examples", "fake-experimental-dataset.xlsx")
-experiments = load_experiments(path, "Unseeded_PE")
+path = joinpath(pkgdir(CriSTool), "examples", "fake-experimental-dataset.csv")
+experiments = load_experiments(path)
 
 # Model and bounds
 nucl_f = nucl_CNT()
@@ -65,11 +65,10 @@ problem = CrystallisationProblem(; kinetics_nucleationfunction = nucl_f,
 L = loss(lossfn, problem, optimal_params, experiments)
 ```
 
-Weights follow the observable field order. The default `[1.0, 1.0]` retains
-the concentration/size convention; additional observables receive weight 1.0
-unless explicit weights are supplied. Moment solvers (`MoM` and `QMOM`) use
-the measured `d43` observable; discretised solvers use `d50q` when both legacy
-size fields are present. `logMLE` uses measured variances by
+Weights follow the observable field order. The default `[1.0, 1.0]` weights
+the first two observable fields; additional observables receive weight 1.0
+unless explicit weights are supplied. Each named observable is compared at all
+of its measured time points. `logMLE` uses measured variances by
 default, with `RelativeVariance(percent)` available for relative-error data:
 
 ```julia

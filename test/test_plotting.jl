@@ -18,8 +18,8 @@
                                                     observables = (;
                                                     concentration = Observable(; time = save_idx, mean = solution.concentration,
                                                     variance = fill(0.01, length(save_idx))),
-                                                    d43 = Observable(; time = save_idx[end], mean = solution.d43[end], variance = 4.0),
-                                                    d50q = Observable(; time = save_idx[end], mean = solution.d43[end], variance = 4.0)),
+                                                    d43 = Observable(; time = save_idx, mean = solution.d43,
+                                                                      variance = fill(4.0, length(save_idx)))),
                                                     temperature = temperature,
                                                     exp_id = 42)
 
@@ -35,7 +35,8 @@
                                                                        [solution];
                                                                        show_measurement_uncertainty = false)
     @test thesis_deterministic.size_label == "d43"
-    @test thesis_deterministic.rows[1][4] == string(round(measurement.observables.d43.mean, sigdigits = 3))
+    @test thesis_deterministic.rows[1][4] ==
+          string(round(measurement.observables.d43.mean[end], sigdigits = 3))
     @test !occursin("±", thesis_deterministic.rows[1][4])
 
     param_symbols = vcat(nucl_CNT().symbols, growth_empirical().symbols)
@@ -67,8 +68,8 @@ end
                                                     observables = (;
                                                     concentration = Observable(; time = save_idx, mean = solution.concentration,
                                                     variance = fill(0.01, length(save_idx))),
-                                                    d43 = Observable(; time = save_idx[end], mean = solution.d43[end], variance = 4.0),
-                                                    d50q = Observable(; time = save_idx[end], mean = solution.d43[end], variance = 4.0)),
+                                                    d43 = Observable(; time = save_idx, mean = solution.d43,
+                                                                      variance = fill(4.0, length(save_idx)))),
                                                     temperature = temperature,
                                                     exp_id = 42)
 

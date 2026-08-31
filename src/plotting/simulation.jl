@@ -23,8 +23,8 @@ function plot_measurements_vs_simulation(measurements::Vector{<:AbstractExperime
                                   agg = aggregationfunction,
                                   br = breakagefunction,
                                   initial_concentration = initial_concentration(measurements[m]),
-                                  save_idx = LinRange(measurements[m].observables.concentration.time[1],
-                                                      measurements[m].observables.concentration.time[end], 150),
+                                  save_idx = LinRange(_experiment_time_span(measurements[m])[1],
+                                                      _experiment_time_span(measurements[m])[2], 150),
                                   solver = solver,
                                   temp_profile = ConstantTemperature(measurements[m].temperature),
                                   initial_crystals = measurements[m].initial_crystals,
@@ -98,7 +98,7 @@ function plot_measurements_vs_simulation(measurements::Vector{<:AbstractExperime
                            yminorticks = Makie.IntervalsBetween(4),
                            xminorticks = Makie.IntervalsBetween(4),
                            limits = ((0,
-                                      maximum([measurements[m].observables.concentration.time[end]
+                                      maximum([_experiment_time_span(measurements[m])[2]
                                                for m in eachindex(measurements)]) + 20),
                                      nothing))
         ax1 = Makie.Axis(figure[1, 1]; merge(axis_defaults, axis_kwargs)...)
@@ -144,34 +144,38 @@ function plot_measurements_vs_simulation(measurements::Vector{<:AbstractExperime
                          linewidth = ms_linewidth,
                          linestyle = :dash)
 
-            Makie.errorbars!(ax1, measurements[m].observables.concentration.time, measurements[m].observables.concentration.mean,
-                             sqrt.(measurements[m].observables.concentration.variance),
-                             color = :black,
-                             whiskerwidth = ms_whiskerwidth,
-                             linewidth = ms_linewidtheb)
+            concentration = measurements[m].observables.concentration
+            if concentration.variance !== nothing
+                Makie.errorbars!(ax1, concentration.time, concentration.mean,
+                                 sqrt.(concentration.variance),
+                                 color = :black,
+                                 whiskerwidth = ms_whiskerwidth,
+                                 linewidth = ms_linewidtheb)
+            end
 
-            p = Makie.scatter!(ax1, measurements[m].observables.concentration.time, measurements[m].observables.concentration.mean,
+            p = Makie.scatter!(ax1, concentration.time, concentration.mean,
                                color = resolve_experiment_color(colors, m, color_palette, colouroffset),
                                markersize = ms_markersize,
                                strokewidth = 2)
             push!(plot_elements, p)
 
-            predicted_size = get_characteristic_size(sol)
-
             # Get the actual experiment ID if available, otherwise use the loop index
             exp_id = hasproperty(measurements[m], :exp_id) ? measurements[m].exp_id : m
 
-            # Collect size information for text box
-            if sol isa CrystallisationMoMSolution || sol isa CrystallisationQMOMSolution
-                pred_str = "Exp. $(exp_id) T = $(round(measurements[m].temperature-273,digits = 2) )°C, Pred. d43 = $(round(predicted_size, sigdigits=2)) μm"
-                                    meas_str = "Meas. = $(round(measurements[m].observables.d43.mean, sigdigits=3)) ± $(round(sqrt(measurements[m].observables.d43.variance), sigdigits=2)) μm"
-                    combined_str = "$pred_str, $meas_str"
-                push!(size_info, combined_str)
-            elseif sol isa CrystallisationFVSolution
-                pred_str = "Exp. $(exp_id) T = $(round(measurements[m].temperature-273,digits = 2) )°C, Pred. D50 = $(round(predicted_size, sigdigits=2)) μm"
-                                    meas_str = "Meas. = $(round(measurements[m].observables.d50q.mean, sigdigits=3)) ± $(round(sqrt(measurements[m].observables.d50q.variance), sigdigits=2)) μm"
-                    combined_str = "$pred_str, $meas_str"
-                    push!(size_info, combined_str)
+            size_name, measured_size = _measured_size_observable(measurements[m], sol)
+            if measured_size !== nothing
+                predicted_size = _solution_observable_trajectory(sol, size_name)[end]
+                pred_label = size_name === :d50q ? "D50" : uppercase(string(size_name))
+                pred_str = "Exp. $(exp_id) T = $(round(measurements[m].temperature-273,digits = 2) )°C, " *
+                           "Pred. $(pred_label) = $(round(predicted_size, sigdigits=2)) μm"
+                measured_final = measured_size.mean[end]
+                measured_std = measured_size.variance === nothing ? nothing :
+                               sqrt(measured_size.variance[end])
+                meas_str = measured_std === nothing ?
+                            "Meas. = $(round(measured_final, sigdigits=3)) μm" :
+                            "Meas. = $(round(measured_final, sigdigits=3)) ± " *
+                            "$(round(measured_std, sigdigits=2)) μm"
+                push!(size_info, "$pred_str, $meas_str")
             end
             new_label = "Exp. $(exp_id)"
             push!(labels, new_label)
@@ -182,7 +186,7 @@ function plot_measurements_vs_simulation(measurements::Vector{<:AbstractExperime
             param_string *= "\nParticle Sizes:\n"
             param_string *= join(size_info, "\n")
 
-            max_time = maximum([m.observables.concentration.time[end] for m in measurements])
+            max_time = maximum([_experiment_time_span(m)[2] for m in measurements])
             max_conc = maximum([initial_concentration(m) for m in measurements])
 
             Makie.text!(ax1, max_time * 0.75, max_conc, text = param_string,
@@ -343,62 +347,56 @@ function plot_ps_measurements_vs_simulation(measurements::Vector{<:AbstractExper
                                 agg = aggregationfunction,
                                 br = breakagefunction,
                                 initial_concentration = initial_concentration(measurements[m]),
-                                save_idx = LinRange(measurements[m].observables.concentration.time[1],
-                                                    measurements[m].observables.concentration.time[end], 150),
+                                save_idx = LinRange(_experiment_time_span(measurements[m])[1],
+                                                    _experiment_time_span(measurements[m])[2], 150),
                                 solver = solver,
                                 temp_profile = ConstantTemperature(measurements[m].temperature),
                                 initial_crystals = measurements[m].initial_crystals,
                                 kwargs...)
 
-            function get_characteristic_size(sol)
-                if sol isa CrystallisationMoMSolution || sol isa CrystallisationQMOMSolution
-                    return sol.d43
-                elseif sol isa CrystallisationFVSolution
-                    return sol.d50q
-                else
-                    return NaN
-                end
-            end
-
-            particlessizes = get_characteristic_size(sol)
+            size_name, measured_size = _measured_size_observable(measurements[m], sol)
+            particlessizes = size_name === nothing ? _size_trajectory(sol) :
+                             _solution_observable_trajectory(sol, size_name)
 
             Makie.lines!(ax1, sol.time, particlessizes,
                          color = resolve_experiment_color(colors, m, color_palette, colouroffset),
                          linewidth = ms_linewidth,
                          linestyle = :dash)
 
-            # Makie.errorbars!(ax1, measurements[m].observables.concentration.time[end], measurements[m].observables.d43.mean,
-            #                  sqrt.(measurements[m].observables.d43.variance),
-            #                  color = :black,
-            #                  whiskerwidth = ms_whiskerwidth,
-            #                  linewidth = ms_linewidtheb)
+            measured_size === nothing && continue
+            if measured_size.variance !== nothing
+                Makie.errorbars!(ax1, measured_size.time, measured_size.mean,
+                                 sqrt.(measured_size.variance),
+                                 color = :black,
+                                 whiskerwidth = ms_whiskerwidth,
+                                 linewidth = ms_linewidtheb)
+            end
 
-            p = Makie.scatter!(ax1, measurements[m].observables.concentration.time[end], measurements[m].observables.d43.mean,
+            p = Makie.scatter!(ax1, measured_size.time, measured_size.mean,
                                color = resolve_experiment_color(colors, m, color_palette, colouroffset),
                                markersize = ms_markersize,
                                strokewidth = 2)
 
             push!(plot_elements, p)
 
-            predicted_size = get_characteristic_size(sol)[end]
+            predicted_size = particlessizes[end]
 
             temp_str = "T = $(round(measurements[m].temperature-273.15, digits=2)) °C"
 
             # Get the actual experiment ID if available, otherwise use the loop index
             exp_id = hasproperty(measurements[m], :exp_id) ? measurements[m].exp_id : m
 
-            # Collect size information for text box
-            if sol isa CrystallisationMoMSolution || sol isa CrystallisationQMOMSolution
-                pred_str = "Exp. $(exp_id) T = $(round(measurements[m].temperature-273,digits = 2) )°C, Pred. d43 = $(round(predicted_size, sigdigits=2)) μm"
-                                    meas_str = "Meas. = $(round(measurements[m].observables.d43.mean, sigdigits=3)) ± $(round(sqrt(measurements[m].observables.d43.variance), sigdigits=2)) μm"
-                    combined_str = "$pred_str, $meas_str"
-                push!(size_info, combined_str)
-            elseif sol isa CrystallisationFVSolution
-                pred_str = "Exp. $(exp_id) T = $(round(measurements[m].temperature-273,digits = 2) )°C, Pred. D50 = $(round(predicted_size, sigdigits=2)) μm"
-                                    meas_str = "Meas. = $(round(measurements[m].observables.d50q.mean, sigdigits=3)) ± $(round(sqrt(measurements[m].observables.d50q.variance), sigdigits=2)) μm"
-                    combined_str = "$pred_str, $meas_str"
-                    push!(size_info, combined_str)
-            end
+            pred_label = size_name === :d50q ? "D50" : uppercase(string(size_name))
+            pred_str = "Exp. $(exp_id) T = $(round(measurements[m].temperature-273,digits = 2) )°C, " *
+                       "Pred. $(pred_label) = $(round(predicted_size, sigdigits=2)) μm"
+            measured_final = measured_size.mean[end]
+            measured_std = measured_size.variance === nothing ? nothing :
+                           sqrt(measured_size.variance[end])
+            meas_str = measured_std === nothing ?
+                        "Meas. = $(round(measured_final, sigdigits=3)) μm" :
+                        "Meas. = $(round(measured_final, sigdigits=3)) ± " *
+                        "$(round(measured_std, sigdigits=2)) μm"
+            push!(size_info, "$pred_str, $meas_str")
             new_label = "Exp. $(exp_id)"
             push!(labels, new_label)
         end
@@ -411,7 +409,7 @@ function plot_ps_measurements_vs_simulation(measurements::Vector{<:AbstractExper
 
         # Add text box with all information
 
-        max_time = maximum([m.observables.concentration.time[end] for m in measurements])
+        max_time = maximum([_experiment_time_span(m)[2] for m in measurements])
         max_conc = maximum([initial_concentration(m) for m in measurements])
 
         Makie.text!(ax1, max_time * 0.75, max_conc, text = param_string,

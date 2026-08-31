@@ -15,8 +15,7 @@ using ComponentArrays
 # ============================================================================
 
 const ROOT      = dirname(@__DIR__)            # repo root
-const FIXTURE   = joinpath(ROOT, "test", "fixtures", "real-experimental-dataset.xlsx")
-const SHEET     = "Unseeded_PE"
+const FIXTURE   = joinpath(ROOT, "test", "fixtures", "real-experimental-dataset.csv")
 const FIXED_GRID = 0:30:270                    # common save grid for FV/WENO
 const CANONICAL_θ = Float64[38.0, 0.6, 1.0, 3.0]  # gold fixture params (nucl_CNT + growth_empirical)
 const SECONDS = 5                              # Chairmarks sampling budget per benchmark
@@ -132,9 +131,9 @@ function alloccheck_summary(errs)
 end
 
 function main()
-    exps = load_experiments(FIXTURE, SHEET)
+    exps = load_experiments(FIXTURE)
     @assert length(exps) == 7 "expected 7 experiments, got $(length(exps))"
-    println("Loaded $(length(exps)) experiments from $(basename(FIXTURE)) [$SHEET]\n")
+    println("Loaded $(length(exps)) experiments from $(basename(FIXTURE))\n")
 
     global nucl_f = CriSTool.nucl_CNT()
     global gr_f   = CriSTool.growth_empirical()

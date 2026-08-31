@@ -7,9 +7,9 @@ Three steps on the same dataset:
   3. Turing NUTS using the same loss function as the ABC discrepancy, via
      the `nuts_model` builder (triangular priors on the MLE).
 
-Reads `fake-experimental-dataset.xlsx` (5 unseeded experiments, generated
+Reads `fake-experimental-dataset.csv` (5 unseeded experiments, generated
 from `[Aj=38, γ=0.6, Ag=1, g=3]` with 3% / 8% heteroscedastic noise).
-Swap `DATA_WORKBOOK` for your own .xlsx to fit real data; the workbook
+Swap `DATA_FILE` for your own .csv to fit real data; the file
 just needs the columns expected by `load_experiments`.
 """
 
@@ -18,7 +18,7 @@ using Metaheuristics
 using Turing, Distributions
 using Random
 
-const DATA_WORKBOOK = joinpath(@__DIR__, "fake-experimental-dataset.xlsx")
+const DATA_FILE = joinpath(@__DIR__, "fake-experimental-dataset.csv")
 
 function main()
     Random.seed!(11)
@@ -26,7 +26,7 @@ function main()
     # 1. Load + variance-balance the experimental data. The balancer rescales
     #    concentration / PSD variance by the supplied factors so the loss
     #    function weights the two observation types more comparably.
-    raw          = load_experiments(DATA_WORKBOOK, "Unseeded_PE")
+    raw          = load_experiments(DATA_FILE)
     measurements = CriSTool.psd_measurementbalancer(
                     CriSTool.repeatmeasurementbalancer(raw, 3), 4)
 

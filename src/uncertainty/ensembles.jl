@@ -258,7 +258,8 @@ function _run_ensemble_internal(samples::Matrix{Float64},
 
     for m in 1:n_measurements
         time = if use_measurement_time
-            range(measurements[m].observables.concentration.time[1], measurements[m].observables.concentration.time[end], n_timepoints)
+            time_start, time_stop = _experiment_time_span(measurements[m])
+            range(time_start, time_stop, n_timepoints)
         else
             time_idx
         end
