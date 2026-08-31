@@ -21,12 +21,14 @@
                                  solver = MoM())
 
         # Basic checks
-        @test solution.success == true
+        @test solution.success
         @test length(solution.time) > 0
         @test length(solution.concentration) == length(solution.time)
 
-        # Physical check: concentration should decrease during crystallization
-        @test solution.concentration[end] <= solution.concentration[1]
+        # Physical checks: the initial condition is retained and crystallization
+        # cannot increase the dissolved concentration.
+        @test solution.concentration[1] ≈ initial_conc
+        @test all(diff(solution.concentration) .<= 1e-10)
     end
 
     @testset "Basic Simulation - FiniteVol Solver" begin
@@ -49,25 +51,28 @@
                                  save_idx = collect(0:60.0:480.0),
                                  solver = FiniteVol(meshsize = 100, lmax = 50e-6))
 
-        @test solution.success == true
+        @test solution.success
         @test length(solution.time) > 0
 
-        # Check that d10 < d50 < d90 (size distribution quantiles should be ordered)
-        # Only check at final time if crystals formed
-        if solution.d50q[end] > 0
-            @test solution.d10q[end] <= solution.d50q[end]
-            @test solution.d50q[end] <= solution.d90q[end]
-        end
+        # Check that d10 <= d50 <= d90 at every saved time.  Empty
+        # distributions are represented by equal zero quantiles and are still
+        # part of the observable contract.
+        @test all(solution.d10q .<= solution.d50q)
+        @test all(solution.d50q .<= solution.d90q)
     end
 
-    @testset "Simulation with Aggregation and Breakage Functions" begin
+    @testset "Simulation with configured aggregation and breakage functions" begin
         nucl_func = nucl_CNT()
         grow_func = growth_empirical()
-        agg_func = noaggregation()  # Currently using no-op
-        br_func = nobreakage()       # Currently using no-op
+        agg_func = aggr_scalar()
+        br_func = breakage_empirical()
 
-        params = [38.0, 0.7, 1.0, 3.0]
-        initial_conc = 18.0
+        # Use a short undersaturated run with an empty population.  This keeps
+        # the integration test cheap while exercising the active operator
+        # dispatch and the exact zero-population invariant.
+        params = [38.0, 0.7, 1.0, 3.0, -6.0, 1e-3, 1.0]
+        initial_conc = 1.0
+        save_times = [0.0, 1.0, 2.0]
 
         problem,
         solution = runsimulation(params,
@@ -76,10 +81,12 @@
                                  agg_func,
                                  br_func,
                                  initial_conc;
-                                 save_idx = collect(0:120.0:480.0),
-                                 solver = FiniteVol(meshsize = 50, lmax = 50e-6))
+                                 save_idx = save_times,
+                                 solver = FiniteVol(meshsize = 10, lmax = 10e-6))
 
-        @test solution.success == true
+        @test solution.success
+        @test solution.concentration == fill(initial_conc, length(save_times))
+        @test solution.d43 == zeros(length(save_times))
     end
 
     @testset "Keyword Interface" begin
@@ -95,7 +102,7 @@
                                  initial_concentration = 18.0,
                                  save_idx = 0:120.0:480.0)
 
-        @test solution.success == true
+        @test solution.success
         @test problem isa CriSTool.CrystallisationProblem
     end
 
@@ -154,7 +161,7 @@
                                 12.0;  # Lower initial concentration
                                 solver = MoM(),
                                 save_idx = 0:120.0:480.0)
-        @test sol_low.success == true
+        @test sol_low.success
 
         # High supersaturation
         _,
@@ -164,6 +171,6 @@
                                  25.0;  # Higher initial concentration
                                  solver = MoM(),
                                  save_idx = 0:120.0:480.0)
-        @test sol_high.success == true
+        @test sol_high.success
     end
 end

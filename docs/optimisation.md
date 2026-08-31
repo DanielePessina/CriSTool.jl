@@ -18,7 +18,7 @@ using OptimizationOptimJL
 using Optim
 
 path = joinpath(pkgdir(CriSTool), "examples", "fake-experimental-dataset.csv")
-measurements = load_experiments(path)
+measurements = load_measurements(path)
 
 nucl_f = nucl_CNT()
 growth_f = growth_energy()

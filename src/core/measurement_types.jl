@@ -8,6 +8,27 @@ Abstract supertype for observable containers (see `Observable`).
 abstract type AbstractObservable end
 
 """
+    ObservableColumns(; time=:Time, mean, variance=nothing)
+
+Describe the source columns used to build one measured observable. Each
+observable may use a different time column; the normalized result is always an
+`Observable` time series.
+"""
+struct ObservableColumns
+    time::Symbol
+    mean::Symbol
+    variance::Union{Nothing, Symbol}
+end
+
+function ObservableColumns(; time = :Time, mean, variance = nothing)
+    source_time = time isa Symbol ? time : Symbol(time)
+    source_mean = mean isa Symbol ? mean : Symbol(mean)
+    source_variance = variance === nothing ? nothing :
+                      (variance isa Symbol ? variance : Symbol(variance))
+    return ObservableColumns(source_time, source_mean, source_variance)
+end
+
+"""
     Observable(; time, mean, variance=nothing) -> Observable
 
 A measured observable (concentration, d43, pH, ...) represented uniformly as a

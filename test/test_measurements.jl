@@ -1,3 +1,5 @@
+using JSON
+
 @testset "Measurements container" begin
     # Construction and accessors
     conc = Observable(; time = [0.0, 30.0, 60.0], mean = [14.0, 12.0, 9.0],
@@ -23,9 +25,9 @@
     @test single.variance === nothing
 end
 
-@testset "load_experiments on real fixture" begin
+@testset "load_measurements on real fixture" begin
     fixture = joinpath(@__DIR__, "fixtures", "real-experimental-dataset.csv")
-    ms = load_experiments(fixture)
+    ms = load_measurements(fixture)
 
     @test length(ms) == 7
     @test [m.exp_id for m in ms] == [3, 4, 5, 6, 7, 8, 9]
@@ -51,15 +53,17 @@ end
     @test ms[7].observables.d43.variance[1] ≈ 0.2669785799800902
 
     # Generic filtering still returns no data for an unknown system.
-    @test isempty(load_experiments(fixture; filters = (; System = "UNKNOWN")))
+    @test isempty(load_measurements(fixture; filters = (; System = "UNKNOWN")))
 end
 
 @testset "Table-driven measurement loader" begin
     fixture = joinpath(@__DIR__, "fixtures", "real-experimental-dataset.csv")
     measurements = load_measurements(
         fixture;
-        observables = (; concentration = (:Concentration, :Concentration_var),
-                       particle_size = (:PS, :PS_var)),
+        observables = (; concentration = ObservableColumns(
+                           mean = :Concentration, variance = :Concentration_var),
+                       particle_size = ObservableColumns(
+                           time = :Time, mean = :PS, variance = :PS_var)),
         metadata_cols = (; temperature = :Temperature, system = :System),
         temperature_transform = value -> value + 273.15,
         filters = (; System = "Unseeded"))
@@ -83,13 +87,17 @@ end
         Concentration_var = fill(0.25, 8),
         PS = [missing, 4.0, missing, 7.0, missing, 3.5, 5.5, missing],
         PS_var = [missing, 0.16, missing, 0.49, missing, 0.09, 0.25, missing],
+        ParticleTime = [missing, 30.0, missing, 90.0,
+                        missing, 30.0, 60.0, missing],
         Temperature = fill(20.0, 8),
     )
 
     experiments = experiments_from_table(
         table;
-        observables = (; concentration = (:Concentration, :Concentration_var),
-                       d43 = (:PS, :PS_var)),
+        observables = (; concentration = ObservableColumns(
+                           mean = :Concentration, variance = :Concentration_var),
+                       d43 = ObservableColumns(time = :ParticleTime,
+                                              mean = :PS, variance = :PS_var)),
         metadata_cols = (; temperature = :Temperature),
         temperature_transform = value -> value + 273.15,
     )
@@ -109,9 +117,42 @@ end
                                           variance = [0.1])
 end
 
+@testset "JSON measurement adapter" begin
+    records = [
+        (; Exp_ID = 11, Time = 0.0, Concentration = 20.0,
+           Concentration_var = 0.25, Temperature = 21.0,
+           ParticleTime = 0.0, PS = 3.0, PS_var = 0.09),
+        (; Exp_ID = 11, Time = 60.0, Concentration = 15.0,
+           Concentration_var = 0.25, Temperature = 21.0,
+           ParticleTime = 60.0, PS = 6.0, PS_var = 0.36),
+        (; Exp_ID = 11, Time = 30.0, Concentration = 18.0,
+           Concentration_var = 0.25, Temperature = 21.0,
+           ParticleTime = nothing, PS = nothing, PS_var = nothing),
+    ]
+    mktempdir() do directory
+        filepath = joinpath(directory, "measurements.json")
+        open(filepath, "w") do io
+            JSON.print(io, records)
+        end
+        experiments = load_measurements(
+            filepath;
+            format = :json,
+            observables = (; concentration = ObservableColumns(
+                               mean = :Concentration, variance = :Concentration_var),
+                           d43 = ObservableColumns(time = :ParticleTime,
+                                                  mean = :PS, variance = :PS_var)),
+            metadata_cols = (; temperature = :Temperature),
+            temperature_transform = identity)
+        @test length(experiments) == 1
+        @test experiments[1].observables.d43.time == [0.0, 60.0]
+        @test experiments[1].observables.d43.mean == [3.0, 6.0]
+        @test experiments[1].temperature == 21.0
+    end
+end
+
 @testset "Balancers" begin
     fixture = joinpath(@__DIR__, "fixtures", "real-experimental-dataset.csv")
-    ms = load_experiments(fixture)
+    ms = load_measurements(fixture)
 
     # Concentration variance floor: 10% of the mean, squared
     balanced = repeatmeasurementbalancer(ms, 10)
@@ -143,7 +184,7 @@ end
 
 @testset "Bootstrap resampling" begin
     fixture = joinpath(@__DIR__, "fixtures", "real-experimental-dataset.csv")
-    ms = load_experiments(fixture)
+    ms = load_measurements(fixture)
 
     b1 = bootstrap_repeatmeasurements(ms, true; seed = 42)
     @test b1 isa Vector{CrystallisationExperiment}
@@ -172,7 +213,10 @@ end
     # Multiple bootstraps with different seeds produce (in general) different draws
     b3 = bootstrap_repeatmeasurements(ms, 2, true; seed = 1)
     @test length(b3) == 2
-    @test all(isempty, b3) == false
+    @test all(sample -> length(sample) == length(ms), b3)
+    @test all(sample -> all(experiment ->
+                            !isempty(experiment.observables.concentration.mean),
+                            sample), b3)
 
     generic1 = bootstrap_measurements(ms, 1; seed = 17)
     generic2 = bootstrap_measurements(ms, 1; seed = 17)

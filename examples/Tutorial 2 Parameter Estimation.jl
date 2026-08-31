@@ -10,7 +10,7 @@ Three steps on the same dataset:
 Reads `fake-experimental-dataset.csv` (5 unseeded experiments, generated
 from `[Aj=38, γ=0.6, Ag=1, g=3]` with 3% / 8% heteroscedastic noise).
 Swap `DATA_FILE` for your own .csv to fit real data; the file
-just needs the columns expected by `load_experiments`.
+just needs the columns expected by `load_measurements`.
 """
 
 using CriSTool
@@ -26,7 +26,7 @@ function main()
     # 1. Load + variance-balance the experimental data. The balancer rescales
     #    concentration / PSD variance by the supplied factors so the loss
     #    function weights the two observation types more comparably.
-    raw          = load_experiments(DATA_FILE)
+    raw          = load_measurements(DATA_FILE)
     measurements = CriSTool.psd_measurementbalancer(
                     CriSTool.repeatmeasurementbalancer(raw, 3), 4)
 

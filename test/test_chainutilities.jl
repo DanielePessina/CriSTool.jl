@@ -20,25 +20,24 @@ using Turing
     test_chain_path = joinpath(@__DIR__, "test_chain.jld2")
 
     @testset "chains_to_matrix - Normal case" begin
-        # Create a simple chain with 4 params, 2 chains, 100 iterations
-        rng = MersenneTwister(42)
-        n_iters = 100
-        n_params = 4
+        # Use hand-labelled values so this checks parameter/iteration/chain
+        # ordering, not only the returned dimensions.
+        n_iters = 3
+        n_params = 2
         n_chains = 2
-
-        # Create sample data
-        data = rand(rng, n_iters, n_params, n_chains)
-        param_names = [:Aⱼ, :γ, :Ag, :g]
+        data = reshape(collect(1.0:12.0), n_iters, n_params, n_chains)
+        param_names = [:first_parameter, :second_parameter]
 
         chain = Chains(data, param_names)
 
         # Test conversion
         result = chains_to_matrix(chain, burnin = 0)
 
-        # Check output shape
         @test size(result) == (n_params, n_iters * n_chains)
-        @test eltype(result) == Float64
-        @test all(isfinite.(result))
+        @test result == [1.0 2.0 3.0 7.0 8.0 9.0;
+                         4.0 5.0 6.0 10.0 11.0 12.0]
+        @test chains_to_matrix(chain; params = [:second_parameter]) ==
+              [4.0 5.0 6.0 10.0 11.0 12.0]
     end
 
     @testset "chains_to_matrix - Single parameter" begin
@@ -127,12 +126,11 @@ using Turing
 
     @testset "chains_to_matrix - Parameter filtering" begin
         # Test filtering of internal parameters (like :lp)
-        rng = MersenneTwister(42)
-        n_iters = 100
+        n_iters = 3
         n_chains = 2
 
         # Create data with internal parameters
-        data = rand(rng, n_iters, 5, n_chains)
+        data = reshape(collect(1.0:30.0), n_iters, 5, n_chains)
         param_names = [:Aⱼ, :γ, :Ag, :g, :lp]
 
         chain = Chains(data, param_names,
@@ -141,8 +139,12 @@ using Turing
         # Test that :lp is filtered out
         result = chains_to_matrix(chain, burnin = 0)
 
-        # Should only have 4 parameters (lp filtered out)
-        @test size(result, 1) == 4
+        # Should only have 4 parameters (lp filtered out), in the original
+        # parameter order and with both chains concatenated.
+        @test result == [1.0 2.0 3.0 16.0 17.0 18.0;
+                         4.0 5.0 6.0 19.0 20.0 21.0;
+                         7.0 8.0 9.0 22.0 23.0 24.0;
+                         10.0 11.0 12.0 25.0 26.0 27.0]
         @test size(result, 2) == n_iters * n_chains
     end
 

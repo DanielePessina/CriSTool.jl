@@ -30,6 +30,7 @@ using ProgressMeter
 # File I/O & Serialization
 using JLD2
 import CSV
+import JSON
 
 # Visualization
 using PairPlots
@@ -76,7 +77,7 @@ const CRISTOOL_PRIOR_PLOT_SAMPLES = 2^18
 export CrystallisationFVSolution, CrystallisationMoMSolution,
        CrystallisationQMOMSolution, EnsembleFVSolution, EnsembleMoMSolution,
        CrystallisationProblem
-export Observable, CrystallisationExperiment, AbstractExperiment,
+export Observable, ObservableColumns, CrystallisationExperiment, AbstractExperiment,
        initial_concentration
 export AbstractSolubilityModel, ConstantSolubility, PolynomialSolubility, CallableSolubility,
        AbstractSaturationModel, ConstantSaturation, PolynomialSaturation, CallableSaturation,
@@ -100,7 +101,7 @@ export runsimulation, paramaxis, crystallisation_odeproblem,
        initial_state_from_characteristics
 export AbstractPELossFunction, AbstractVarianceModel, MeasuredVariance, RelativeVariance,
        logMLE, mae, loss, prepare_loss, LossSetup
-export experiments_from_table, load_measurements, load_experiments,
+export experiments_from_table, load_measurements,
        bootstrap_repeatmeasurements, balance_variances, repeatmeasurementbalancer,
        psd_measurementbalancer, bootstrap_measurements
 export AbstractSolver, AbstractMomentSolver, FiniteVol, MoM, QMOM, WENO,
@@ -179,8 +180,5 @@ include("plotting/ensemble.jl")
 include("plotting/simulation.jl")
 
 
-
-# Call the function when the module loads
-# create_project_directories()
 
 end

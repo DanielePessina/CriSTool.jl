@@ -32,10 +32,10 @@ import FiniteDifferences
 
         # Test ForwardDiff gradient
         grad = DI.gradient(objective_mom, forwarddiff_backend, base_params)
+        finite_difference_grad = DI.gradient(objective_mom, finitediff_backend, base_params)
 
         @test length(grad) == 4
-        @test all(isfinite.(grad))
-        @test !all(grad .≈ 0)  # Parameters should affect output
+        @test grad ≈ finite_difference_grad rtol = 0.05 atol = 1e-8
     end
 
     @testset "ForwardDiff Backend - FiniteVol Solver" begin
@@ -61,64 +61,10 @@ import FiniteDifferences
         end
 
         grad = DI.gradient(objective_fv, forwarddiff_backend, base_params)
+        finite_difference_grad = DI.gradient(objective_fv, finitediff_backend, base_params)
 
         @test length(grad) == 4
-        @test all(isfinite.(grad))
-        @test !all(grad .≈ 0)
-    end
-
-    @testset "FiniteDifferences Backend - MoM Solver" begin
-        nucl_func = nucl_CNT()
-        grow_func = growth_empirical()
-
-        base_params = [38.0, 0.7, 1.0, 3.0]
-        initial_conc = 18.0
-
-        function objective_mom_fd(params)
-            _,
-            solution = runsimulation(params,
-                                     nucl_func,
-                                     grow_func,
-                                     initial_conc;
-                                     save_idx = 0:60.0:240.0,
-                                     solver = MoM())
-            return solution.concentration[end]
-        end
-
-        # Test FiniteDifferences gradient
-        grad = DI.gradient(objective_mom_fd, finitediff_backend, base_params)
-
-        @test length(grad) == 4
-        @test all(isfinite.(grad))
-        @test !all(grad .≈ 0)
-    end
-
-    @testset "FiniteDifferences Backend - FiniteVol Solver" begin
-        nucl_func = nucl_CNT()
-        grow_func = growth_empirical()
-        agg_func = noaggregation()
-        br_func = nobreakage()
-
-        base_params = [38.0, 0.7, 1.0, 3.0]
-        initial_conc = 18.0
-
-        function objective_fv_fd(params)
-            _,
-            solution = runsimulation(params,
-                                     nucl_func,
-                                     grow_func,
-                                     agg_func,
-                                     br_func,
-                                     initial_conc;
-                                     save_idx = collect(0:60.0:240.0),
-                                     solver = FiniteVol(meshsize = 50, lmax = 50e-6))
-            return solution.concentration[end]
-        end
-
-        grad = DI.gradient(objective_fv_fd, finitediff_backend, base_params)
-
-        @test length(grad) == 4
-        @test all(isfinite.(grad))
+        @test grad ≈ finite_difference_grad rtol = 0.15 atol = 1e-8
     end
 
     @testset "Gradient Numerical Verification - MoM" begin
@@ -210,9 +156,10 @@ import FiniteDifferences
         end
 
         jac = DI.jacobian(multi_objective, forwarddiff_backend, base_params)
+        finite_difference_jac = DI.jacobian(multi_objective, finitediff_backend, base_params)
 
         @test size(jac) == (3, 4)
-        @test all(isfinite.(jac))
+        @test jac ≈ finite_difference_jac rtol = 0.05 atol = 1e-8
     end
 
     @testset "d50 Objective Gradient - FiniteVol" begin
@@ -239,9 +186,10 @@ import FiniteDifferences
         end
 
         grad = DI.gradient(objective_d50, forwarddiff_backend, base_params)
+        finite_difference_grad = DI.gradient(objective_d50, finitediff_backend, base_params)
 
         @test length(grad) == 4
-        @test all(isfinite.(grad))
+        @test grad ≈ finite_difference_grad rtol = 0.15 atol = 1e-8
     end
 
 end

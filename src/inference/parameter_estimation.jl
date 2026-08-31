@@ -705,6 +705,9 @@ function _simulated_at(solution::AbstractSolution, name::Symbol,
     simulated = observable_values(solution, name)
     simulated isa AbstractVector ||
         throw(ArgumentError("Simulated observable :$name must be a trajectory."))
+    all((solution.time[1] .<= target_time) .&
+        (target_time .<= solution.time[end])) ||
+        throw(ArgumentError("Observation times for :$name lie outside the simulated time span."))
     return [_linear_interpolate(solution.time, simulated, t) for t in target_time]
 end
 
@@ -742,7 +745,8 @@ function _experiment_objectives(lf::AbstractPELossFunction,
         if !solution.success
             return _observable_weight(lf, observable_index) * CRISTOOL_FAILED_SIMULATION_PENALTY
         end
-        objective = mean(abs.(simulated_mean[first_index:end] .-
+        objective = first_index > length(measured_mean) ? zero(eltype(simulated_mean)) :
+                    mean(abs.(simulated_mean[first_index:end] .-
                               measured_mean[first_index:end]))
         return _observable_weight(lf, observable_index) * objective
     end
@@ -792,9 +796,12 @@ function loss(lf::mae, setup::LossSetup, params)
                 measured_time, measured_mean = _measurement_data(measured)
                 if solution.success
                     simulated_mean = _simulated_at(solution, name, measured_time)
+                    first_index = name === :concentration ? 2 : 1
                     error_sums[observable_index] +=
-                        sum(abs.(simulated_mean .- measured_mean))
-                    error_counts[observable_index] += length(measured_mean)
+                        sum(abs.(simulated_mean[first_index:end] .-
+                                measured_mean[first_index:end]))
+                    error_counts[observable_index] +=
+                        max(length(measured_mean) - first_index + 1, 0)
                 else
                     error_sums[observable_index] += CRISTOOL_FAILED_SIMULATION_PENALTY
                     error_counts[observable_index] += 1
@@ -805,7 +812,8 @@ function loss(lf::mae, setup::LossSetup, params)
             error_counts .+= 1
         end
     end
-    return sum(_observable_weight(lf, i) * error_sums[i] / error_counts[i]
+    return sum(error_counts[i] == 0 ? zero(eltype(params)) :
+               _observable_weight(lf, i) * error_sums[i] / error_counts[i]
                for i in eachindex(objective_names))
 end
 

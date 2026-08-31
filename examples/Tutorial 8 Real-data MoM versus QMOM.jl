@@ -127,7 +127,7 @@ end
 
 function main()
     Random.seed!(20260830)
-    measurements = load_experiments(DATA_FILE)
+    measurements = load_measurements(DATA_FILE)
     isempty(measurements) && error("No experiments found in $DATA_FILE")
     println("Loaded ", length(measurements), " experiments from ", DATA_FILE)
 

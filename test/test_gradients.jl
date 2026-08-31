@@ -75,7 +75,7 @@ import FiniteDifferences
 
     @testset "Full logMLE loss (gold fixture)" begin
         fixture = joinpath(@__DIR__, "fixtures", "real-experimental-dataset.csv")
-        ms = load_experiments(fixture)
+        ms = load_measurements(fixture)
         problem = CrystallisationProblem(;
             kinetics_nucleationfunction = nucl_CNT(),
             kinetics_growthfunction = growth_empirical(),

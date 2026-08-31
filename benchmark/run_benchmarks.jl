@@ -131,7 +131,7 @@ function alloccheck_summary(errs)
 end
 
 function main()
-    exps = load_experiments(FIXTURE)
+    exps = load_measurements(FIXTURE)
     @assert length(exps) == 7 "expected 7 experiments, got $(length(exps))"
     println("Loaded $(length(exps)) experiments from $(basename(FIXTURE))\n")
 

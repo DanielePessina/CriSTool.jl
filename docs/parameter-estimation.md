@@ -20,7 +20,7 @@ using Metaheuristics
 
 # Load experiments (synthetic dataset shipped with the package)
 path = joinpath(pkgdir(CriSTool), "examples", "fake-experimental-dataset.csv")
-experiments = load_experiments(path)
+experiments = load_measurements(path)
 
 # Model and bounds
 nucl_f = nucl_CNT()

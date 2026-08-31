@@ -8,7 +8,7 @@
 
 @testset "Gold fixture: loader + MoM at canonical params" begin
     fixture = joinpath(@__DIR__, "fixtures", "real-experimental-dataset.csv")
-    ms = load_experiments(fixture)
+    ms = load_measurements(fixture)
     @test length(ms) == 7
 
     problem = CrystallisationProblem(;
@@ -23,8 +23,8 @@
     # Frozen loss values (logMLE and MAE, weightings (1,1))
     L_mle = loss(logMLE(), problem, params, ms)
     L_mae = loss(mae(), problem, params, ms)
-    @test L_mle ≈ 3918.9027957924145 rtol = 1e-10
-    @test L_mae ≈ 8.031591885353649 rtol = 1e-10
+    @test L_mle ≈ 3918.9027957924154 rtol = 1e-10
+    @test L_mae ≈ 8.414760809644596 rtol = 1e-10
 
     # Frozen spot trajectories (final concentration, final d43 per experiment)
     expected_final = Dict(

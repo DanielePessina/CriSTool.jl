@@ -127,7 +127,7 @@
         # All output arrays should be concrete types, not Any
         @test eltype(sol.time) <: Real
         @test eltype(sol.concentration) <: Real
-        @test sol.success isa Bool
+        @test sol.success
     end
 
     @testset "CrystallisationProblem Type Stability" begin
@@ -154,7 +154,7 @@
         sol = runsimulation(params, nucl_CNT(), growth_empirical(), 18.0;
                             solver = MoM(), save_idx = 0:1.0:5.0)
 
-        @test sol.success == true
+        @test sol.success
         @test length(sol.time) >= 2
     end
 
@@ -166,7 +166,7 @@
         sol = runsimulation(params, nucl_CNT(), growth_empirical(), 18.0;
                             solver = MoM(), save_idx = [0.0])
 
-        @test sol.success == true
+        @test sol.success
         @test sol.concentration[1] ≈ 18.0  # Should be initial concentration
     end
 end

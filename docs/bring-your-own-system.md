@@ -105,8 +105,8 @@ The losses read every simulated observable exposed by `observable_values`.
 Built-in concentration and size metrics are available automatically; define an
 `observable_values` method for a custom solution observable such as pH or mass.
 Loaders for the standard CSV long format use
-`load_experiments(path)`, while custom column layouts use
-`load_measurements(path)` / `experiments_from_table(table)` and the
+`load_measurements(path)`, while custom column layouts use
+`load_measurements(path; observables=...)` / `experiments_from_table(table)` and the
 `initial_crystals_cols` mapping.
 
 ## 4. Simulation, loss, estimation

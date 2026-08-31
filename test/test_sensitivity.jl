@@ -22,6 +22,23 @@
     @test size(dp[1]) == (6, 4)
     @test dp[1][6, end] < 0
 
+    # Verify the forward sensitivity against an independent central
+    # difference of the public simulation interface.
+    function final_concentration_at_Aj(Aj)
+        _, solution = runsimulation([Aj, 0.6, 1.0, 3.0];
+                                    nucl = nucl_CNT(), gr = growth_empirical(),
+                                    solver = MoM(), initial_concentration = 14.67,
+                                    temp_profile = CriSTool.ConstantTemperature(290.15),
+                                    save_idx = saveat)
+        return solution.concentration[end]
+    end
+    finite_difference_step = 1e-4
+    finite_difference_sensitivity =
+        (final_concentration_at_Aj(38.0 + finite_difference_step) -
+         final_concentration_at_Aj(38.0 - finite_difference_step)) /
+        (2 * finite_difference_step)
+    @test dp[1][6, end] ≈ finite_difference_sensitivity rtol = 1e-4 atol = 1e-8
+
     prob_fv = CrystallisationProblem(;
         kinetics_nucleationfunction = nucl_CNT(),
         kinetics_growthfunction = growth_empirical(),

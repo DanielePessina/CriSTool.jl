@@ -17,15 +17,18 @@ estimation: [Tutorial 2 — Parameter Estimation](<../examples/Tutorial 2 Parame
 using CriSTool
 
 path = joinpath(pkgdir(CriSTool), "examples", "fake-experimental-dataset.csv")
-experiments = load_experiments(path)
+experiments = load_measurements(path)
 ```
 
-For a different tabular layout, use the table-driven loader (any CSV file):
+For a different tabular layout, pass an explicit per-observable schema. The
+same schema works for CSV and JSON files:
 
 ```julia
 experiments = load_measurements(path;
-    observables = (; concentration = (:Concentration, :Concentration_var),
-                   particle_size = (:PS, :PS_var)),
+    observables = (; concentration = ObservableColumns(
+                       mean = :Concentration, variance = :Concentration_var),
+                   particle_size = ObservableColumns(
+                       time = :ParticleTime, mean = :PS, variance = :PS_var)),
     metadata_cols = (; temperature = :Temperature, system = :System),
     initial_crystals_cols = (; mass_concentration = :SeedMass,
                              d43 = :SeedD43,
@@ -34,14 +37,20 @@ experiments = load_measurements(path;
     temperature_transform = T -> T + 273.15)
 ```
 
-Both loaders are thin wrappers over `experiments_from_table`, which builds
-experiments from any tabular source (a `DataFrame`, a `CSV.File`, ...) —
-bring your own reader for formats the package does not parse directly.
+`experiments_from_table` is the semantic normalizer. `load_measurements` is a
+thin CSV/JSON file adapter over it. Use `ObservableColumns` when the source
+uses different column names or when observables have different time columns.
+
+JSON files use an array of records with the same field names as the CSV rows:
+
+```julia
+experiments = load_measurements("measurements.json"; format = :json)
+```
 
 Each observable retains all usable rows on its own time grid. Extra metadata is
 retained in `experiment.metadata`.
 
-`load_experiments(path)` expects a CSV file in the long format where each
+`load_measurements(path)` expects a CSV or JSON file in the long format where each
 experiment is grouped by `Exp_ID` with columns such as `Time`,
 `Concentration`, `Concentration_var`, `Temperature`, and optional
 `PS`/`PS_var`. Use the `filters` keyword for arbitrary source columns and

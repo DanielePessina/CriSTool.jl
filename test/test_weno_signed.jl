@@ -29,8 +29,11 @@ end
 
     @testset "Negative scalar growth uses mirrored WENO and open boundaries" begin
         meshsize = 32
-        numberdensity = [1.0 + 0.1 * sin(2pi * index / meshsize)
-                         for index in 1:meshsize]
+        # A linear profile has an independently known value at every face.
+        # The negative-speed reconstruction at face 16 should therefore use
+        # the midpoint value between cells 15 and 16, not the right-cell
+        # value used by first-order upwinding.
+        numberdensity = [1.0 + 0.1 * index for index in 1:meshsize]
         padded_density = zeros(meshsize + 4)
         flux = zeros(meshsize + 1)
         signed_growth_rate = -2.0
@@ -40,9 +43,8 @@ end
         @test flux[1] == signed_growth_rate * numberdensity[1]
         @test flux[end] == 0.0
         @test all(flux[2:(end - 1)] .<= 0.0)
-        # A smooth profile should use a high-order trace rather than the
-        # right-cell value at an interior face.
-        @test flux[16] / signed_growth_rate != numberdensity[16]
+        expected_face_trace = 2.55
+        @test flux[16] ≈ signed_growth_rate * expected_face_trace
     end
 
     @testset "Mesh-aligned rates choose WENO direction face by face" begin

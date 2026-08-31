@@ -1,13 +1,13 @@
 """
 Generate a synthetic experimental crystallisation dataset for CriSTool's
-`load_experiments(csv_path)` loader.
+`load_measurements(csv_path)` loader.
 
 Truth model:
     nucl = nucl_CNT(),         params = [Aj=38.0, γ=0.6]
     gr   = growth_empirical(), params = [Ag=1.0, g=3.0]
     agg  = noaggregation(), br = nobreakage(), solver = MoM()
 
-CSV layout matches `CriSTool.load_experiments(filepath)` (long format):
+CSV layout matches `CriSTool.load_measurements(filepath)` (long format):
     Exp_ID | System | Temperature [°C] | Time [min]
     | Concentration [mg/mL] | Concentration_var | PS [μm] | PS_var
     | SeedMass [kg/m³] | SeedD43 [μm] | SeedDistribution | SeedSpread
@@ -163,10 +163,10 @@ CSV.write(OUT_PATH, df)
 @info "Wrote CSV" path = OUT_PATH
 
 # ----------------------------------------------------------------------
-# Verify by loading back through CriSTool.load_experiments
+# Verify by loading back through CriSTool.load_measurements
 # ----------------------------------------------------------------------
 
-loaded = CriSTool.load_experiments(
+loaded = CriSTool.load_measurements(
     OUT_PATH;
     initial_crystals_cols = (; mass_concentration = :SeedMass,
                              d43 = :SeedD43,

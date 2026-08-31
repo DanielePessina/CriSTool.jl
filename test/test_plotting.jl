@@ -23,6 +23,30 @@
                                                     temperature = temperature,
                                                     exp_id = 42)
 
+    ensemble_samples = repeat(reshape(params, :, 1), 1, 2)
+    ensemble = run_ensemble_fixed(ensemble_samples, nucl_CNT(), growth_empirical(),
+                                  noaggregation(), nobreakage(), MoM();
+                                  time_idx = save_idx,
+                                  temp_profile = CriSTool.ConstantTemperature(temperature),
+                                  initial_concentration = 18.0,
+                                  verbosity = 0, HPC = true)
+    optimal_solutions = [(nothing, solution)]
+
+    mktempdir() do dir
+        concentration_figure = CriSTool.plot_measurements_vs_ensemble(
+            [measurement], [ensemble], optimal_solutions;
+            savename = "ensemble_concentration", savedir = dir,
+            showplot = false, showtext = false)
+        particle_size_figure = CriSTool.plot_ps_measurements_vs_ensemble(
+            [measurement], [ensemble], optimal_solutions;
+            savename = "ensemble_particle_size", savedir = dir,
+            showplot = false, showtext = false)
+        @test concentration_figure !== nothing
+        @test particle_size_figure !== nothing
+        @test isfile(joinpath(dir, "ensemble_concentration.png"))
+        @test isfile(joinpath(dir, "ensemble_particle_size.png"))
+    end
+
     thesis_default = CriSTool.build_simulation_thesis_table_data([measurement], [solution])
     @test thesis_default.size_label == "d43"
     @test thesis_default.rows[1][1] == "42"

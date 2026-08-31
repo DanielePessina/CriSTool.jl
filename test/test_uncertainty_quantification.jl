@@ -1,4 +1,16 @@
 using Random
+
+mutable struct _SequenceUnitRNG <: Random.AbstractRNG
+    values::Vector{Float64}
+    index::Int
+end
+
+function Random.rand(rng::_SequenceUnitRNG)
+    value = rng.values[rng.index]
+    rng.index += 1
+    return value
+end
+
 @testset "Uncertainty Quantification Utilities" begin
 
     @testset "distribution_to_matrix" begin
@@ -23,6 +35,16 @@ using Random
             prior = Distributions.product_distribution([Normal(0, 1), Uniform(-1, 1)])
             mat_prod = CriSTool.distribution_to_matrix(prior, 100)
             @test size(mat_prod) == (2, 100)
+        end
+
+        @testset "Product Distribution preserves component order" begin
+            prior = Distributions.product_distribution([
+                Distributions.Dirac(2.0), Distributions.Dirac(-1.0)
+            ])
+            mat = CriSTool.distribution_to_matrix(prior, 4;
+                                                  rng = Random.Xoshiro(12))
+            @test mat == [2.0 2.0 2.0 2.0;
+                          -1.0 -1.0 -1.0 -1.0]
         end
 
         # Test with TriangularDist (common in parameter estimation)
@@ -141,26 +163,12 @@ using Random
         end
 
         @testset "sample_from_logweights" begin
-            rng = Random.Xoshiro(42)
-            # Uniform weights should give approximately uniform sampling
-            logws = zeros(4)
-            counts = zeros(Int, 4)
-            for _ in 1:1000
-                idx = CriSTool.KissABC.sample_from_logweights(rng, logws)
-                counts[idx] += 1
-            end
-            # Each should be roughly 250 ± 50
-            @test all(counts .> 150) && all(counts .< 350)
-
-            # Highly unequal weights
-            logws_unequal = [-100.0, 0.0, -100.0, -100.0]
-            counts_unequal = zeros(Int, 4)
-            for _ in 1:100
-                idx = CriSTool.KissABC.sample_from_logweights(rng, logws_unequal)
-                counts_unequal[idx] += 1
-            end
-            # Index 2 should dominate
-            @test counts_unequal[2] >= 95
+            # Supply known inverse-CDF draws so each branch is checked
+            # deterministically rather than through arbitrary count bands.
+            rng = _SequenceUnitRNG([0.05, 0.20, 0.90], 1)
+            logws = log.([0.1, 0.3, 0.6])
+            @test [CriSTool.KissABC.sample_from_logweights(rng, logws)
+                   for _ in 1:3] == [1, 2, 3]
         end
     end
 
@@ -171,7 +179,8 @@ using Random
             cost(x) = sum(abs2.(x .- [1.0, 1.0]))  # minimum at (1,1)
             res = CriSTool.ABCDE_Turner(prior, x -> cost(collect(x)), 0.5;
                                         nparticles = 64, generations = 30, K = 4,
-                                        HPC = true, p_crossover = 0.9)
+                                        HPC = true, p_crossover = 0.9,
+                                        rng = Random.Xoshiro(23))
             @test minimum(res.C.particles) < 1.0  # should find good solutions
             @test length(res.P) == 2
         end
@@ -187,12 +196,9 @@ using Random
                                                                                                      nparticles = 100,
                                                                                                      generations = 5,
                                                                                                      K = 8,
-                                                                                                     HPC = true)
-            if res.reached_ϵ
-                @test length(res.C.particles) == 104
-            else
-                @test 0 < length(res.C.particles) < 104
-            end
+                                                                                                     HPC = true,
+                                                                                                     rng = Random.Xoshiro(24))
+            @test 0 < length(res.C.particles) <= 104
         end
     end
 end

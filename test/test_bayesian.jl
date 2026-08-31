@@ -12,6 +12,7 @@ using Random
 using Turing
 using ComponentArrays
 using MCMCChains
+using Metaheuristics
 import Makie
 using JLD2
 
@@ -69,14 +70,36 @@ using JLD2
         @test_throws ArgumentError CriSTool.rename_chain(chain, syms[1:2])
     end
 
+    @testset "PE_Routine returns a bounded minimum" begin
+        Random.seed!(12)
+        lower_bounds = [37.0, 0.5, 0.9, 2.5]
+        upper_bounds = [39.0, 0.9, 1.1, 3.5]
+        result = CriSTool.PE_Routine(
+            lf, meas, lower_bounds, upper_bounds, nucl, gr, agg, br;
+            solver = solver, nparticles = 4, generations = 1, savetxt = false,
+            verbosity = 0, HPC = true, parallel_evaluation = false)
+        minimizer = Metaheuristics.minimizer(result)
+        loss_problem = CrystallisationProblem(;
+            kinetics_nucleationfunction = nucl,
+            kinetics_growthfunction = gr,
+            kinetics_aggregationfunction = agg,
+            kinetics_breakagefunction = br,
+            solver = solver)
+        @test length(minimizer) == length(lower_bounds)
+        @test all(lower_bounds .<= minimizer .<= upper_bounds)
+        @test Metaheuristics.minimum(result) ≈ loss(lf, loss_problem, minimizer, meas)
+    end
+
     @testset "MCMC_Routine" begin
         sampler = NUTS(5, 0.65; adtype = AutoForwardDiff(chunksize = 4))
         # No outputdir: zero filesystem writes.
         outdir = mktempdir()
-        chain = CriSTool.MCMC_Routine(meas, prior, nucl, gr, agg, br;
-                                      solver = solver, lossfunction = lf,
-                                      sampler = sampler, n_samples = 10, n_chains = 1,
-                                      verbosity = 0)
+        chain = cd(outdir) do
+            CriSTool.MCMC_Routine(meas, prior, nucl, gr, agg, br;
+                                  solver = solver, lossfunction = lf,
+                                  sampler = sampler, n_samples = 10, n_chains = 1,
+                                  verbosity = 0)
+        end
         @test chain isa MCMCChains.Chains
         @test names(chain, :parameters) == [:Aⱼ, :γ, :Ag, :g]
         @test size(chain.value, 1) == 10

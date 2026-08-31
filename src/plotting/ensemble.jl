@@ -75,15 +75,6 @@ function plot_measurements_vs_ensemble(measurements::Vector{<:AbstractExperiment
         figure_defaults = (; size = (700, total_height))
         figure = Makie.Figure(; merge(figure_defaults, figure_kwargs)...)
 
-        # try
-        #     fontfile = joinpath(pwd(), "PaperMono-Regular.ttf")
-        #     Makie.set_theme!(fonts = (; regular = fontfile, bold = fontfile, italic = fontfile,
-        #                               bold_italic = fontfile))
-        # catch err
-        #     @warn "RobotoSlab font not found, using default font."
-        #     println("pwd is: ", pwd())
-        # end
-
         ms_legendfontsize = 18
         ms_xtickfontsize = 18
         ms_ytickfontsize = 18

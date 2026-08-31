@@ -30,6 +30,51 @@ using ComponentArrays
                                   deadband_state, 0.0) == 0.0
     end
 
+    @testset "Vectorized rate adapters agree with scalar laws" begin
+        problem = CrystallisationProblem(
+            kinetics_nucleationfunction = fixed_no_nucleation,
+            kinetics_growthfunction = growth_empirical(),
+            kinetics_dissolutionfunction = growth_dissolution(),
+            parameterset_nucleation = Float64[],
+            parameterset_growth = [1.0, 2.0],
+            parameterset_dissolution = [2.0, 0.0, 1.5],
+            saturation_model = dissolution_saturation,
+            initial_concentration = 5.0,
+            solver = FiniteVol(meshsize = 3, lmax = 3e-6))
+        mesh = problem.solver.cell_centre
+        super_state = [zeros(3); 15.0]
+        under_state = [zeros(3); 5.0]
+
+        growth_destination = zeros(3)
+        growth_value = CriSTool.growthrate!(growth_destination,
+                                            growth_empirical(), [1.0, 2.0],
+                                            problem, super_state, 0.0, mesh)
+        expected_growth = 1.0e-9 * 0.5^2.0
+        @test growth_value === growth_destination
+        @test growth_destination == fill(expected_growth, 3)
+        @test CriSTool.growthrate_at_length(growth_empirical(), [1.0, 2.0],
+                                            problem, super_state, 0.0, mesh[2]) ≈
+              expected_growth
+
+        dissolution_destination = zeros(3)
+        dissolution_value = CriSTool.dissolutionrate!(
+            dissolution_destination, growth_dissolution(), [2.0, 0.0, 1.5],
+            problem, under_state, 0.0, mesh)
+        expected_dissolution = -(2.0e-9) * 0.5^1.5
+        @test dissolution_value === dissolution_destination
+        @test dissolution_destination == fill(expected_dissolution, 3)
+        @test CriSTool.dissolutionrate_at_length(
+                  growth_dissolution(), [2.0, 0.0, 1.5], problem,
+                  under_state, 0.0, mesh[2]) ≈ expected_dissolution
+
+        net_destination = zeros(3)
+        CriSTool.net_growth_rate!(net_destination, growth_empirical(),
+                                  [1.0, 2.0], growth_dissolution(),
+                                  [2.0, 0.0, 1.5], problem, under_state, 0.0,
+                                  mesh)
+        @test net_destination == fill(expected_dissolution, 3)
+    end
+
     @testset "Independent growth and dissolution slots" begin
         problem = CrystallisationProblem(
             kinetics_nucleationfunction = fixed_no_nucleation,

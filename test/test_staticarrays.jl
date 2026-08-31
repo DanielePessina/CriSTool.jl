@@ -18,6 +18,6 @@
                         solver = MoM(),
                         initial_state = initial_state)
 
-    @test sol.success == true
+    @test sol.success
     @test sol.concentration[end] > 0
 end
