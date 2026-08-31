@@ -383,18 +383,26 @@ function nuts_model(experiments::Vector{<:AbstractExperiment},
     problem = _build_loss_problem(nucleationfunction, growthfunction,
                                   aggregationfunction, breakagefunction, solver)
     setup = prepare_loss(problem, experiments)
-    return _cristool_nuts_loss_model(prior, lossfunction, setup)
+    # MCMCThreads may evaluate chains in independent tasks.  Julia's
+    # task-local cache gives each chain one private LossSetup, while avoiding
+    # a deep copy for every NUTS transition.  Each loss evaluation still
+    # remakes its ODEProblem from that chain-local template.
+    setup_per_task = Base.OncePerTask{LossSetup}() do
+        deepcopy(setup)
+    end
+    return _cristool_nuts_loss_model(prior, lossfunction, setup_per_task)
 end
 
 # Module-scope Turing model (DynamicPPL requirement). Generic over the
-# number of parameters; the loss setup is hoisted out of the model.
-Turing.@model function _cristool_nuts_loss_model(prior, lossfunction, loss_setup)
+# number of parameters; the per-task loss setup is hoisted out of the model.
+Turing.@model function _cristool_nuts_loss_model(prior, lossfunction,
+                                                 loss_setup_per_task)
     n = length(prior)
     θ = Vector{Float64}(undef, n)
     for i in 1:n
         θ[i] ~ prior[i]
     end
-    Turing.@addlogprob!(-loss(lossfunction, loss_setup, θ))
+    Turing.@addlogprob!(-loss(lossfunction, loss_setup_per_task(), θ))
 end
 
 """

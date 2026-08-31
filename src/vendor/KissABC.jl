@@ -20,7 +20,6 @@ import AbstractMCMC: sample, step, MCMCThreads, MCMCDistributed
 using Random
 using Distributions
 using MonteCarloMeasurements
-using FLoops
 using ProgressMeter
 import Base.length
 
@@ -734,15 +733,16 @@ function smc(prior::Tprior,
                           3 * Np / (min(alpha, min_r_ess)))
     nparticles >= min_nparticles || error("nparticles must be >= $min_nparticles.")
     θs = [op(float, Particle(rand(rng, prior))) for i in 1:nparticles]
-    # Xs = parallel ?
-    #     fetch.([
-    #     Threads.@spawn cost(push_p(prior, θs[$i].x)) for i = 1:nparticles]) :
-    #     [cost(push_p(prior, θs[i].x)) for i = 1:nparticles]
     Xs = Vector{Float64}(undef, nparticles)
-    @floop for i in 1:nparticles
-        Xs[i] = fetch(cost(push_p(prior, θs[i].x)))
+    if parallel
+        Threads.@threads :static for i in 1:nparticles
+            Xs[i] = fetch(cost(push_p(prior, θs[i].x)))
+        end
+    else
+        for i in 1:nparticles
+            Xs[i] = fetch(cost(push_p(prior, θs[i].x)))
+        end
     end
-    # Xs = fetch.([ cost(push_p(prior, θs[$i].x)) @floop for i = 1:nparticles])
 
     lπs = [logpdf(prior, push_p(prior, θs[i].x)) for i in 1:nparticles]
     α = alpha
@@ -791,29 +791,47 @@ function smc(prior::Tprior,
                 W = op(*, op(-, θs[b], θs[a]), max_stretch * randn(rng) / sqrt(Np))
                 (log(rand(rng)), op(+, θs[i], W), 0.0)
             end
-            @floop for i in 1:nparticles # non-ideal parallelism
-                alive[i] || continue
-                lprob, θp, logcorr = new_p[i]
-                isnothing(lprob) && continue
-                lπp = logpdf(prior, push_p(prior, θp.x))
-                lπp < 0 && (!isfinite(lπp)) && continue
-                lM = min(lπp - lπs[i] + logcorr, 0.0)
-                if lprob < lM
-                    Xp = cost(push_p(prior, θp.x))
-                    if flag
-                        Xp > ϵ && continue
-                    else
-                        Xp >= ϵ && continue
+            if parallel
+                Threads.@threads :static for i in 1:nparticles
+                    alive[i] || continue
+                    lprob, θp, logcorr = new_p[i]
+                    isnothing(lprob) && continue
+                    lπp = logpdf(prior, push_p(prior, θp.x))
+                    lπp < 0 && (!isfinite(lπp)) && continue
+                    lM = min(lπp - lπs[i] + logcorr, 0.0)
+                    if lprob < lM
+                        Xp = cost(push_p(prior, θp.x))
+                        if flag
+                            Xp > ϵ && continue
+                        else
+                            Xp >= ϵ && continue
+                        end
+                        θs[i] = θp
+                        Xs[i] = Xp
+                        lπs[i] = lπp
+                        Base.Threads.atomic_add!(accepted, 1)
                     end
-                    θs[i] = θp
-                    Xs[i] = Xp
-                    lπs[i] = lπp
+                end
+            else
+                for i in 1:nparticles
+                    alive[i] || continue
+                    lprob, θp, logcorr = new_p[i]
+                    isnothing(lprob) && continue
+                    lπp = logpdf(prior, push_p(prior, θp.x))
+                    lπp < 0 && (!isfinite(lπp)) && continue
+                    lM = min(lπp - lπs[i] + logcorr, 0.0)
+                    if lprob < lM
+                        Xp = cost(push_p(prior, θp.x))
+                        if flag
+                            Xp > ϵ && continue
+                        else
+                            Xp >= ϵ && continue
+                        end
+                        θs[i] = θp
+                        Xs[i] = Xp
+                        lπs[i] = lπp
                     Base.Threads.atomic_add!(accepted, 1)
-                    # if parallel
-
-                    # else
-                    #     accepted += 1
-                    # end
+                    end
                 end
             end
             accepted[] >= mcmc_tol * nparticles && break
@@ -981,18 +999,16 @@ function ABCDE(prior, cost, ϵ_target; nparticles = 256, generations = 150, α =
     Δs = fill(cost(θs[1].x), nparticles)
 
 
-    let θs = θs, logπ = logπ, Δs = Δs
-        @floop for i in 1:nparticles
-            trng = rng
+    for i in 1:nparticles
+        trng = rng
 
-            if isfinite(logπ[i])
-                Δs[i] = cost(θs[i].x)
-            end
-            while (!isfinite(Δs[i])) || (!isfinite(logπ[i]))
-                θs[i] = op(float, Particle(rand(trng, prior)))
-                logπ[i] = logpdf(prior, push_p(prior, θs[i].x))
-                Δs[i] = cost(θs[i].x)
-            end
+        if isfinite(logπ[i])
+            Δs[i] = cost(θs[i].x)
+        end
+        while (!isfinite(Δs[i])) || (!isfinite(logπ[i]))
+            θs[i] = op(float, Particle(rand(trng, prior)))
+            logπ[i] = logpdf(prior, push_p(prior, θs[i].x))
+            Δs[i] = cost(θs[i].x)
         end
     end
     nsims = zeros(Int, nparticles)
@@ -1015,38 +1031,35 @@ function ABCDE(prior, cost, ϵ_target; nparticles = 256, generations = 150, α =
         nlogπ = identity.(logπ)
         ϵ_l, ϵ_h = extrema(Δs)
         ϵ_pop = max(ϵ_target, ϵ_l + α * (ϵ_h - ϵ_l))
-        let θs = θs, logπ = logπ, Δs = Δs
-            @floop for i in 1:nparticles
-                if earlystop
-                    Δs[i] <= ϵ_target && continue
-                end
-                trng = rng
+        for i in 1:nparticles
+            if earlystop
+                Δs[i] <= ϵ_target && continue
+            end
+            trng = rng
 
-                # parallel && (trng=Random.default_rng(Threads.threadid());)
-                s = i
-                ϵ = ifelse(Δs[i] <= ϵ_target, ϵ_target, ϵ_pop)
-                if Δs[i] > ϵ
-                    s = rand(trng, (1:nparticles)[Δs .<= Δs[i]])
-                end
-                a = s
-                while a == s
-                    a = rand(trng, 1:nparticles)
-                end
-                b = a
-                while b == a || b == s
-                    b = rand(trng, 1:nparticles)
-                end
-                θp = op(+, θs[s], op(*, op(-, θs[a], θs[b]), γ))
-                lπ = logpdf(prior, push_p(prior, θp.x))
-                w_prior = lπ - logπ[i]
-                log(rand(trng)) > min(0, w_prior) && continue
-                nsims[i] += 1
-                dp = cost(θp.x)
-                if dp <= max(ϵ, Δs[i])
-                    nΔs[i] = dp
-                    nθs[i] = θp
-                    nlogπ[i] = lπ
-                end
+            s = i
+            ϵ = ifelse(Δs[i] <= ϵ_target, ϵ_target, ϵ_pop)
+            if Δs[i] > ϵ
+                s = rand(trng, (1:nparticles)[Δs .<= Δs[i]])
+            end
+            a = s
+            while a == s
+                a = rand(trng, 1:nparticles)
+            end
+            b = a
+            while b == a || b == s
+                b = rand(trng, 1:nparticles)
+            end
+            θp = op(+, θs[s], op(*, op(-, θs[a], θs[b]), γ))
+            lπ = logpdf(prior, push_p(prior, θp.x))
+            w_prior = lπ - logπ[i]
+            log(rand(trng)) > min(0, w_prior) && continue
+            nsims[i] += 1
+            dp = cost(θp.x)
+            if dp <= max(ϵ, Δs[i])
+                nΔs[i] = dp
+                nθs[i] = θp
+                nlogπ[i] = lπ
             end
         end
         θs = nθs

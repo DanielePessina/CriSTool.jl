@@ -28,8 +28,8 @@ population-based metaheuristic search.
 - `extrastring`, `HPC`, `savetxt`: options for logging and reproducible
   runs.
 - `parallel_evaluation`: evaluate Metaheuristics populations concurrently.
-  Disable this for large, allocation-heavy fits when a serial solve is more
-  robust on the available memory/threads.
+  Population matrices are handled through bounded Base-threaded blocks, with
+  private setup copies and a collection point between blocks.
 
 # Returns
 The optimisation result from Metaheuristics.jl containing the best-fit
@@ -324,30 +324,65 @@ function batchLF_procSO(lossfunction::AbstractPELossFunction,
                         parameter_mat::AbstractArray{Float64})
 
     fx = zeros(Float64, size(parameter_mat, 1))
-    thread_setups = _thread_local_loss_setups(setup)
-
-    # Use Julia's static scheduler for independent ODE solves.  The FLoops
-    # transducer path creates many short-lived task/reduction objects here;
-    # under Julia 1.12 those objects can drive the parallel GC into a native
-    # crash during large optimisation batches.
-    Threads.@threads :static for i in axes(parameter_mat, 1)
-        try
-            fx[i] = loss(lossfunction, thread_setups[Threads.threadid()],
-                         @view parameter_mat[i, :])
-        catch exception
-            @debug "Candidate simulation failed during parameter estimation" exception =
-                (exception, catch_backtrace())
-            fx[i] = CRISTOOL_FAILED_SIMULATION_PENALTY
-        end
-    end
+    _evaluate_loss_batch!(fx, lossfunction, setup, parameter_mat)
 
     return fx
 
 end
 
-function _thread_local_loss_setups(setup::LossSetup)
-    Threads.nthreads() == 1 && return (setup,)
-    return ntuple(_ -> deepcopy(setup), Threads.nthreads())
+function _evaluate_loss_batch!(loss_values::AbstractVector{Float64},
+                              lossfunction::AbstractPELossFunction,
+                              setup::LossSetup,
+                              parameter_mat::AbstractArray{Float64})
+    parameter_indices = axes(parameter_mat, 1)
+
+    # Each spawned task owns its prepared ODE templates.  The loss itself
+    # remakes a fresh ODEProblem for every parameter vector; the copy here is
+    # only to keep any mutable solver/setup internals out of sibling tasks.
+    if Threads.nthreads() == 1 || length(parameter_indices) <= 1
+        local_setup = setup
+        for i in parameter_indices
+            try
+                loss_values[i] = loss(lossfunction, local_setup,
+                                      @view parameter_mat[i, :])
+            catch exception
+                @debug "Candidate simulation failed during parameter estimation" exception =
+                    (exception, catch_backtrace())
+                loss_values[i] = CRISTOOL_FAILED_SIMULATION_PENALTY
+            end
+        end
+        return loss_values
+    end
+
+    first_index = first(parameter_indices)
+    last_index = last(parameter_indices)
+    for batch_start in first_index:CRISTOOL_PARALLEL_PE_BATCH_SIZE:last_index
+        batch_stop = min(last_index, batch_start + CRISTOOL_PARALLEL_PE_BATCH_SIZE - 1)
+        batch_length = batch_stop - batch_start + 1
+        n_tasks = min(Threads.nthreads(), batch_length)
+        chunk_length = cld(batch_length, n_tasks)
+        tasks = Task[]
+        for task_index in 1:n_tasks
+            chunk_start = batch_start + (task_index - 1) * chunk_length
+            chunk_stop = min(batch_stop, chunk_start + chunk_length - 1)
+            push!(tasks, Threads.@spawn begin
+                local_setup = deepcopy(setup)
+                for i in chunk_start:chunk_stop
+                    try
+                        loss_values[i] = loss(lossfunction, local_setup,
+                                              @view parameter_mat[i, :])
+                    catch exception
+                        @debug "Candidate simulation failed during parameter estimation" exception =
+                            (exception, catch_backtrace())
+                        loss_values[i] = CRISTOOL_FAILED_SIMULATION_PENALTY
+                    end
+                end
+            end)
+        end
+        foreach(fetch, tasks)
+        GC.gc(false)
+    end
+    return loss_values
 end
 
 function batchLF_procSO(lossfunction::AbstractPELossFunction,
@@ -376,27 +411,60 @@ function batchLF_procMO(lossfunction::AbstractPELossFunction,
     Nt = size(parameter_mat, 1)
     objective_names = _loss_observable_names(first(setup.experiments), setup.problem.solver)
     fx = zeros(Nt, length(objective_names))
-    thread_setups = _thread_local_loss_setups(setup)
-
-    Threads.@threads :static for i in 1:Nt
-        try
-            local_setup = thread_setups[Threads.threadid()]
-            for (prep, expt) in zip(local_setup.prepared, local_setup.experiments)
-                objectives = _experiment_objectives(lossfunction, expt,
-                                                    _solve_prepared(prep, parameter_mat[i, :]))
-                for j in eachindex(objectives)
-                    fx[i, j] += objectives[j]
-                end
-            end
-        catch exception
-            @debug "Candidate simulation failed during multi-objective parameter estimation" exception =
-                (exception, catch_backtrace())
-            fx[i, :] .= CRISTOOL_FAILED_SIMULATION_PENALTY
-        end
-    end
+    _evaluate_multiobjective_batch!(fx, lossfunction, setup, parameter_mat)
 
     return fx
 
+end
+
+function _evaluate_multiobjective_batch!(objective_values::AbstractMatrix{Float64},
+                                         lossfunction::AbstractPELossFunction,
+                                         setup::LossSetup,
+                                         parameter_mat::AbstractArray{Float64})
+    parameter_indices = axes(parameter_mat, 1)
+
+    function evaluate_range!(local_setup, range)
+        for i in range
+            try
+                for (prep, expt) in zip(local_setup.prepared, local_setup.experiments)
+                    objectives = _experiment_objectives(lossfunction, expt,
+                                                        _solve_prepared(prep,
+                                                                        parameter_mat[i, :]))
+                    for j in eachindex(objectives)
+                        objective_values[i, j] += objectives[j]
+                    end
+                end
+            catch exception
+                @debug "Candidate simulation failed during multi-objective parameter estimation" exception =
+                    (exception, catch_backtrace())
+                objective_values[i, :] .= CRISTOOL_FAILED_SIMULATION_PENALTY
+            end
+        end
+    end
+
+    if Threads.nthreads() == 1 || length(parameter_indices) <= 1
+        evaluate_range!(setup, parameter_indices)
+        return objective_values
+    end
+
+    first_index = first(parameter_indices)
+    last_index = last(parameter_indices)
+    for batch_start in first_index:CRISTOOL_PARALLEL_PE_BATCH_SIZE:last_index
+        batch_stop = min(last_index, batch_start + CRISTOOL_PARALLEL_PE_BATCH_SIZE - 1)
+        batch_length = batch_stop - batch_start + 1
+        n_tasks = min(Threads.nthreads(), batch_length)
+        chunk_length = cld(batch_length, n_tasks)
+        tasks = Task[]
+        for task_index in 1:n_tasks
+            chunk_start = batch_start + (task_index - 1) * chunk_length
+            chunk_stop = min(batch_stop, chunk_start + chunk_length - 1)
+            push!(tasks, Threads.@spawn evaluate_range!(deepcopy(setup),
+                                                        chunk_start:chunk_stop))
+        end
+        foreach(fetch, tasks)
+        GC.gc(false)
+    end
+    return objective_values
 end
 
 function batchLF_procMO(lossfunction::AbstractPELossFunction,
@@ -526,13 +594,28 @@ function _params_to_p(prob::CrystallisationProblem, params)
     return ComponentArray(params, paramaxis(prob))
 end
 
-_solve_kwargs(solver::AbstractMomentSolver) =
-    (reltol = solver.reltol, abstol = solver.abstol, dense = false,
-     maxiters = CRISTOOL_MAX_PREPARED_SOLVER_ITERS,
-     maxtime = CRISTOOL_MAX_PREPARED_SOLVER_SECONDS)
-_solve_kwargs(solver::AbstractDiscretisedSolver) =
-    (reltol = solver.reltol, abstol = solver.abstol, dense = false,
-     alg_hints = [:stiff], maxiters = CRISTOOL_MAX_SOLVER_ITERS)
+function _solve_prepared_problem(odeproblem, algorithm, saveat,
+                                 solver::AbstractMomentSolver)
+    return solve(odeproblem, algorithm;
+                 saveat = saveat,
+                 reltol = solver.reltol,
+                 abstol = solver.abstol,
+                 dense = false,
+                 maxiters = CRISTOOL_MAX_PREPARED_SOLVER_ITERS,
+                 maxtime = CRISTOOL_MAX_PREPARED_SOLVER_SECONDS)
+end
+
+function _solve_prepared_problem(odeproblem, algorithm, saveat,
+                                 solver::AbstractDiscretisedSolver)
+    return solve(odeproblem, algorithm;
+                 saveat = saveat,
+                 reltol = solver.reltol,
+                 abstol = solver.abstol,
+                 dense = false,
+                 alg_hints = [:stiff],
+                 maxiters = CRISTOOL_MAX_PREPARED_DISCRETIZED_SOLVER_ITERS,
+                 maxtime = CRISTOOL_MAX_PREPARED_SOLVER_SECONDS)
+end
 
 """
     _solve_prepared(prep::PreparedExperiment, params) -> AbstractSolution
@@ -543,8 +626,8 @@ options as `_simulatecrystallisation`.
 """
 function _solve_prepared(prep::PreparedExperiment, params)
     remade = remake(prep.odeproblem; p = _params_to_p(prep.problem, params))
-    sol = solve(remade, prep.algorithm; saveat = prep.saveat,
-                _solve_kwargs(prep.problem.solver)...)
+    sol = _solve_prepared_problem(remade, prep.algorithm, prep.saveat,
+                                  prep.problem.solver)
     return _wrap_solution(prep.problem, sol)
 end
 

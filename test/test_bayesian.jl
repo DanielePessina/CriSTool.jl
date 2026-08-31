@@ -100,6 +100,15 @@ using JLD2
                                        sampler = sampler, n_samples = 10, n_chains = 1,
                                        symbols = [:a, :b, :c, :d], verbosity = 0)
         @test names(chain3, :parameters) == [:a, :b, :c, :d]
+
+        # Exercise MCMCThreads with more than one chain. Each sampling task
+        # must obtain its own prepared loss setup.
+        chain4 = CriSTool.MCMC_Routine(meas, prior, nucl, gr, agg, br;
+                                       solver = solver, lossfunction = lf,
+                                       sampler = sampler, n_samples = 6, n_chains = 2,
+                                       verbosity = 0)
+        @test size(chain4.value, 1) == 6
+        @test size(chain4.value, 3) == 2
     end
 
     @testset "ChainStatsPlots renders (Makie)" begin

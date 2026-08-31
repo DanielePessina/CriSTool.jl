@@ -35,7 +35,7 @@ of particles, generations, samples, and chains configured in the script.
 | [5 — ABCDE and MCMC](<../examples/Tutorial 5 ABCDE and MCMC.jl>) | Creates a noisy synthetic experiment and compares likelihood-free ABCDE with Turing NUTS using the same forward model and loss. | Turing, Distributions; no workbook |
 | [6 — Dissolution](<../examples/Tutorial 6 Dissolution.jl>) | Runs signed scalar dissolution with MoM, finite volume, and WENO from a seeded initial population. | CairoMakie |
 | [7 — QMOM](<../examples/Tutorial 7 QMOM.jl>) | Evolves raw moments, reconstructs a Gaussian quadrature, and plots the nodes alongside `d43`. | CairoMakie |
-| [8 — Real-data MoM versus QMOM](<../examples/Tutorial 8 Real-data MoM versus QMOM.jl>) | Runs substantial optimization and four-chain NUTS fits on your workbook, first with CNT + empirical growth under MoM and then with scalar aggregation + empirical breakage under QMOM. | Metaheuristics, Turing, your workbook |
+| [8 — Real-data MoM versus FiniteVol](<../examples/Tutorial 8 Real-data MoM versus QMOM.jl>) | Runs substantial MoM optimization plus a four-chain NUTS posterior, then a 64×64 derivative-free ABCDE fit for a scalar-aggregation/uniform-breakage FiniteVol model. Results are saved under the configured results directory. | Metaheuristics, Turing, your workbook |
 
 The scripts call `main()` at the end, so they can be run directly from the
 command line. They also keep setup values near the top of `main()` to make it

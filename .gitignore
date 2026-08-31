@@ -10,5 +10,6 @@ R - Hybrid Model Datasets/
 R - DS Data/
 Generated Datasets/
 Saved Plots/
+examples/results/
 *.jld2
 !test/test_chain.jld2

@@ -2,6 +2,17 @@
 Tools for uncertainty quantification of crystallisation simulations. Provides ensemble simulation utilities and interfaces with Monte Carlo sampling.
 """
 
+function _advance_ensemble_progress!(progress::Progress,
+                                     progress_lock::ReentrantLock)
+    lock(progress_lock)
+    try
+        next!(progress)
+    finally
+        unlock(progress_lock)
+    end
+    return nothing
+end
+
 """
     run_ensemble(distribution::D, measurements, nucleationfunction, growthfunction,
                  aggregationfunction, breakagefunction, solver;
@@ -243,6 +254,7 @@ function _run_ensemble_internal(samples::Matrix{Float64},
                     showspeed = true,
                     barlen = 12,
                     enabled = (verbosity > 0 && !HPC))
+    progress_lock = ReentrantLock()
 
     for m in 1:n_measurements
         time = if use_measurement_time
@@ -261,7 +273,7 @@ function _run_ensemble_internal(samples::Matrix{Float64},
         d32 = Matrix{Float64}(undef, n_timepoints, n_samples)
         d50q = _d50q_buffer(solver, n_timepoints, n_samples)
 
-        @floop for i in 1:n_samples
+        Threads.@threads :static for i in 1:n_samples
             prob,
             sol = runsimulation(samples[:, i],
                                 nucl = nucleationfunction,
@@ -278,7 +290,7 @@ function _run_ensemble_internal(samples::Matrix{Float64},
             d43[:, i] = sol.d43
             d32[:, i] = sol.d32
             _store_d50q!(d50q, sol, i, solver)
-            next!(prog)
+            _advance_ensemble_progress!(prog, progress_lock)
         end
 
         ensemble_solutions[m] = _create_ensemble_solution(time, concentration, d43, d32,
@@ -370,8 +382,9 @@ function run_ensemble_fixed(samples::Matrix{Float64},
                     showspeed = true,
                     barlen = 12,
                     enabled = (verbosity > 0 && !HPC))
+    progress_lock = ReentrantLock()
 
-    @floop for i in 1:n_samples
+    Threads.@threads :static for i in 1:n_samples
         prob,
         sol = runsimulation(samples[:, i],
                             nucl = nucleationfunction,
@@ -388,7 +401,7 @@ function run_ensemble_fixed(samples::Matrix{Float64},
         d43[:, i] = sol.d43
         d32[:, i] = sol.d32
         _store_d50q!(d50q, sol, i, solver)
-        next!(prog)
+        _advance_ensemble_progress!(prog, progress_lock)
     end
 
     return _create_ensemble_solution(time_idx, concentration, d43, d32, d50q, solver)
@@ -436,6 +449,7 @@ function _simulateensembleuncertainty(samples::Matrix{Float64}, c_array::Vector{
                     showspeed = true,
                     barlen = 12,
                     enabled = !HPC)
+    progress_lock = ReentrantLock()
 
     for m in 1:n_measurements
         # Pre-allocate matrices for this measurement
@@ -445,7 +459,7 @@ function _simulateensembleuncertainty(samples::Matrix{Float64}, c_array::Vector{
         d50q = Matrix{Float64}(undef, n_timepoints, n_samples)
 
         # Run simulations for each sample
-        @floop for i in 1:n_samples
+        Threads.@threads :static for i in 1:n_samples
             prob,
             sol = runsimulation(samples[:, i],
                                 nucl = nucleationfunction,
@@ -461,7 +475,7 @@ function _simulateensembleuncertainty(samples::Matrix{Float64}, c_array::Vector{
             d32[:, i] = sol.d32
             d50q[:, i] = sol.d50q
 
-            next!(prog)
+            _advance_ensemble_progress!(prog, progress_lock)
         end
 
         # Compute statistics
@@ -544,6 +558,7 @@ function _simulateensembleuncertainty(samples::Matrix{Float64}, c_array::Vector{
                     showspeed = true,
                     barlen = 12,
                     enabled = !HPC)
+    progress_lock = ReentrantLock()
 
     for m in 1:n_measurements
         # Pre-allocate matrices for this measurement
@@ -552,7 +567,7 @@ function _simulateensembleuncertainty(samples::Matrix{Float64}, c_array::Vector{
         d32 = Matrix{Float64}(undef, n_timepoints, n_samples)
 
         # Run simulations for each sample
-        @floop for i in 1:n_samples
+        Threads.@threads :static for i in 1:n_samples
             prob,
             sol = runsimulation(samples[:, i],
                                 nucleationfunction,
@@ -567,7 +582,7 @@ function _simulateensembleuncertainty(samples::Matrix{Float64}, c_array::Vector{
             d43[:, i] = sol.d43
             d32[:, i] = sol.d32
 
-            next!(prog)
+            _advance_ensemble_progress!(prog, progress_lock)
         end
 
         # Compute statistics
@@ -643,6 +658,7 @@ function _simulateensembleuncertainty(samples::Matrix{Float64}, conc::Real,
                     showspeed = true,
                     barlen = 12,
                     enabled = !HPC)
+    progress_lock = ReentrantLock()
 
     # Pre-allocate matrices for this measurement
     concentration = Matrix{Float64}(undef, n_timepoints, n_samples)
@@ -651,7 +667,7 @@ function _simulateensembleuncertainty(samples::Matrix{Float64}, conc::Real,
     d50q = Matrix{Float64}(undef, n_timepoints, n_samples)
 
     # Run simulations for each sample
-    @floop for i in 1:n_samples
+    Threads.@threads :static for i in 1:n_samples
         prob,
         sol = runsimulation(samples[:, i],
                             nucleationfunction,
@@ -667,7 +683,7 @@ function _simulateensembleuncertainty(samples::Matrix{Float64}, conc::Real,
         d32[:, i] = sol.d32
         d50q[:, i] = sol.d50q
 
-        next!(prog)
+        _advance_ensemble_progress!(prog, progress_lock)
     end
 
     # Compute statistics
@@ -748,6 +764,7 @@ function _simulateensembleuncertainty(samples::Matrix{Float64}, conc::Real,
                     showspeed = true,
                     barlen = 12,
                     enabled = !HPC)
+    progress_lock = ReentrantLock()
 
     # Pre-allocate matrices for this measurement
     concentration = Matrix{Float64}(undef, n_timepoints, n_samples)
@@ -755,7 +772,7 @@ function _simulateensembleuncertainty(samples::Matrix{Float64}, conc::Real,
     d32 = Matrix{Float64}(undef, n_timepoints, n_samples)
 
     # Run simulations for each sample
-    @floop for i in 1:n_samples
+    Threads.@threads :static for i in 1:n_samples
         prob,
         sol = runsimulation(samples[:, i],
                             nucleationfunction,
@@ -770,7 +787,7 @@ function _simulateensembleuncertainty(samples::Matrix{Float64}, conc::Real,
         d43[:, i] = sol.d43
         d32[:, i] = sol.d32
 
-        next!(prog)
+        _advance_ensemble_progress!(prog, progress_lock)
     end
 
     # Compute statistics
