@@ -73,7 +73,8 @@ function _aggregation_rate_discrete(aggregationfunction,
     length_mesh = problem.solver.cell_centre
     maximum_volume = last(problem.solver.cell_face)^3
     cell_dL = problem.solver.cell_dL
-    kernel_scale = exp10(_named_params(aggregationfunction, parameters).logβ)
+    kernel_scale = exp10(_named_params(aggregationfunction, parameters).
+                         log10_aggregation_coefficient)
     rate_type = promote_type(eltype(numberdensity), typeof(kernel_scale))
     aggregation_rate = zeros(rate_type, length(numberdensity))
 
@@ -85,7 +86,7 @@ function _aggregation_rate_discrete(aggregationfunction,
             upper_number = numberdensity[upper_index] * cell_dL
             collision_kernel = _aggregation_kernel(aggregationfunction,
                                                     kernel_scale,
-                                                    problem.kv,
+                                                    problem.volume_shape_factor,
                                                     lower_length,
                                                     length_mesh[upper_index])
             event_rate = collision_kernel * lower_number * upper_number /
@@ -135,7 +136,9 @@ end
 Calculate size-independent (scalar) aggregation rate.
 
 # Arguments
-- `parameters`: Vector [log10(β)] where β is aggregation kernel constant
+- `parameters`: Vector [log10_aggregation_coefficient], the base-10 logarithm
+  of the SI aggregation coefficient. Its dimensional unit depends on the
+  selected kernel family.
 - `fullmesh`: Cell center positions
 - `fullnumberdensity`: Number density at each cell
 
@@ -153,7 +156,9 @@ end
 Calculate linear size-dependent aggregation rate (kernel proportional to sum of sizes).
 
 # Arguments
-- `parameters`: Vector [log10(β)] where β is aggregation kernel constant
+- `parameters`: Vector [log10_aggregation_coefficient], the base-10 logarithm
+  of the SI aggregation coefficient. Its dimensional unit depends on the
+  selected kernel family.
 - `fullmesh`: Cell center positions
 - `fullnumberdensity`: Number density at each cell
 
@@ -171,7 +176,9 @@ end
 Calculate linear volume-dependent aggregation rate (kernel proportional to sum of volumes).
 
 # Arguments
-- `parameters`: Vector [log10(β)] where β is aggregation kernel constant
+- `parameters`: Vector [log10_aggregation_coefficient], the base-10 logarithm
+  of the SI aggregation coefficient. Its dimensional unit depends on the
+  selected kernel family.
 - `fullmesh`: Cell center positions
 - `fullnumberdensity`: Number density at each cell
 
@@ -187,9 +194,12 @@ function aggregationrate(af::aggr_avg, parameters::T, prob::CrystallisationProbl
 end
 
 @inline _breakage_frequency(breakagefunction::breakage_empirical, parameters, crystal_length) =
-    parameters.b * crystal_length^(3 * parameters.n)
+    parameters.breakage_coefficient *
+    crystal_length^(3 * parameters.breakage_size_exponent)
 @inline _breakage_frequency(breakagefunction::breakage_uniform, parameters, crystal_length) =
-    exp(parameters.logb) * (CRISTOOL_MICROMETER_SCALE * crystal_length)^(3 * parameters.n)
+    exp(parameters.ln_breakage_coefficient) *
+    (crystal_length / breakagefunction.reference_length)^(
+        3 * parameters.breakage_size_exponent)
 
 """
     _breakage_rate_uniform_volume(breakagefunction, parameters, problem, state)
@@ -212,8 +222,9 @@ function _breakage_rate_uniform_volume(breakagefunction,
     length_mesh = problem.solver.cell_centre
     cell_faces = problem.solver.cell_face
     cell_dL = problem.solver.cell_dL
-    rate_scale = breakagefunction isa breakage_empirical ? named_parameters.b :
-                 named_parameters.logb
+    rate_scale = breakagefunction isa breakage_empirical ?
+                 named_parameters.breakage_coefficient :
+                 named_parameters.ln_breakage_coefficient
     rate_type = promote_type(eltype(numberdensity), typeof(rate_scale))
     breakage_rate = zeros(rate_type, length(numberdensity))
 

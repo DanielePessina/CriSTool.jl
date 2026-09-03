@@ -16,8 +16,8 @@ using ComponentArrays
 
 const ROOT      = dirname(@__DIR__)            # repo root
 const FIXTURE   = joinpath(ROOT, "test", "fixtures", "real-experimental-dataset.csv")
-const FIXED_GRID = 0:30:270                    # common save grid for FV/WENO
-const CANONICAL_θ = Float64[38.0, 0.6, 1.0, 3.0]  # gold fixture params (nucl_CNT + growth_empirical)
+const FIXED_GRID = 0:1800:16200                # 0:30:270 min, expressed in seconds
+const CANONICAL_θ = Float64[38.0, 0.0006, 1e-9 / 60, 3.0]  # SI gold params
 const SECONDS = 5                              # Chairmarks sampling budget per benchmark
 
 git_hash() = strip(read(`git -C $ROOT rev-parse --short HEAD`, String))
@@ -196,7 +196,7 @@ function main()
     end
     println(io, "-"^100)
     println(io, "(stats aggregated over the 7 experiments; MoM on per-experiment time ")
-    println(io, " grids, FV200/WENO200 on fixed grid 0:30:270; nsteps removed from")
+    println(io, " grids, FV200/WENO200 on fixed grid 0:1800:16200 seconds; nsteps removed from")
     println(io, " SciMLBase.DEStats, so nsave = length(sol.time) is reported instead)")
 
     # ---- AllocCheck verdict -------------------------------------------------
@@ -209,7 +209,7 @@ function main()
         foreach(row -> println(io, row), alloccheck_summary(alloc_errs))
     end
     println(io, "(AllocCheck only sees statically resolvable code; the ODE solve core is")
-    println(io, " behind kwcall boundaries and is NOT analysed — the 16 sites above are all")
+    println(io, " behind kwcall boundaries and is NOT analysed — the reported sites above are all")
     println(io, " in the flat-vector wrapper: paramaxis/ComponentArray axis construction,")
     println(io, " src/physics/model_interfaces.jl and src/solvers/runsimulation.jl.)")
 

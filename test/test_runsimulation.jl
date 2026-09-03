@@ -9,7 +9,7 @@
         grow_func = growth_empirical()
 
         # Total params = 2 (nucleation) + 2 (growth) = 4
-        params = [38.0, 0.7, 1.0, 3.0]
+        params = [38.0, 0.0007, 1e-9 / 60, 3.0]
         initial_conc = 18.0
 
         problem,
@@ -17,7 +17,7 @@
                                  nucl_func,
                                  grow_func,
                                  initial_conc;
-                                 save_idx = 0:60.0:480.0,
+                                 save_idx = 0:3600.0:28800.0,
                                  solver = MoM())
 
         # Basic checks
@@ -38,7 +38,7 @@
         br_func = nobreakage()
 
         # Total params = 2 + 2 + 0 + 0 = 4
-        params = [38.0, 0.7, 1.0, 3.0]
+        params = [38.0, 0.0007, 1e-9 / 60, 3.0]
         initial_conc = 18.0
 
         problem,
@@ -48,7 +48,7 @@
                                  agg_func,
                                  br_func,
                                  initial_conc;
-                                 save_idx = collect(0:60.0:480.0),
+                                 save_idx = collect(0:3600.0:28800.0),
                                  solver = FiniteVol(meshsize = 100, lmax = 50e-6))
 
         @test solution.success
@@ -70,7 +70,8 @@
         # Use a short undersaturated run with an empty population.  This keeps
         # the integration test cheap while exercising the active operator
         # dispatch and the exact zero-population invariant.
-        params = [38.0, 0.7, 1.0, 3.0, -6.0, 1e-3, 1.0]
+        params = [38.0, 0.0007, 1e-9 / 60, 3.0,
+                  -6.0 - log10(60), 1e-3 / 60, 1.0]
         initial_conc = 1.0
         save_times = [0.0, 1.0, 2.0]
 
@@ -90,7 +91,7 @@
     end
 
     @testset "Keyword Interface" begin
-        params = [38.0, 0.7, 1.0, 3.0]
+        params = [38.0, 0.0007, 1e-9 / 60, 3.0]
 
         problem,
         solution = runsimulation(params;
@@ -100,14 +101,14 @@
                                  br = nobreakage(),
                                  solver = MoM(),
                                  initial_concentration = 18.0,
-                                 save_idx = 0:120.0:480.0)
+                                 save_idx = 0:7200.0:28800.0)
 
         @test solution.success
         @test problem isa CriSTool.CrystallisationProblem
     end
 
     @testset "Solution Structure - MoM" begin
-        params = [38.0, 0.7, 1.0, 3.0]
+        params = [38.0, 0.0007, 1e-9 / 60, 3.0]
 
         _,
         solution = runsimulation(params,
@@ -115,7 +116,7 @@
                                  growth_empirical(),
                                  18.0;
                                  solver = MoM(),
-                                 save_idx = 0:60.0:240.0)
+                                 save_idx = 0:3600.0:14400.0)
 
         # Check MoM solution has expected fields
         @test hasproperty(solution, :time)
@@ -127,7 +128,7 @@
     end
 
     @testset "Solution Structure - FiniteVol" begin
-        params = [38.0, 0.7, 1.0, 3.0]
+        params = [38.0, 0.0007, 1e-9 / 60, 3.0]
 
         _,
         solution = runsimulation(params,
@@ -137,7 +138,7 @@
                                  nobreakage(),
                                  18.0;
                                  solver = FiniteVol(meshsize = 50, lmax = 50e-6),
-                                 save_idx = collect(0:60.0:240.0))
+                                 save_idx = collect(0:3600.0:14400.0))
 
         # Check FV solution has expected fields
         @test hasproperty(solution, :time)
@@ -151,7 +152,7 @@
     end
 
     @testset "Different Initial Concentrations" begin
-        params = [38.0, 0.7, 1.0, 3.0]
+        params = [38.0, 0.0007, 1e-9 / 60, 3.0]
 
         # Lower supersaturation
         _,
@@ -160,7 +161,7 @@
                                 growth_empirical(),
                                 12.0;  # Lower initial concentration
                                 solver = MoM(),
-                                save_idx = 0:120.0:480.0)
+                                save_idx = 0:7200.0:28800.0)
         @test sol_low.success
 
         # High supersaturation
@@ -170,7 +171,7 @@
                                  growth_empirical(),
                                  25.0;  # Higher initial concentration
                                  solver = MoM(),
-                                 save_idx = 0:120.0:480.0)
+                                 save_idx = 0:7200.0:28800.0)
         @test sol_high.success
     end
 end

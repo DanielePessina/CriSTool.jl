@@ -16,12 +16,12 @@ using Random
 function main()
     Random.seed!(0)
 
-    # Baseline kinetics + flat parameter vector [Aj, γ, Ag, g].
+    # Baseline kinetics + flat SI parameter vector.
     nucl, gr   = nucl_CNT(), growth_empirical()
     agg, br    = noaggregation(), nobreakage()
     solver     = MoM()
-    base_p     = [38.0, 0.7, 1.0, 3.0]
-    save_grid  = 0.0:6.0:360.0    # minutes
+    base_p     = [38.0, 0.0007, 1e-9 / 60, 3.0]
+    save_grid  = 0.0:360.0:21600.0    # seconds
     C0         = 18.0
 
     # Forward map: parameters → terminal concentration. GSA samples pass in

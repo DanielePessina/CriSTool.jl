@@ -17,9 +17,9 @@ population-based metaheuristic search.
 # Arguments
 - `setofmeasurements::Vector{<:AbstractExperiment}`: experimental data
   sets used to evaluate the loss.
-- `lb`, `ub`: lower and upper bounds for the parameter vector. Both
-  vectors must have length `nν + n_g + n_a + n_b` corresponding to the
-  parameters of the supplied kinetic functions.
+- `lb`, `ub`: lower and upper bounds for the parameter vector. Both vectors
+  must have length `nν + n_g + n_d + n_a + n_b` corresponding to the supplied
+  kinetic functions.
 - `nucleationfunction`, `growthfunction`, `aggregationfunction`,
   `breakagefunction`: kinetic models.
 - `solver::AbstractSolver`: numerical solver to run each simulation.
@@ -42,6 +42,7 @@ function PE_Routine(lossfunction::AbstractPELossFunction,
                     growthfunction::AbstractGrowthFunction,
                     aggregationfunction::AbstractAggregationFunction,
                     breakagefunction::AbstractBreakageFunction;
+                    diss::AbstractDissolutionFunction = nodissolution(),
                     solver::AbstractSolver,
                     extrastring::String = "",
                     MHAlgorithm::Metaheuristics.AbstractAlgorithm = Metaheuristics.DE(),
@@ -71,7 +72,8 @@ function PE_Routine(lossfunction::AbstractPELossFunction,
                       verbosity = verbosity)
 
     loss_problem = _build_loss_problem(nucleationfunction, growthfunction,
-                                       aggregationfunction, breakagefunction, solver)
+                                       aggregationfunction, breakagefunction, solver;
+                                       diss = diss)
 
     results = _MHoptimise(MHAlgorithm, lossfunction, loss_problem, setofmeasurements,
                           parameter_bounds, nparticles, MHOptions)
@@ -141,6 +143,7 @@ function PE_Routine_Optimisation(lossfunction::AbstractPELossFunction,
                                  growthfunction::AbstractGrowthFunction,
                                  aggregationfunction::AbstractAggregationFunction,
                                  breakagefunction::AbstractBreakageFunction;
+                                 diss::AbstractDissolutionFunction = nodissolution(),
                                  searchalgo,
                                  x0 = nothing,
                                  searchoptions = Dict{Symbol, Any}(),
@@ -165,7 +168,8 @@ function PE_Routine_Optimisation(lossfunction::AbstractPELossFunction,
 x0 = isnothing(x0) ? [lb[i] + (ub[i] - lb[i]) * rand() for i in eachindex(lb)] : x0
 
     loss_problem = _build_loss_problem(nucleationfunction, growthfunction,
-                                       aggregationfunction, breakagefunction, solver)
+                                       aggregationfunction, breakagefunction, solver;
+                                       diss = diss)
     setup = prepare_loss(loss_problem, setofmeasurements)
 
     searchf = OptimizationBase.OptimizationFunction((x, (lf, loss_setup)) -> loss(lf,
@@ -250,12 +254,19 @@ function _build_loss_problem(nucleationfunction::AbstractNucleationFunction,
                              growthfunction::AbstractGrowthFunction,
                              aggregationfunction::AbstractAggregationFunction,
                              breakagefunction::AbstractBreakageFunction,
-                             solver::AbstractSolver)
+                             solver::AbstractSolver;
+                             diss::AbstractDissolutionFunction = nodissolution())
     return CrystallisationProblem(;
         kinetics_nucleationfunction = nucleationfunction,
         kinetics_growthfunction = growthfunction,
+        kinetics_dissolutionfunction = diss,
+        parameterset_nucleation = zeros(Float64, nucleationfunction.nparams),
+        parameterset_growth = zeros(Float64, growthfunction.nparams),
+        parameterset_dissolution = zeros(Float64, diss.nparams),
         kinetics_aggregationfunction = aggregationfunction,
+        parameterset_aggregation = zeros(Float64, aggregationfunction.nparams),
         kinetics_breakagefunction = breakagefunction,
+        parameterset_breakage = zeros(Float64, breakagefunction.nparams),
         solver = solver)
 end
 
@@ -550,14 +561,14 @@ function _experiment_problem(problem::CrystallisationProblem,
                              expt::CrystallisationExperiment)
     experiment_problem = CrystallisationProblem(;
         temp_profile = ConstantTemperature(expt.temperature),
-        ρ = problem.ρ,
+        crystal_density = problem.crystal_density,
         initial_concentration = initial_concentration(expt),
         initial_solvent_state = merge(problem.initial_solvent_state,
                                       (; concentration = initial_concentration(expt))),
         solvent_dynamics = problem.solvent_dynamics,
         saturation_model = problem.saturation_model,
-        kv = problem.kv,
-        solid_volume_threshold = problem.solid_volume_threshold,
+        volume_shape_factor = problem.volume_shape_factor,
+        solid_mass_concentration_threshold = problem.solid_mass_concentration_threshold,
         molecular_volume = problem.molecular_volume,
         kinetics_nucleationfunction = problem.kinetics_nucleationfunction,
         kinetics_growthfunction = problem.kinetics_growthfunction,
@@ -569,8 +580,8 @@ function _experiment_problem(problem::CrystallisationProblem,
         parameterset_dissolution = problem.parameterset_dissolution,
         parameterset_aggregation = problem.parameterset_aggregation,
         parameterset_breakage = problem.parameterset_breakage,
-        R = problem.R,
-        kb = problem.kb,
+        R_gas_constant = problem.R_gas_constant,
+        boltzmann_constant = problem.boltzmann_constant,
         solver = problem.solver)
     isnothing(expt.initial_crystals) && return experiment_problem
     return _problem_with_initial_state(
@@ -676,16 +687,23 @@ function _variance_at(observable::Observable, index::Int)
     return observable.variance === nothing ? nothing : observable.variance[index]
 end
 
-function _measurement_variance(observable, mean_value, index,
-                               ::MeasuredVariance, variance_floor)
-    measured_variance = _variance_at(observable, index)
-    fallback_variance = (0.1 * abs(mean_value))^2
-    return measured_variance === nothing ? max(variance_floor, fallback_variance) :
-           measured_variance + variance_floor
+function _scaled_variance_floor(mean_value, relative_variance_floor)
+    value_scale = max(abs(mean_value), eps(float(one(mean_value))))
+    return relative_variance_floor * value_scale^2
 end
 
 function _measurement_variance(observable, mean_value, index,
-                               model::RelativeVariance, variance_floor)
+                               ::MeasuredVariance, relative_variance_floor)
+    measured_variance = _variance_at(observable, index)
+    fallback_variance = (0.1 * abs(mean_value))^2
+    variance_floor = _scaled_variance_floor(mean_value, relative_variance_floor)
+    return measured_variance === nothing ? max(variance_floor, fallback_variance) :
+           max(measured_variance, variance_floor)
+end
+
+function _measurement_variance(observable, mean_value, index,
+                               model::RelativeVariance, relative_variance_floor)
+    variance_floor = _scaled_variance_floor(mean_value, relative_variance_floor)
     return max(variance_floor, (0.01 * model.percent * abs(mean_value))^2)
 end
 
@@ -735,7 +753,8 @@ function _experiment_objectives(lf::AbstractPELossFunction,
             objective = 0.0
             for index in first_index:length(measured_mean)
                 variance = _measurement_variance(measured, measured_mean[index], index,
-                                                 lf.variance_model, lf.variance_floor)
+                                                 lf.variance_model,
+                                                 lf.relative_variance_floor)
                 residual = simulated_mean[index] - measured_mean[index]
                 objective += log(2π * variance) + residual^2 / variance
             end

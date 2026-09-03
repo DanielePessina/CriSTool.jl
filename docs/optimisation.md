@@ -22,8 +22,8 @@ measurements = load_measurements(path)
 
 nucl_f = nucl_CNT()
 growth_f = growth_energy()
-PE_lb = [10.0, 0.15, -10.0, 1.0]
-PE_ub = [65.0, 2.5, 10.0, 3.5]
+PE_lb = [10.0, 0.00015, -20.0, 1.0]
+PE_ub = [65.0, 0.0025, 0.0, 3.5]
 
 solver = MoM()
 lossfn = logMLE(weighting = [1.0, 1.0])

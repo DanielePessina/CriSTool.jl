@@ -26,10 +26,10 @@ function (::DefaultSolventDynamics)(problem, state, time, growth)
             throw(ArgumentError("Moment solver must track at least the second raw moment."))
         growth isa Number ||
             throw(ArgumentError("Moment-solver solvent coupling requires a scalar growth rate."))
-        depletion = 3 * problem.kv * problem.ρ * growth * state[3]
+        depletion = 3 * problem.volume_shape_factor * problem.crystal_density * growth * state[3]
     else
         population = @view state[1:population_count]
-        depletion = 3 * problem.kv * problem.ρ *
+        depletion = 3 * problem.volume_shape_factor * problem.crystal_density *
                     _concentration_depletion(problem.solver.cell_dL,
                                               population,
                                               growth,
@@ -42,7 +42,7 @@ end
 const default_solvent_dynamics = DefaultSolventDynamics()
 
 """
-    CrystallisationProblem{NuF,GrF,BrF,AggF,solmethod,NuP,GrP,BrP,AggP} <: AbstractCrystallisationProblem
+    CrystallisationProblem{NuF,GrF,BrF,AggF,solmethod,NuP,GrP,BrP,AggP,TP,SM,SS,SD,DissF,DissP} <: AbstractCrystallisationProblem
 
 Main structure defining a crystallization problem with kinetics and solver specifications.
 
@@ -52,19 +52,19 @@ Type Parameters:
 - `BrF<:AbstractBreakageFunction`: Type of breakage function
 - `AggF<:AbstractAggregationFunction`: Type of aggregation function
 - `solmethod<:AbstractSolver`: Type of solver
-- `NuP,GrP,BrP,AggP<:AbstractVector{<:Real}`: Parameter vector types
+- `NuP,GrP,BrP,AggP,DissP<:AbstractVector{<:Real}`: Parameter vector types
 
 Fields:
 - `temp_profile::TP`: Temperature profile (see `AbstractTemperature`)
-- `ρ::Float64`: Crystal density (kg/m³)
+- `crystal_density::Float64`: Crystal density (kg/m³)
 - `initial_concentration::Float64`: Initial solute concentration (kg/m³)
 - `initial_solvent_state::SS`: Named initial values for solvent-phase variables;
   `:concentration` is required
 - `solvent_dynamics::SD`: Callable `(problem, state, time, growth) -> rates`
   returning one derivative per named solvent variable
 - `saturation_model::AbstractSolubilityModel`: Solubility model (default `lysozyme_solubility()`)
-- `kv::Float64`: Volume shape factor
-- `solid_volume_threshold::Float64`: Positive solid mass-concentration threshold
+- `volume_shape_factor::Float64`: Volume shape factor
+- `solid_mass_concentration_threshold::Float64`: Positive solid mass-concentration threshold
   used by scalar signed-dissolution moment solvers to reset an extinguished
   population (kg/m³)
 - `molecular_volume::Float64`: Molecular volume (m³)
@@ -75,11 +75,11 @@ Fields:
 - `parameterset_growth::GrP`: Growth parameters
 - `parameterset_dissolution::DissP`: Dissolution parameters
 - `kinetics_breakagefunction::BrF`: Breakage function (default: nobreakage())
-- `parameterset_breakage::BrP`: Breakage parameters (default: [0.0])
+- `parameterset_breakage::BrP`: Breakage parameters (default: empty for `nobreakage()`)
 - `kinetics_aggregationfunction::AggF`: Aggregation function (default: noaggregation())
-- `parameterset_aggregation::AggP`: Aggregation parameters (default: [0.0])
-- `R::Float64`: Gas constant (J/mol/K)
-- `kb::Float64`: Boltzmann constant (J/K)
+- `parameterset_aggregation::AggP`: Aggregation parameters (default: empty for `noaggregation()`)
+- `R_gas_constant::Float64`: Gas constant (J/mol/K)
+- `boltzmann_constant::Float64`: Boltzmann constant (J/K)
 - `solver::solmethod`: Numerical solver (holds time-stepping configuration).
 """
 Base.@kwdef @concrete struct CrystallisationProblem{NuF <: AbstractNucleationFunction,
@@ -103,11 +103,11 @@ Base.@kwdef @concrete struct CrystallisationProblem{NuF <: AbstractNucleationFun
     temp_profile::TP = ConstantTemperature(273.15 + 20.0) # Default to 25°C
 
     # Solute
-    ρ::Float64 = 1370.0
+    crystal_density::Float64 = 1370.0
     initial_concentration::Float64 = 20.0
     saturation_model::SM = lysozyme_solubility()
-    kv::Float64 = 0.81 #0.55
-    solid_volume_threshold::Float64 = 1e-12
+    volume_shape_factor::Float64 = 0.81 #0.55
+    solid_mass_concentration_threshold::Float64 = 1e-12
     molecular_volume::Float64 = 2.97e-26
     initial_solvent_state::SS = (; concentration = initial_concentration)
     solvent_dynamics::SD = default_solvent_dynamics
@@ -115,36 +115,33 @@ Base.@kwdef @concrete struct CrystallisationProblem{NuF <: AbstractNucleationFun
     # Chosen Kinetics
     kinetics_nucleationfunction::NuF = nucl_CNT()
     kinetics_growthfunction::GrF = growth_empirical()
-    parameterset_nucleation::NuP = [1.0, 1.0]
-    parameterset_growth::GrP = [1.0, 1.0]
+    parameterset_nucleation::NuP = [1.0, 1e-3]
+    parameterset_growth::GrP = [1e-9 / 60, 1.0]
 
     kinetics_breakagefunction::BrF = nobreakage()
-    parameterset_breakage::BrP = [0.0]
+    parameterset_breakage::BrP = Float64[]
 
     kinetics_aggregationfunction::AggF = noaggregation()
-    parameterset_aggregation::AggP = [0.0]
+    parameterset_aggregation::AggP = Float64[]
 
     initial_state::Union{Nothing, AbstractVector{<:Real}} = nothing
 
     # Constants
-    R::Float64 = 8.314
-    kb::Float64 = 1.380649e-23
+    R_gas_constant::Float64 = 8.314
+    boltzmann_constant::Float64 = 1.380649e-23
 
     solver::solmethod = MoM()
 
-    # Dissolution is an independent signed crystal-growth-rate contribution. These
-    # fields are deliberately appended after the legacy fields so existing
-    # positional type signatures remain source-compatible (they wildcard
-    # trailing type parameters).
+    # Dissolution is an independent signed crystal-growth-rate contribution.
     kinetics_dissolutionfunction::DissF = nodissolution()
     parameterset_dissolution::DissP = Float64[]
 
 end
 
-function _validate_solid_volume_threshold(problem::CrystallisationProblem)
-    threshold = problem.solid_volume_threshold
+function _validate_solid_mass_concentration_threshold(problem::CrystallisationProblem)
+    threshold = problem.solid_mass_concentration_threshold
     isfinite(threshold) && threshold > 0.0 ||
-        throw(ArgumentError("solid_volume_threshold must be finite and strictly positive."))
+        throw(ArgumentError("solid_mass_concentration_threshold must be finite and strictly positive."))
     return threshold
 end
 
@@ -179,15 +176,15 @@ function _validate_crystallisation_problem(problem::CrystallisationProblem)
 
     isfinite(problem.initial_concentration) && problem.initial_concentration >= 0.0 ||
         throw(ArgumentError("initial_concentration must be finite and nonnegative."))
-    isfinite(problem.ρ) && problem.ρ > 0.0 ||
-        throw(ArgumentError("ρ must be finite and strictly positive."))
-    isfinite(problem.kv) && problem.kv > 0.0 ||
-        throw(ArgumentError("kv must be finite and strictly positive."))
-    isfinite(problem.R) && problem.R > 0.0 ||
-        throw(ArgumentError("R must be finite and strictly positive."))
-    isfinite(problem.kb) && problem.kb > 0.0 ||
-        throw(ArgumentError("kb must be finite and strictly positive."))
-    _validate_solid_volume_threshold(problem)
+    isfinite(problem.crystal_density) && problem.crystal_density > 0.0 ||
+        throw(ArgumentError("crystal_density must be finite and strictly positive."))
+    isfinite(problem.volume_shape_factor) && problem.volume_shape_factor > 0.0 ||
+        throw(ArgumentError("volume_shape_factor must be finite and strictly positive."))
+    isfinite(problem.R_gas_constant) && problem.R_gas_constant > 0.0 ||
+        throw(ArgumentError("R_gas_constant must be finite and strictly positive."))
+    isfinite(problem.boltzmann_constant) && problem.boltzmann_constant > 0.0 ||
+        throw(ArgumentError("boltzmann_constant must be finite and strictly positive."))
+    _validate_solid_mass_concentration_threshold(problem)
 
     solvent_values = values(problem.initial_solvent_state)
     @inbounds for solvent_value in solvent_values

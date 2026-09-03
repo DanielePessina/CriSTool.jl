@@ -8,7 +8,8 @@ Three steps on the same dataset:
      the `nuts_model` builder (triangular priors on the MLE).
 
 Reads `fake-experimental-dataset.csv` (5 unseeded experiments, generated
-from `[Aj=38, γ=0.6, Ag=1, g=3]` with 3% / 8% heteroscedastic noise).
+from `[ln_nucleation_prefactor=38, surface_energy=0.0006,
+growth_coefficient=1e-9/60, growth_order=3]` with 3% / 8% heteroscedastic noise).
 Swap `DATA_FILE` for your own .csv to fit real data; the file
 just needs the columns expected by `load_measurements`.
 """
@@ -36,8 +37,8 @@ function main()
     agg, br   = noaggregation(), nobreakage()
     solver    = MoM()
     loss      = logMLE(weighting = [1.0, 1.0])
-    lb        = [25.0, 0.30, 0.30, 2.0]   # [Aj, γ, Ag, g]
-    ub        = [50.0, 1.00, 3.00, 4.0]
+    lb        = [25.0, 0.00030, 0.3e-9 / 60, 2.0]
+    ub        = [50.0, 0.00100, 3.0e-9 / 60, 4.0]
 
     # 2. MLE via Metaheuristics differential evolution.
     optres = PE_Routine(loss, measurements, lb, ub, nucl, gr, agg, br;
@@ -70,7 +71,8 @@ function main()
                                        NUTS(50, 0.65; adtype = AutoForwardDiff(chunksize = 4)),
                                        100; progress = false),
                          kinetic_parameter_symbols(nucl, gr, agg, br))
-    nuts_means = [mean(chain[:Aⱼ]), mean(chain[:γ]), mean(chain[:Ag]), mean(chain[:g])]
+    nuts_means = [mean(chain[:ln_nucleation_prefactor]), mean(chain[:surface_energy]),
+                  mean(chain[:growth_coefficient]), mean(chain[:growth_order])]
     println("NUTS posterior mean:  ", round.(nuts_means, digits = 3))
 end
 

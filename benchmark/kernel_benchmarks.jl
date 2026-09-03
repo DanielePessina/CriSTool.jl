@@ -44,9 +44,9 @@ function main()
     for meshsize in BENCHMARK_MESHES
         problem, solver, state = benchmark_problem(meshsize)
         aggregationfunction = aggr_scalar()
-        aggregationparameters = ComponentArray([0.0], paramaxis(aggregationfunction))
+        aggregationparameters = ComponentArray([log10(1.0 / 60.0)], paramaxis(aggregationfunction))
         breakagefunction = breakage_empirical()
-        breakageparameters = ComponentArray([1.0, 0.0], paramaxis(breakagefunction))
+        breakageparameters = ComponentArray([1.0 / 60.0, 0.0], paramaxis(breakagefunction))
 
         # Warm-up is excluded from the measured samples.
         CriSTool.aggregationrate(aggregationfunction,

@@ -5,6 +5,7 @@ function plot_measurements_vs_ensemble(measurements::Vector{<:AbstractExperiment
                                        colors = nothing, colouroffset = 0, parameters = nothing,
                                        nucleationfunction = nothing,
                                        growthfunction = nothing,
+                                       dissolutionfunction = nothing,
                                        aggregationfunction = nothing,
                                        breakagefunction = nothing,
                                        solver = nothing,
@@ -31,12 +32,12 @@ function plot_measurements_vs_ensemble(measurements::Vector{<:AbstractExperiment
 
             size_matrix, size_mean, size_std, pred_label =
                 _ensemble_size_fields(ensemble_sol, Val(size_name))
-            pred_text = "$(round(size_mean[end], sigdigits=3)) ± " *
-                        "$(round(size_std[end], sigdigits=2))"
+            pred_text = "$(round(1e6 * size_mean[end], sigdigits=3)) ± " *
+                        "$(round(1e6 * size_std[end], sigdigits=2))"
             if measured_size !== nothing
-                meas_mean = measured_size.mean[end]
+                meas_mean = 1e6 * measured_size.mean[end]
                 meas_std = measured_size.variance === nothing ? nothing :
-                            sqrt(measured_size.variance[end])
+                            1e6 * sqrt(measured_size.variance[end])
                 meas_text = meas_std === nothing ? "$(round(meas_mean, sigdigits=3))" :
                             "$(round(meas_mean, sigdigits=3)) ± $(round(meas_std, sigdigits=2))"
             end
@@ -65,7 +66,10 @@ function plot_measurements_vs_ensemble(measurements::Vector{<:AbstractExperiment
         param_table_height = 0
         if show_thesistext && parameter_samples !== nothing &&
            nucleationfunction !== nothing && growthfunction !== nothing
-            n_params = length(vcat(nucleationfunction.symbols, growthfunction.symbols))
+            dissolution_symbols = dissolutionfunction === nothing ? Symbol[] :
+                                  dissolutionfunction.symbols
+            n_params = length(vcat(nucleationfunction.symbols, growthfunction.symbols,
+                                   dissolution_symbols))
             param_table_height = table_header_height + n_params * table_row_height
         end
 
@@ -101,7 +105,7 @@ function plot_measurements_vs_ensemble(measurements::Vector{<:AbstractExperiment
                            yminorticks = Makie.IntervalsBetween(4),
                            xminorticks = Makie.IntervalsBetween(4),
                            limits = ((0,
-                                      maximum([_experiment_time_span(measurements[m])[2]
+                                      maximum([_experiment_time_span(measurements[m])[2] / 60
                                                for m in eachindex(measurements)]) + 20),
                                      nothing))
         ax1 = Makie.Axis(figure[1, 1]; merge(axis_defaults, axis_kwargs)...)
@@ -112,14 +116,14 @@ function plot_measurements_vs_ensemble(measurements::Vector{<:AbstractExperiment
         for m in eachindex(measurements)
             particles = [Particles(Vector{Float64}(col))
                          for col in eachcol(ensemble_results[m].concentration)]
-            Makie.band!(ax1, ensemble_results[m].time,
+            Makie.band!(ax1, _plot_time_minutes(ensemble_results[m].time),
                         pquantile.(particles, 0.5 - delta),
                         pquantile.(particles, 0.5 + delta),
                         color = (resolve_experiment_color(colors, m, color_palette, colouroffset), alpha))
         end
 
         for m in eachindex(measurements)
-            Makie.lines!(ax1, optimal_solutions[m][2].time,
+            Makie.lines!(ax1, _plot_time_minutes(optimal_solutions[m][2].time),
                          optimal_solutions[m][2].concentration,
                          color = resolve_experiment_color(colors, m, color_palette, colouroffset),
                          linewidth = ms_linewidth,
@@ -137,14 +141,14 @@ function plot_measurements_vs_ensemble(measurements::Vector{<:AbstractExperiment
         for m in eachindex(measurements)
             concentration = measurements[m].observables.concentration
             if concentration.variance !== nothing
-                Makie.errorbars!(ax1, concentration.time, concentration.mean,
+                Makie.errorbars!(ax1, _plot_time_minutes(concentration.time), concentration.mean,
                                  sqrt.(concentration.variance),
                                  color = :black,
                                  whiskerwidth = ms_whiskerwidth,
                                  linewidth = ms_linewidtheb)
             end
 
-            p = Makie.scatter!(ax1, concentration.time, concentration.mean,
+            p = Makie.scatter!(ax1, _plot_time_minutes(concentration.time), concentration.mean,
                                color = resolve_experiment_color(colors, m, color_palette, colouroffset),
                                markersize = ms_markersize,
                                strokewidth = 2)
@@ -163,16 +167,16 @@ function plot_measurements_vs_ensemble(measurements::Vector{<:AbstractExperiment
             size_matrix, size_mean, size_std, label_symbol =
                 _ensemble_size_fields(ensemble_sol, Val(size_name))
             predicted_size_str = "T = $(round(measurements[m].temperature-273,digits = 2) )°C, " *
-                                "Pred. $(label_symbol) = $(round(size_mean[end], sigdigits=3)) ± " *
-                                "$(round(size_std[end], sigdigits=2)) μm"
+                                "Pred. $(label_symbol) = $(round(1e6 * size_mean[end], sigdigits=3)) ± " *
+                                "$(round(1e6 * size_std[end], sigdigits=2)) μm"
 
             _, measured_size = _measured_size_observable(
                 measurements[m], optimal_solutions[m][2])
             if measured_size !== nothing
                 measured_size_str = measured_size.variance === nothing ?
-                                    "Meas. = $(round(measured_size.mean[end], sigdigits=3)) μm" :
-                                    "Meas. = $(round(measured_size.mean[end], sigdigits=3)) ± " *
-                                    "$(round(sqrt(measured_size.variance[end]), sigdigits=2)) μm"
+                                    "Meas. = $(round(1e6 * measured_size.mean[end], sigdigits=3)) μm" :
+                                    "Meas. = $(round(1e6 * measured_size.mean[end], sigdigits=3)) ± " *
+                                    "$(round(1e6 * sqrt(measured_size.variance[end]), sigdigits=2)) μm"
             end
 
             # Get the actual experiment ID if available, otherwise use the loop index
@@ -202,7 +206,7 @@ function plot_measurements_vs_ensemble(measurements::Vector{<:AbstractExperiment
 
         # Add text box with all information if we have any
         if !isempty(param_string) && showtext
-            max_time = maximum([_experiment_time_span(m)[2] for m in measurements])
+            max_time = maximum([_experiment_time_span(m)[2] / 60 for m in measurements])
             max_conc = maximum([initial_concentration(m) for m in measurements])
 
             Makie.text!(ax1, max_time * 0.75, max_conc * 1.05, text = param_string,
@@ -237,7 +241,10 @@ function plot_measurements_vs_ensemble(measurements::Vector{<:AbstractExperiment
 
         if show_thesistext && parameter_samples !== nothing &&
            nucleationfunction !== nothing && growthfunction !== nothing
-            param_symbols = vcat(nucleationfunction.symbols, growthfunction.symbols)
+            dissolution_symbols = dissolutionfunction === nothing ? Symbol[] :
+                                  dissolutionfunction.symbols
+            param_symbols = vcat(nucleationfunction.symbols, growthfunction.symbols,
+                                 dissolution_symbols)
             params_string = build_parameter_summary_table(parameter_samples,
                                                           param_symbols)
             if !isempty(params_string)
@@ -304,6 +311,7 @@ function plot_ps_measurements_vs_ensemble(measurements::Vector{<:AbstractExperim
                                           colors = nothing, colouroffset = 0, parameters = nothing,
                                           nucleationfunction = nothing,
                                           growthfunction = nothing,
+                                          dissolutionfunction = nothing,
                                           aggregationfunction = nothing,
                                           breakagefunction = nothing,
                                           solver = nothing,
@@ -345,7 +353,7 @@ function plot_ps_measurements_vs_ensemble(measurements::Vector{<:AbstractExperim
                            yminorticks = Makie.IntervalsBetween(4),
                            xminorticks = Makie.IntervalsBetween(4),
                            limits = ((0,
-                                      maximum([_experiment_time_span(measurements[m])[2]
+                                      maximum([_experiment_time_span(measurements[m])[2] / 60
                                                for m in eachindex(measurements)]) + 20),
                                      nothing))
         ax1 = Makie.Axis(figure[1, 1]; merge(axis_defaults, axis_kwargs)...)
@@ -358,9 +366,9 @@ function plot_ps_measurements_vs_ensemble(measurements::Vector{<:AbstractExperim
                 ensemble_results[m], measurements[m], optimal_solutions[m][2])
             particles = [Particles(Vector{Float64}(col))
                          for col in eachcol(size_matrix)]
-            Makie.band!(ax1, ensemble_results[m].time,
-                        pquantile.(particles, 0.5 - delta),
-                        pquantile.(particles, 0.5 + delta),
+            Makie.band!(ax1, _plot_time_minutes(ensemble_results[m].time),
+                        1e6 .* pquantile.(particles, 0.5 - delta),
+                        1e6 .* pquantile.(particles, 0.5 + delta),
                         color = (resolve_experiment_color(colors, m, color_palette, colouroffset), alpha))
         end
 
@@ -369,7 +377,9 @@ function plot_ps_measurements_vs_ensemble(measurements::Vector{<:AbstractExperim
             size_name, measured_size = _measured_size_observable(measurements[m], sol)
             size_traj = size_name === nothing ? _size_trajectory(sol) :
                         _solution_observable_trajectory(sol, size_name)
-            Makie.lines!(ax1, sol.time, size_traj, color = resolve_experiment_color(colors, m, color_palette, colouroffset),
+            Makie.lines!(ax1, _plot_time_minutes(sol.time),
+                         _plot_size_micrometres(size_traj),
+                         color = resolve_experiment_color(colors, m, color_palette, colouroffset),
                          linewidth = ms_linewidth,
                          linestyle = :dash)
         end
@@ -386,6 +396,8 @@ function plot_ps_measurements_vs_ensemble(measurements::Vector{<:AbstractExperim
             param_groups = [
                 (nucleationfunction.symbols, "Nucleation"),
                 (growthfunction.symbols, "Growth"),
+                dissolutionfunction === nothing ? (Symbol[], "Dissolution") :
+                                                  (dissolutionfunction.symbols, "Dissolution"),
                 (aggregationfunction.symbols, "Aggregation"),
                 (breakagefunction.symbols, "Breakage")
             ]
@@ -434,20 +446,20 @@ function plot_ps_measurements_vs_ensemble(measurements::Vector{<:AbstractExperim
 
             # Select the measured metric matching the optimal solution.
             measured_size === nothing && continue
-            meas_size = measured_size.mean
+            meas_size = _plot_size_micrometres(measured_size.mean)
             meas_std = measured_size.variance === nothing ? nothing :
-                        sqrt.(measured_size.variance)
+                        _plot_size_micrometres(sqrt.(measured_size.variance))
 
             append!(measured_sizes, meas_size)
             if meas_std !== nothing
-                Makie.errorbars!(ax1, measured_size.time, meas_size,
+                Makie.errorbars!(ax1, _plot_time_minutes(measured_size.time), meas_size,
                                  meas_std,
                                  color = :black,
                                  whiskerwidth = ms_whiskerwidth,
                                  linewidth = ms_linewidtheb)
             end
 
-            p = Makie.scatter!(ax1, measured_size.time, meas_size,
+            p = Makie.scatter!(ax1, _plot_time_minutes(measured_size.time), meas_size,
                                color = resolve_experiment_color(colors, m, color_palette, colouroffset),
                                markersize = ms_markersize,
                                strokewidth = 2)
@@ -457,8 +469,8 @@ function plot_ps_measurements_vs_ensemble(measurements::Vector{<:AbstractExperim
             push!(labels, "Exp. $(exp_id)")
 
             # Collect size information strings
-            predicted_size = size_mean[end]
-            predicted_std = size_std[end]
+            predicted_size = 1e6 * size_mean[end]
+            predicted_std = 1e6 * size_std[end]
 
             # Get the actual experiment ID if available, otherwise use the loop index
             exp_id = hasproperty(measurements[m], :exp_id) ? measurements[m].exp_id : m
@@ -490,9 +502,9 @@ function plot_ps_measurements_vs_ensemble(measurements::Vector{<:AbstractExperim
 
         # Add text box with all information if desired
         if !isempty(param_string) && showtext
-            max_time = maximum([_experiment_time_span(m)[2] for m in measurements])
+            max_time = maximum([_experiment_time_span(m)[2] / 60 for m in measurements])
             max_size = isempty(measured_sizes) ?
-                       maximum([maximum(_ensemble_size_fields_for_experiment(
+                       1e6 * maximum([maximum(_ensemble_size_fields_for_experiment(
                                                         ensemble_results[m],
                                                         measurements[m],
                                                         optimal_solutions[m][2])[2])

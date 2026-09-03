@@ -1,5 +1,7 @@
 # Plotting functions
 
+_plot_time_minutes(values) = values ./ 60
+_plot_size_micrometres(values) = values .* 1e6
 
 ## Set Font
 
@@ -427,13 +429,14 @@ function build_simulation_thesis_table_data(measurements,
         size_name, measured_size = _measured_size_observable(measurements[m], sol)
         if measured_size !== nothing
             size_label = size_name === :d50q ? "d50" : string(size_name)
-            predicted_size = _solution_observable_trajectory(sol, size_name)[end]
+            predicted_size = 1e6 * _solution_observable_trajectory(sol, size_name)[end]
             pred_text = string(round(predicted_size, sigdigits = 3))
             final_variance = measured_size.variance === nothing ? nothing :
                              measured_size.variance[end]
             meas_text = final_variance === nothing ?
-                        string(round(measured_size.mean[end], sigdigits = 3)) :
-                        format_plot_measurement_value(measured_size.mean[end], final_variance;
+                        string(round(1e6 * measured_size.mean[end], sigdigits = 3)) :
+                        format_plot_measurement_value(1e6 * measured_size.mean[end],
+                                                      1e12 * final_variance;
                                                       show_uncertainty = show_measurement_uncertainty)
         end
 

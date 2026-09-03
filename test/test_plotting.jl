@@ -1,6 +1,6 @@
 @testset "Plotting Thesis Table Formatting" begin
-    params = [38.0, 0.7, 1.0, 3.0]
-    save_idx = collect(0.0:120.0:480.0)
+    params = [38.0, 0.0007, 1e-9 / 60, 3.0]
+    save_idx = collect(0.0:7200.0:28800.0)
     temperature = 293.15
 
     _,
@@ -19,7 +19,7 @@
                                                     concentration = Observable(; time = save_idx, mean = solution.concentration,
                                                     variance = fill(0.01, length(save_idx))),
                                                     d43 = Observable(; time = save_idx, mean = solution.d43,
-                                                                      variance = fill(4.0, length(save_idx)))),
+                                                                      variance = fill(4e-12, length(save_idx)))),
                                                     temperature = temperature,
                                                     exp_id = 42)
 
@@ -52,7 +52,7 @@
     @test thesis_default.rows[1][1] == "42"
     @test thesis_default.rows[1][2] == string(round(temperature - 273, digits = 2))
     @test thesis_default.rows[1][3] ==
-          string(round(CriSTool.get_characteristic_size(solution), sigdigits = 3))
+          string(round(1e6 * CriSTool.get_characteristic_size(solution), sigdigits = 3))
     @test occursin("±", thesis_default.rows[1][4])
 
     thesis_deterministic = CriSTool.build_simulation_thesis_table_data([measurement],
@@ -60,7 +60,7 @@
                                                                        show_measurement_uncertainty = false)
     @test thesis_deterministic.size_label == "d43"
     @test thesis_deterministic.rows[1][4] ==
-          string(round(measurement.observables.d43.mean[end], sigdigits = 3))
+          string(round(1e6 * measurement.observables.d43.mean[end], sigdigits = 3))
     @test !occursin("±", thesis_deterministic.rows[1][4])
 
     param_symbols = vcat(nucl_CNT().symbols, growth_empirical().symbols)
@@ -73,8 +73,8 @@ end
 @testset "Plotting Savedir Overrides" begin
     using Random
 
-    params = [38.0, 0.7, 1.0, 3.0]
-    save_idx = collect(0.0:120.0:480.0)
+    params = [38.0, 0.0007, 1e-9 / 60, 3.0]
+    save_idx = collect(0.0:7200.0:28800.0)
     temperature = 293.15
 
     _,
@@ -93,7 +93,7 @@ end
                                                     concentration = Observable(; time = save_idx, mean = solution.concentration,
                                                     variance = fill(0.01, length(save_idx))),
                                                     d43 = Observable(; time = save_idx, mean = solution.d43,
-                                                                      variance = fill(4.0, length(save_idx)))),
+                                                                      variance = fill(4e-12, length(save_idx)))),
                                                     temperature = temperature,
                                                     exp_id = 42)
 
@@ -127,8 +127,8 @@ end
     mktempdir() do dir
         Random.seed!(1234)
         prior = Distributions.product_distribution([TriangularDist(30.0, 45.0, params[1]),
-                                                    TriangularDist(0.2, 1.2, params[2]),
-                                                    TriangularDist(0.5, 2.0, params[3]),
+                                                    TriangularDist(0.0002, 0.0012, params[2]),
+                                                    TriangularDist(0.5e-9 / 60, 2e-9 / 60, params[3]),
                                                     TriangularDist(2.0, 4.0, params[4])])
         res, _ = CriSTool.ABCDE_Turner_Routine(
             CriSTool.logMLE(weighting = [1.0, 1.0]),

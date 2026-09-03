@@ -16,11 +16,12 @@ The script:
    7 experiments).
 2. Benchmarks three solvers with Chairmarks (`@be`, `evals=1`, `seconds=5`,
    like the original `Thesis - Benchmarks/benchmarks.jl` script):
-   - **MoM** — the oracle: canonical params `[38.0, 0.6, 1.0, 3.0]`
-     (nucl_CNT + growth_empirical + noaggregation + nobreakage), per-experiment
-     time grids and `temp_profile` from each experiment.
+   - **MoM** — the oracle: canonical SI params
+     `[38.0, 0.0006, 1e-9 / 60, 3.0]` (nucl_CNT + growth_empirical +
+     noaggregation + nobreakage), per-experiment time grids and `temp_profile`
+     from each experiment.
    - **FiniteVol(200)** and **WENO(200)** — same 7 experiments and params on a
-     fixed common grid `0:30:270`.
+     fixed common grid `0:1800:16200` seconds (the former `0:30:270` minutes).
 3. Prints per-solver median time, allocation count and bytes (Chairmarks
    `Sample.allocs`/`Sample.bytes`), plus ODE stats aggregated over the 7
    experiments: `nf`, `naccept`, `nreject`, `nsolve`, `nsave`.
@@ -66,7 +67,7 @@ Expected wall time ≈ 1–2 minutes (mostly precompile + the 5 s sampling windo
 - `stats.nsteps` handling: defensive `hasproperty` check, matching the original
   script's `_get_ode_stat`.
 
-## Baseline (2026-08-28, git `b01b5b8`, Julia 1.12.4, Chairmarks 1.3.1)
+## Historical baseline (legacy units; 2026-08-28, git `b01b5b8`)
 
 ```
 solver     med time   med allocs      med bytes       nf     nacc     nrej   nsolve      nsave
@@ -86,7 +87,7 @@ WENO200     17.233 ms      1064149     26652816.0     2391      395        0    
 - The overwhelming allocation volume comes from the per-call ODE machinery
   (every `runsimulation` call constructs an `ODEProblem` + solver cache inside
 
-## Post type-stability fix (2026-08-29, uncommitted on `4e10db6`, Julia 1.12.4, Chairmarks 1.3.1)
+## Post type-stability fix (legacy units; 2026-08-29, uncommitted on `4e10db6`)
 
 ```
 solver     med time   med allocs      med bytes       nf     nacc     nrej   nsolve      nsave
@@ -121,3 +122,38 @@ WENO200      4.632 ms         2478      1829856.0     2403      397        0    
   0.95 ms): **no longer reproduces**; the original code measures 0.164 ms in
   this same env. See `research/benchmark-perf-log.md` for the full story.
   `_simulatecrystallisation`); this is opaque to AllocCheck.
+
+## Numeric SI migration rerun (2026-09-03, worktree `92dd52b`)
+
+The harness was rerun after converting the parameters and fixed grids to SI
+(`CANONICAL_θ = [38.0, 0.0006, 1e-9 / 60, 3.0]`; FV/WENO grid
+`0:1800:16200` s). The worktree was uncommitted, so the hash identifies its
+base commit rather than a complete patch revision.
+
+```
+solver     med time   med allocs      med bytes       nf     nacc   nrej   nsolve   nsave
+MoM         1.062 ms         1414       107984.0     7845     1304      0        0      57
+FV200       3.131 ms         2275      1192688.0     3531      585      0        0      70
+WENO200     4.888 ms         2688      2011632.0     2487      411      0        0      70
+QMOM3       2.036 ms        10034       647248.0    14499     2413      0        0      70
+```
+
+Relative to the immediately preceding type-stable legacy-unit run, timing was
+approximately +5% (MoM), +15% (FV200), and +5% (WENO200). The extra QMOM row is
+new. These are small solver-tolerance/runtime effects from changing the
+independent-variable scale, not a 60× workload error; the trajectory oracle
+comparison shows concentration agreement better than 5×10⁻⁵ relative and
+discretised size-metric agreement better than 1.5×10⁻⁴ relative. The early MoM
+d43 values differ by up to 1.5% because the migration intentionally removed
+the old additive, dimensionally-invalid moment-ratio floor; final MoM d43
+agrees within 10⁻⁴ relative.
+
+The isolated SI kernel benchmark (`kernel_benchmarks.jl`) measured:
+
+```
+mesh   aggregation μs   aggregation bytes   breakage μs   breakage bytes
+50             12.54                 480           3.33             480
+100            46.50                 928          13.38             928
+250           266.38                2064          78.38            2064
+500          1025.44                4160         305.92            4160
+```

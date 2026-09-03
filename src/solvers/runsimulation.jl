@@ -1,8 +1,19 @@
 ### One-pass Runner functions
+
+function _validate_save_times(save_times)
+    length(save_times) >= 1 ||
+        throw(ArgumentError("save_idx must contain at least one time."))
+    all(time -> time isa Real && isfinite(time) && time >= 0, save_times) ||
+        throw(ArgumentError("save_idx must contain finite nonnegative SI times in seconds."))
+    length(save_times) == 1 || all(diff(collect(save_times)) .> 0) ||
+        throw(ArgumentError("save_idx must be strictly increasing."))
+    return save_times
+end
+
 """
     runsimulation(parameters, nucleationfunction, growthfunction,
                   aggregationfunction, breakagefunction, initialconc;
-                  save_idx = 0:5.0:480.0,
+                  save_idx = 0:300.0:28_800.0,
                   solver = FiniteVol(; meshsize = 500, lmax = 50e-6),
                   initial_state = nothing,
                   initial_crystals = nothing)
@@ -11,20 +22,20 @@ Simulate batch crystallisation for a given set of kinetic models.
 
 # Arguments
 - `parameters::AbstractArray{<:Real}`: concatenated parameter vector
-  `[p_ν; p_g; p_agg; p_br]` whose length must equal
-  `nucleationfunction.nparams + growthfunction.nparams +
-  aggregationfunction.nparams + breakagefunction.nparams`.
+  `[p_ν; p_g; p_diss; p_agg; p_br]` whose length must equal the sum of the
+  selected model parameter counts. With the default `nodissolution()`, the
+  dissolution block is empty.
 - `nucleationfunction`, `growthfunction`, `aggregationfunction`,
   `breakagefunction`: kinetic models describing nucleation, growth,
   aggregation and breakage respectively.
 - `initialconc::Float64`: initial solute concentration.
-- `save_idx::AbstractVector{<:Real}`: times (in minutes) at which the
+- `save_idx::AbstractVector{<:Real}`: times (in seconds) at which the
   solution is saved. The number of time steps is `length(save_idx)`.
 - `solver::AbstractSolver`: numerical solver (finite volume or method of
   moments).
 - `initial_state::AbstractVector`: optional complete solver state. The
   population variables are followed by the named solvent-state values.
-- `initial_crystals::Union{Nothing,NamedTuple}`: optional initial seed
+- `initial_crystals::Union{Nothing,AbstractInitialCrystals}`: optional initial seed
   characteristics passed to `initial_state_from_characteristics`.
 
 # Returns
@@ -40,10 +51,10 @@ function runsimulation(parameters::AbstractArray{TPara},
                        breakagefunction::AbstractBreakageFunction,
                        initialconc::Float64;
                        diss::AbstractDissolutionFunction = nodissolution(),
-                       save_idx = 0:5.0:480.0,
+                       save_idx = 0:300.0:28_800.0,
                        solver::AbstractSolver = FiniteVol(; meshsize = 500, lmax = 50e-6),
                        initial_state::Union{Nothing, AbstractVector} = nothing,
-                       initial_crystals::Union{Nothing, NamedTuple} = nothing) where {TPara <: Real}
+                       initial_crystals::Union{Nothing, AbstractInitialCrystals} = nothing) where {TPara <: Real}
     flat_parameters = vec(parameters)
     expected_nparams = nucleationfunction.nparams + growthfunction.nparams +
                        diss.nparams + aggregationfunction.nparams + breakagefunction.nparams
@@ -101,10 +112,10 @@ function runsimulation(nucleationfunction::AbstractDDNucleationFunction,
                        breakagefunction::nobreakage,
                        initialconc::Float64;
                        diss::AbstractDissolutionFunction = nodissolution(),
-                       save_idx::S = 0:5.0:480.0,
+                       save_idx::S = 0:300.0:28_800.0,
                        solver::AbstractSolver = FiniteVol(; meshsize = 500, lmax = 50e-6),
                        initial_state::Union{Nothing, AbstractArray{<:Real}} = nothing,
-                       initial_crystals::Union{Nothing, NamedTuple} = nothing) where {S <:
+                       initial_crystals::Union{Nothing, AbstractInitialCrystals} = nothing) where {S <:
                                                                                               AbstractArray{<:Real}}
 
     return runsimulation(Float64[],
@@ -134,10 +145,10 @@ function runsimulation(parameters::AbstractVector{TPara},
                        growthfunction::AbstractFPGrowthFunction,
                        initialconc::Float64;
                        diss::AbstractDissolutionFunction = nodissolution(),
-                       save_idx = 0:5.0:480.0,
+                       save_idx = 0:300.0:28_800.0,
                        solver::AbstractSolver = MoM(),
                        initial_state::Union{Nothing, AbstractVector} = nothing,
-                       initial_crystals::Union{Nothing, NamedTuple} = nothing) where {TPara <: Real}
+                       initial_crystals::Union{Nothing, AbstractInitialCrystals} = nothing) where {TPara <: Real}
     return runsimulation(parameters,
                          nucleationfunction,
                          growthfunction,
@@ -155,27 +166,28 @@ end
     runsimulation(parameters::ComponentArray; nucl, gr, diss, agg, br, solver,
                   initial_concentration = 18.0, initial_state = nothing,
                   initial_crystals = nothing,
-                  save_idx = 0:5.0:480.0, cry_kwargs...)
+                  save_idx = 0:300.0:28_800.0, cry_kwargs...)
 
 Core kwarg-form entry. Expects `parameters` to be a ComponentArray laid out
-with the top-level axis built by `paramaxis(nucl, gr, agg, br)` — that is, with
-named slices `parameters.nucl`, `parameters.gr`, `parameters.agg`, `parameters.br`.
+with the top-level axis built by `paramaxis(nucl, gr, diss, agg, br)` — that is,
+with named slices `parameters.nucl`, `parameters.gr`, `parameters.diss`,
+`parameters.agg`, and `parameters.br`.
 
 Use this when you already hold a structured parameter vector (e.g. from an
 optimiser that supports ComponentArrays). For a flat `Vector{Float64}`, call
 the AbstractVector overload — it wraps the input here.
 """
 function runsimulation(parameters::ComponentArrays.ComponentArray;
-                       nucl::AbstractNucleationFunction = noaggregation(),
-                       gr::AbstractGrowthFunction = noaggregation(),
+                       nucl::AbstractNucleationFunction = nucl_CNT(),
+                       gr::AbstractGrowthFunction = growth_empirical(),
                        diss::AbstractDissolutionFunction = nodissolution(),
                        agg::AbstractAggregationFunction = noaggregation(),
                        br::AbstractBreakageFunction = nobreakage(),
                        solver::AbstractSolver = FiniteVol(meshsize = 500, lmax = 50e-6),
                        initial_concentration = 18.0,
                        initial_state::Union{Nothing, AbstractVector} = nothing,
-                       initial_crystals::Union{Nothing, NamedTuple} = nothing,
-                       save_idx = 0:5.0:480.0,
+                       initial_crystals::Union{Nothing, AbstractInitialCrystals} = nothing,
+                       save_idx = 0:300.0:28_800.0,
                        cry_kwargs...)
     isnothing(initial_state) || isnothing(initial_crystals) ||
         throw(ArgumentError("Provide either initial_state or initial_crystals, not both."))
@@ -202,20 +214,20 @@ function runsimulation(parameters::ComponentArrays.ComponentArray;
 
     _validate_crystallisation_problem(cry)
 
-    return cry, _simulatecrystallisation(cry, save_idx)
+    return cry, _simulatecrystallisation(cry, _validate_save_times(save_idx))
 end
 
 """
     runsimulation(parameters::AbstractVector; nucl, gr, agg, br, ...)
 
-Backward-compatible wrapper for callers (optimisers, scripts) that hand in a
-flat parameter vector. Validates length, builds a ComponentArray view with the
-composite axis from the kinetic models, and forwards to the ComponentArray
-core. AD types (e.g. `Vector{Dual}`) flow through unchanged.
+Flat-vector wrapper for callers (optimisers, scripts) that hand in numeric
+parameters. Validates length, builds a ComponentArray view with the composite
+axis from the kinetic models, and forwards to the ComponentArray core. AD types
+(e.g. `Vector{Dual}`) flow through unchanged.
 """
 function runsimulation(parameters::AbstractVector;
-                       nucl::AbstractNucleationFunction = noaggregation(),
-                       gr::AbstractGrowthFunction = noaggregation(),
+                       nucl::AbstractNucleationFunction = nucl_CNT(),
+                       gr::AbstractGrowthFunction = growth_empirical(),
                        diss = nothing,
                        agg::AbstractAggregationFunction = noaggregation(),
                        br::AbstractBreakageFunction = nobreakage(),

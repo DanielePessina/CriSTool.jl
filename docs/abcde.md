@@ -37,8 +37,8 @@ path = joinpath(pkgdir(CriSTool), "examples", "fake-experimental-dataset.csv")
 measurements = load_measurements(path)
 
 nucl_f, growth_f = nucl_CNT(), growth_empirical()
-PE_lb = [10.0, 0.15, -10.0, 1.0]
-PE_ub = [65.0, 2.5, 10.0, 3.5]
+PE_lb = [10.0, 0.00015, 0.3e-9 / 60, 1.0]
+PE_ub = [65.0, 0.0025, 3.0e-9 / 60, 3.5]
 
 solver = MoM()
 lossfn = logMLE()

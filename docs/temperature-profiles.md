@@ -24,19 +24,19 @@ using CriSTool
 const_T = ConstantTemperature(293.15)
 
 # Linear cooling profile (Kelvin, K per second)
-linear_T = LinearTemperature(293.15, -0.01)
+linear_T = LinearTemperature(293.15, -0.01 / 60)
 
 # Arbitrary T(t) via a closure
-periodic_T = CallableTemperature(t -> 293.15 + 2.0 * sin(2π * t / 600))
+periodic_T = CallableTemperature(t -> 293.15 + 2.0 * sin(2π * t / 36000))
 
 problem, solution = runsimulation(
-    [38.0, 0.7, 1.0, 3.0];
+    [38.0, 0.0007, 1e-9 / 60, 3.0];
     nucl = nucl_CNT(),
     gr = growth_empirical(),
     solver = MoM(),
     initial_concentration = 18.0,
     temp_profile = linear_T,
-    save_idx = 0.0:60.0:480.0,
+    save_idx = 0.0:3600.0:28800.0,
 )
 ```
 
@@ -53,15 +53,15 @@ end
 
 CriSTool.temperature(p::StepTemperature, t) = t < p.t_switch ? p.T1 : p.T2
 
-profile = StepTemperature(293.15, 288.15, 120.0)
+profile = StepTemperature(293.15, 288.15, 7200.0) # seconds
 
 problem, solution = runsimulation(
-    [38.0, 0.7, 1.0, 3.0];
+    [38.0, 0.0007, 1e-9 / 60, 3.0];
     nucl = nucl_CNT(),
     gr = growth_empirical(),
     solver = MoM(),
     initial_concentration = 18.0,
     temp_profile = profile,
-    save_idx = 0.0:60.0:480.0,
+    save_idx = 0.0:3600.0:28800.0,
 )
 ```

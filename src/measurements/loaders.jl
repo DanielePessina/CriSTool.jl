@@ -67,12 +67,16 @@ end
 
 function _initial_crystals_from_table(table, initial_crystals_cols)
     initial_crystals_cols === nothing && return nothing
-    required = (:mass_concentration, :d43, :distribution, :spread)
+    required = (:mass_concentration, :d43)
     all(name -> hasproperty(initial_crystals_cols, name), required) ||
-        throw(ArgumentError("initial_crystals_cols must map mass_concentration, d43, " *
-                            "distribution, and spread columns."))
-
-    values = map(required) do name
+        throw(ArgumentError("initial_crystals_cols must map mass_concentration and d43 columns."))
+    has_geometric_std = hasproperty(initial_crystals_cols, :geometric_std)
+    has_standard_deviation = hasproperty(initial_crystals_cols, :standard_deviation)
+    xor(has_geometric_std, has_standard_deviation) ||
+        throw(ArgumentError("initial_crystals_cols must map exactly one of geometric_std or standard_deviation."))
+    spread_name = has_geometric_std ? :geometric_std : :standard_deviation
+    names = (required..., spread_name)
+    values = map(names) do name
         column = getproperty(initial_crystals_cols, name)
         _consistent_measurement_value(table, column, missing, "initial crystal characteristics")
     end
@@ -81,7 +85,14 @@ function _initial_crystals_from_table(table, initial_crystals_cols)
         throw(ArgumentError("Initial crystal characteristic columns must be populated " *
                             "for every experiment or omitted entirely."))
 
-    return NamedTuple{required}(Tuple(values))
+    mass_concentration, d43, spread = values
+    if has_geometric_std
+        return LogNormalInitialCrystals(; mass_concentration, d43,
+                                        geometric_std = spread)
+    else
+        return GaussianInitialCrystals(; mass_concentration, d43,
+                                       standard_deviation = spread)
+    end
 end
 
 """
@@ -131,14 +142,20 @@ function experiments_from_table(table;
     end
 
     if initial_crystals_cols !== nothing
-        required = (:mass_concentration, :d43, :distribution, :spread)
+        required = (:mass_concentration, :d43)
         all(name -> hasproperty(initial_crystals_cols, name), required) ||
-            throw(ArgumentError("initial_crystals_cols must map mass_concentration, d43, " *
-                                "distribution, and spread columns."))
+            throw(ArgumentError("initial_crystals_cols must map mass_concentration and d43 columns."))
+        xor(hasproperty(initial_crystals_cols, :geometric_std),
+            hasproperty(initial_crystals_cols, :standard_deviation)) ||
+            throw(ArgumentError("initial_crystals_cols must map exactly one of geometric_std or standard_deviation."))
         for name in required
             _require_measurement_column(table, getproperty(initial_crystals_cols, name),
                                         "initial crystal :$name")
         end
+        spread_name = hasproperty(initial_crystals_cols, :geometric_std) ?
+                      :geometric_std : :standard_deviation
+        _require_measurement_column(table, getproperty(initial_crystals_cols, spread_name),
+                                    "initial crystal :$spread_name")
     end
 
     metadata_names = keys(metadata_cols)
@@ -249,16 +266,14 @@ end
 Read a CSV or JSON array-of-records file and normalize it through
 `experiments_from_table`. When `observables` is omitted, the conventional
 columns `Concentration`, optional `Concentration_var`, optional `PS`, and
-optional `PS_var` are discovered. Temperatures are interpreted as Celsius and
-converted to Kelvin by default; pass `temperature_transform = identity` for
-data already stored in Kelvin.
+optional `PS_var` are discovered. Bare numeric temperatures are Kelvin.
 """
 function load_measurements(filepath::AbstractString;
                            format::Symbol = :auto,
                            id_col = :Exp_ID,
                            observables = nothing,
                            metadata_cols = nothing,
-                           temperature_transform = value -> round(value + 273.15, digits = 2),
+                           temperature_transform = identity,
                            temperature_range::Tuple = (nothing, nothing),
                            filters::NamedTuple = NamedTuple(),
                            initial_crystals_cols = nothing)

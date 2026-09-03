@@ -14,7 +14,7 @@ Choose the solver from the output you need:
 
 | Need | Solver | Main solution fields |
 | --- | --- | --- |
-| moment-derived size metrics with a compact state | `MoM()` | `concentration`, `d10`, `d32`, `d43`, `mu2` |
+| moment-derived size metrics with a compact state | `MoM()` | `concentration`, `d10`, `d32`, `d43`, `moment2` |
 | moments plus a reconstructed Gaussian rule | `QMOM(nquadrature = N)` | the MoM fields, `moments`, `quadrature_nodes`, `quadrature_weights` |
 | a resolved particle-size distribution | `FiniteVol(meshsize = ..., lmax = ...)` | `numberdensity`, `voldensity`, `d10q`, `d50q`, `d90q`, and moment-derived sizes |
 | a higher-order finite-volume discretisation | `WENO(meshsize = ..., lmax = ...)` | the finite-volume fields and quantiles |
@@ -26,25 +26,26 @@ are sufficient. See [Solvers](solvers.md) for the solver-specific details.
 
 ## Parameter ordering
 
-The parameter vector is always concatenated as:
+The parameter vector is concatenated as:
 
 ```
-[p_nucleation; p_growth; p_aggregation; p_breakage]
+[p_nucleation; p_growth; p_dissolution; p_aggregation; p_breakage]
 ```
 
-The lengths of each block come from the `nparams` field on the kinetic
-structs you pass in. `runsimulation` validates this length.
+The dissolution block is empty for the default `nodissolution()`. The lengths
+of each block come from the `nparams` field on the kinetic structs you pass in.
+`runsimulation` validates this length.
 
 `runsimulation` has two entry points sharing the same kwargs:
 
 ```julia
-# 1. ComponentArray-native core. Reads parameters.nucl/.gr/.agg/.br directly.
-runsimulation(parameters::ComponentArray; nucl, gr, agg, br, solver,
+# 1. ComponentArray-native core. Reads parameters.nucl/.gr/.diss/.agg/.br directly.
+runsimulation(parameters::ComponentArray; nucl, gr, diss, agg, br, solver,
               initial_concentration, save_idx, ...)
 
-# 2. Backward-compatible flat-vector wrapper. Validates length, builds a
-#    ComponentArray view via `paramaxis(nucl, gr, agg, br)`, and forwards.
-runsimulation(parameters::AbstractVector; nucl, gr, agg, br, ...)
+# 2. Flat-vector wrapper. Validates length, builds a ComponentArray view via
+#    `paramaxis(nucl, gr, diss, agg, br)`, and forwards.
+runsimulation(parameters::AbstractVector; nucl, gr, diss, agg, br, ...)
 ```
 
 Both forms accept AD types (`Vector{Dual}` from ForwardDiff, etc.) and pass
@@ -65,17 +66,18 @@ using CriSTool, ComponentArrays
 nucl, gr = nucl_CNT(), growth_empirical()
 agg, br  = noaggregation(), nobreakage()
 
-flat = [38.0, 0.7, 1.0, 3.0]
+flat = [38.0, 0.0007, 1e-9 / 60, 3.0]
 p    = ComponentArray(flat, paramaxis(nucl, gr, agg, br))
 
-p.nucl.Aj   # 38.0
-p.gr.g      # 3.0
-p.gr.g = 2.5
+p.nucl.ln_nucleation_prefactor   # 38.0
+p.gr.growth_order                 # 3.0
+p.gr.growth_order = 2.5
 runsimulation(p; nucl, gr, agg, br, solver = MoM(),
-              initial_concentration = 18.0, save_idx = 0.0:60.0:480.0)
+              initial_concentration = 18.0, save_idx = 0.0:3600.0:28800.0)
 ```
 
-For the kinetic-side per-family axes (e.g. `Axis(Aj=1, γ=2)` for
+For the kinetic-side per-family axes (for example
+`Axis(ln_nucleation_prefactor=1, surface_energy=2)` for
 `nucl_CNT`), see [Kinetics](kinetics.md) and Tutorial 4.
 
 ## Basic MoM simulation (keyword interface)
@@ -83,7 +85,7 @@ For the kinetic-side per-family axes (e.g. `Axis(Aj=1, γ=2)` for
 ```julia
 using CriSTool
 
-params = [38.0, 0.7, 1.0, 3.0]
+params = [38.0, 0.0007, 1e-9 / 60, 3.0]
 
 problem, solution = runsimulation(
     params;
@@ -93,7 +95,7 @@ problem, solution = runsimulation(
     br = nobreakage(),
     solver = MoM(),
     initial_concentration = 18.0,
-    save_idx = 0.0:60.0:480.0,
+    save_idx = 0.0:3600.0:28800.0,
 )
 
 @show solution.success
@@ -101,7 +103,7 @@ problem, solution = runsimulation(
 @show solution.d43[end]
 ```
 
-MoM returns moment-based outputs (`d10`, `d32`, `d43`, `mu2`) and does not
+MoM returns moment-based outputs (`d10`, `d32`, `d43`, `moment2`) and does not
 provide the full particle size distribution. Check `solution.success` before
 treating a trajectory as a successful simulation.
 
@@ -113,14 +115,14 @@ provides the same d32 and d43 observables used by the moment-based losses.
 
 ```julia
 problem, solution = runsimulation(
-    [38.0, 0.7, 1.0, 3.0];
+    [38.0, 0.0007, 1e-9 / 60, 3.0];
     nucl = nucl_CNT(),
     gr = growth_empirical(),
     agg = noaggregation(),
     br = nobreakage(),
     solver = QMOM(nquadrature = 3),
     initial_concentration = 18.0,
-    save_idx = 0.0:60.0:480.0,
+    save_idx = 0.0:3600.0:28800.0,
 )
 
 @show solution.d43[end]
@@ -139,7 +141,7 @@ length-dependent kinetics until a corresponding moment closure is defined.
 using CriSTool
 import OrdinaryDiffEqTsit5
 
-params = [38.0, 0.7, 1.0, 3.0]
+params = [38.0, 0.0007, 1e-9 / 60, 3.0]
 
 problem, solution = runsimulation(
     params;
@@ -150,7 +152,7 @@ problem, solution = runsimulation(
     solver = FiniteVol(meshsize = 200, lmax = 50e-6),
     timestepping_solver = OrdinaryDiffEqTsit5.Tsit5(),
     initial_concentration = 18.0,
-    save_idx = 0.0:60.0:480.0,
+    save_idx = 0.0:3600.0:28800.0,
 )
 
 @show solution.d10q[end]
@@ -162,32 +164,29 @@ problem, solution = runsimulation(
 
 Finite volume and WENO solvers return a full number density over size,
 plus volume-density quantiles (`d10q`, `d50q`, `d90q`) **and** the
-moment-derived sizes (`d10`, `d32`, `d43`, `mu2`). The moment-derived
+moment-derived sizes (`d10`, `d32`, `d43`, `moment2`). The moment-derived
 sizes are computed once at solution-construction time, so `sol.d43`
 behaves identically on `CrystallisationFVSolution` and
-`CrystallisationMoMSolution`. The legacy
-`getmomentsizes(prob, sol)` helper is now a thin field-access wrapper
-kept for backward compatibility — new code can read `sol.d43` /
-`sol.d32` directly.
+`CrystallisationMoMSolution`. `getmomentsizes(prob, sol)` remains a thin
+field-access wrapper. All stored times and sizes are SI seconds and metres.
 
 ## Optional initial state
 
 For seeded batches, describe the initial crystal population once and let
 CriSTool construct the solver-specific state. The public characteristics use
-kg/m³ for crystal mass concentration and µm for `d43`.
+kg/m³ for crystal mass concentration and metres for `d43`.
 
 ```julia
 using CriSTool
 
-initial_crystals = (; mass_concentration = 0.25,
-                    d43 = 12.0,
-                    distribution = :lognormal,
-                    spread = 1.25)
+initial_crystals = LogNormalInitialCrystals(; mass_concentration = 0.25,
+                                            d43 = 12e-6,
+                                            geometric_std = 1.25)
 
 solver = FiniteVol(meshsize = 100, lmax = 50e-6)
 
 problem, solution = runsimulation(
-    [38.0, 0.7, 1.0, 3.0];
+    [38.0, 0.0007, 1e-9 / 60, 3.0];
     nucl = nucl_CNT(),
     gr = growth_empirical(),
     agg = noaggregation(),
@@ -195,12 +194,13 @@ problem, solution = runsimulation(
     solver = solver,
     initial_crystals = initial_crystals,
     initial_concentration = 18.0,
-    save_idx = 0.0:120.0:480.0,
+    save_idx = 0.0:7200.0:28800.0,
 )
 ```
 
-Use `distribution = :gaussian` with `spread` in µm for a truncated positive
-Gaussian profile. Set `d43 = 0.0` and `mass_concentration = 0.0` for an empty
+Use `GaussianInitialCrystals` with `standard_deviation` in metres for a
+truncated positive Gaussian profile. Set `d43 = 0.0` and
+`mass_concentration = 0.0` for an empty
 initial population. The lower-level `initial_state` keyword remains available
 when a solver-specific state is already known.
 
@@ -223,13 +223,13 @@ state = initial_state_from_characteristics(
 using CriSTool
 
 problem, solution = runsimulation(
-    [38.0, 0.7, 1.0, 3.0];
+    [38.0, 0.0007, 1e-9 / 60, 3.0];
     nucl = nucl_CNT(),
     gr = growth_empirical(),
     solver = MoM(),
     initial_concentration = 18.0,
     temp_profile = ConstantTemperature(293.15),
-    save_idx = 0.0:60.0:480.0,
+    save_idx = 0.0:3600.0:28800.0,
 )
 ```
 

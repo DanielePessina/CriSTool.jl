@@ -31,7 +31,7 @@ julia --project=examples -e 'using Pkg; Pkg.instantiate()'
 ```julia
 using CriSTool
 
-parameters = [38.0, 0.6, 1.0, 3.0]
+parameters = [38.0, 0.0006, 1e-9 / 60, 3.0]
 problem, solution = runsimulation(
     parameters;
     nucl = nucl_CNT(),
@@ -40,7 +40,7 @@ problem, solution = runsimulation(
     br = nobreakage(),
     solver = MoM(),
     initial_concentration = 18.0,
-    save_idx = 0.0:60.0:480.0,
+    save_idx = 0.0:3600.0:28800.0,
 )
 
 solution.success

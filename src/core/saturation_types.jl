@@ -12,10 +12,12 @@ abstract type AbstractSolubilityModel end
 """
     lysozyme_solubility() -> PolynomialSolubility
 
-The legacy lysozyme solubility polynomial (kg/m³, temperature in °C):
+The legacy lysozyme solubility polynomial (kg/m³) as a function of the
+Celsius-equivalent temperature difference:
 `0.3705 + 7.171e-2 ΔT - 1.924e-3 ΔT² + 17.97e-5 ΔT³`, with
-`ΔT = T_K - 273.15`. This is the default `CrystallisationProblem`
-saturation model (backward compatible with the original hardcoded curve).
+`ΔT = T_K - 273.15`. Public temperature profiles are always supplied in
+Kelvin; this offset preserves the original curve. This is the default
+`CrystallisationProblem` saturation model.
 """
 lysozyme_solubility() =
     PolynomialSolubility(; coeffs = [0.3705, 7.171e-2, -1.924e-3, 17.97e-5])
@@ -32,9 +34,10 @@ end
 """
     PolynomialSolubility{T<:Real} <: AbstractSolubilityModel
 
-Solubility as a polynomial in `T - Tref` (default `Tref = 273.15`, i.e.
-temperature in Celsius): `coeffs[1] + coeffs[2] x + coeffs[3] x² + ...`,
-evaluated with Horner's scheme.
+Solubility as a polynomial in `T_K - Tref` (default `Tref = 273.15 K`):
+`coeffs[1] + coeffs[2] x + coeffs[3] x² + ...`, evaluated with Horner's
+scheme. Temperature input remains Kelvin; only the polynomial's difference
+variable is Celsius-equivalent.
 """
 Base.@kwdef @concrete struct PolynomialSolubility{T <: Real} <: AbstractSolubilityModel
     coeffs::Vector{T}
@@ -45,7 +48,7 @@ end
     CallableSolubility{F} <: AbstractSolubilityModel
 
 Arbitrary solubility as a user function `f(T_K, t)` of temperature (K) and
-time (minutes).
+time (seconds).
 """
 Base.@kwdef @concrete struct CallableSolubility{F} <: AbstractSolubilityModel
     f::F
@@ -79,8 +82,9 @@ Solubility at time `t = 0` under the temperature profile.
 saturation_concentration(sm::AbstractSolubilityModel, temp_profile) =
     saturation_concentration(sm, temp_profile, 0.0)
 
-# Compatibility names retained for existing callers.  The canonical public
-# vocabulary is now Solubility because these models return c*(T), not S.
+# Aliases retained for callers that use the historical saturation vocabulary.
+# The canonical public vocabulary is now Solubility because these models return
+# c*(T), not S.
 const AbstractSaturationModel = AbstractSolubilityModel
 const ConstantSaturation = ConstantSolubility
 const PolynomialSaturation = PolynomialSolubility

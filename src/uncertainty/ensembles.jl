@@ -16,8 +16,9 @@ end
 """
     run_ensemble(distribution::D, measurements, nucleationfunction, growthfunction,
                  aggregationfunction, breakagefunction, solver;
+                 diss=nodissolution(),
                  n_samples::Int64=2048, HPC::Bool=false, verbosity::Int64=1,
-                 time_idx::T=0:5:305, temp_profile=nothing,
+                 time_idx::T=0:300:18300, temp_profile=nothing,
                  initial_concentration=nothing, use_measurement_time::Bool=true)
                  -> Vector{Union{EnsembleFVSolution, EnsembleMoMSolution}}
                  where {D<:Distributions.Distribution, T<:AbstractArray}
@@ -29,13 +30,14 @@ Run ensemble simulations by sampling parameters from a distribution.
 - `measurements`: Vector of measurement objects defining experimental conditions
 - `nucleationfunction::AbstractNucleationFunction`: Nucleation kinetic model
 - `growthfunction::AbstractGrowthFunction`: Growth kinetic model
+- `diss::AbstractDissolutionFunction`: Optional independent dissolution model
 - `aggregationfunction::AbstractAggregationFunction`: Aggregation kinetic model
 - `breakagefunction::AbstractBreakageFunction`: Breakage kinetic model
 - `solver::AbstractSolver`: Numerical solver (MoM, QMOM, FiniteVol, or WENO)
 - `n_samples::Int64=2048`: Number of parameter samples to draw
 - `HPC::Bool=false`: Whether running on HPC (disables progress bar)
 - `verbosity::Int64=1`: Verbosity level (0 = silent)
-- `time_idx::T=0:5:305`: Time points for saving results
+- `time_idx::T=0:300:18300`: Time points for saving results
 - `temp_profile=nothing`: Override temperature profile; defaults to measurement temperature
 - `initial_concentration=nothing`: Override initial concentration; defaults to measurement value
 - `use_measurement_time::Bool=true`: When true, infer time grid from measurements
@@ -51,10 +53,11 @@ function run_ensemble(distribution::D,
                       aggregationfunction::AbstractAggregationFunction,
                       breakagefunction::AbstractBreakageFunction,
                       solver::AbstractSolver;
+                      diss::AbstractDissolutionFunction = nodissolution(),
                       n_samples::Int64 = 2048,
                       HPC::Bool = false,
                       verbosity::Int64 = 1,
-                      time_idx::T = 0:5:305,
+                      time_idx::T = 0:300:18300,
                       temp_profile = nothing,
                                   initial_concentration = nothing,
                       use_measurement_time::Bool = true) where {D <:
@@ -65,6 +68,7 @@ function run_ensemble(distribution::D,
 
     return _run_ensemble_internal(samples, measurements, nucleationfunction, growthfunction,
                                   aggregationfunction, breakagefunction, solver;
+                                  diss = diss,
                                   time_idx = time_idx,
                                   temp_profile = temp_profile,
                                   initial_concentration_override = initial_concentration,
@@ -76,7 +80,8 @@ end
 """
     run_ensemble(samples::Matrix{Float64}, measurements, nucleationfunction, growthfunction,
                  aggregationfunction, breakagefunction, solver;
-                 HPC::Bool=false, verbosity::Int64=1, time_idx::T=0:5:305,
+                 diss=nodissolution(),
+                 HPC::Bool=false, verbosity::Int64=1, time_idx::T=0:300:18300,
                  temp_profile=nothing, initial_concentration=nothing,
                  use_measurement_time::Bool=true)
                  -> Vector{Union{EnsembleFVSolution, EnsembleMoMSolution}}
@@ -89,12 +94,13 @@ Run ensemble simulations from pre-sampled parameter matrix.
 - `measurements`: Vector of measurement objects defining experimental conditions
 - `nucleationfunction::AbstractNucleationFunction`: Nucleation kinetic model
 - `growthfunction::AbstractGrowthFunction`: Growth kinetic model
+- `diss::AbstractDissolutionFunction`: Optional independent dissolution model
 - `aggregationfunction::AbstractAggregationFunction`: Aggregation kinetic model
 - `breakagefunction::AbstractBreakageFunction`: Breakage kinetic model
 - `solver::AbstractSolver`: Numerical solver (MoM, QMOM, FiniteVol, or WENO)
 - `HPC::Bool=false`: Whether running on HPC (disables progress bar)
 - `verbosity::Int64=1`: Verbosity level (0 = silent)
-- `time_idx::T=0:5:305`: Time points for saving results
+- `time_idx::T=0:300:18300`: Time points for saving results
 - `temp_profile=nothing`: Override temperature profile; defaults to measurement temperature
 - `initial_concentration=nothing`: Override initial concentration; defaults to measurement value
 - `use_measurement_time::Bool=true`: When true, infer time grid from measurements
@@ -110,14 +116,16 @@ function run_ensemble(samples::Matrix{Float64},
                       aggregationfunction::AbstractAggregationFunction,
                       breakagefunction::AbstractBreakageFunction,
                       solver::AbstractSolver;
+                      diss::AbstractDissolutionFunction = nodissolution(),
                       HPC::Bool = false,
                       verbosity::Int64 = 1,
-                      time_idx::T = 0:5:305,
+                      time_idx::T = 0:300:18300,
                       temp_profile = nothing,
                       initial_concentration = nothing,
                       use_measurement_time::Bool = true) where {T <: AbstractArray}
     return _run_ensemble_internal(samples, measurements, nucleationfunction, growthfunction,
                                   aggregationfunction, breakagefunction, solver;
+                                  diss = diss,
                                   time_idx = time_idx,
                                   temp_profile = temp_profile,
                                   initial_concentration_override = initial_concentration,
@@ -200,7 +208,7 @@ end
 """
     _run_ensemble_internal(samples::Matrix{Float64}, measurements::Vector{<:AbstractExperiment},
                            nucleationfunction, growthfunction, aggregationfunction, breakagefunction,
-                           solver; time_idx::T=0:5:305, verbosity::Int64=1, HPC::Bool=false,
+                           solver; time_idx::T=0:300:18300, verbosity::Int64=1, HPC::Bool=false,
                            temp_profile=nothing, initial_concentration_override=nothing,
                            use_measurement_time::Bool=true)
                            -> Vector{Union{EnsembleFVSolution, EnsembleMoMSolution}}
@@ -213,10 +221,11 @@ Internal function to run ensemble simulations across multiple measurements.
 - `measurements::Vector{<:AbstractExperiment}`: Vector of measurement conditions
 - `nucleationfunction::AbstractNucleationFunction`: Nucleation kinetic model
 - `growthfunction::AbstractGrowthFunction`: Growth kinetic model
+- `diss::AbstractDissolutionFunction`: Optional independent dissolution model
 - `aggregationfunction::AbstractAggregationFunction`: Aggregation kinetic model
 - `breakagefunction::AbstractBreakageFunction`: Breakage kinetic model
 - `solver::AbstractSolver`: Numerical solver
-- `time_idx::T=0:5:305`: Time points for saving results
+- `time_idx::T=0:300:18300`: Time points for saving results
 - `verbosity::Int64=1`: Verbosity level
 - `HPC::Bool=false`: Whether running on HPC
 - `temp_profile=nothing`: Override temperature profile; defaults to measurement temperature
@@ -232,7 +241,8 @@ function _run_ensemble_internal(samples::Matrix{Float64},
                                 growthfunction::AbstractGrowthFunction,
                                 aggregationfunction::AbstractAggregationFunction,
                                 breakagefunction::AbstractBreakageFunction,
-                                solver::AbstractSolver; time_idx::T = 0:5:305,
+                                solver::AbstractSolver; time_idx::T = 0:300:18300,
+                                diss::AbstractDissolutionFunction = nodissolution(),
                                 verbosity::Int64 = 1,
                                 HPC::Bool = false,
                                 temp_profile = nothing,
@@ -279,6 +289,7 @@ function _run_ensemble_internal(samples::Matrix{Float64},
             sol = runsimulation(samples[:, i],
                                 nucl = nucleationfunction,
                                 gr = growthfunction,
+                                diss = diss,
                                 agg = aggregationfunction,
                                 br = breakagefunction,
                                 initial_concentration = run_initial_concentration,
@@ -324,7 +335,8 @@ _store_d50q!(buffer::AbstractMatrix, sol, i, solver::AbstractDiscretisedSolver) 
     run_ensemble_fixed(samples::Matrix{Float64},
                        nucleationfunction, growthfunction, aggregationfunction,
                        breakagefunction, solver;
-                       time_idx::T=0:5:305, temp_profile,
+                       diss=nodissolution(),
+                       time_idx::T=0:300:18300, temp_profile,
                        initial_concentration, initial_crystals=nothing,
                        verbosity::Int64=1, HPC::Bool=false)
                        -> Union{EnsembleFVSolution, EnsembleMoMSolution}
@@ -339,7 +351,8 @@ Run ensemble simulations without measurement objects by providing fixed inputs.
 - `aggregationfunction::AbstractAggregationFunction`: Aggregation kinetic model
 - `breakagefunction::AbstractBreakageFunction`: Breakage kinetic model
 - `solver::AbstractSolver`: Numerical solver
-- `time_idx::T=0:5:305`: Time points for saving results
+- `diss::AbstractDissolutionFunction`: Optional independent dissolution model
+- `time_idx::T=0:300:18300`: Time points for saving results
 - `temp_profile`: Temperature profile (required)
 - `initial_concentration`: Initial concentration (required)
 - `initial_crystals`: Optional initial seed characteristics shared by all samples
@@ -355,7 +368,8 @@ function run_ensemble_fixed(samples::Matrix{Float64},
                             aggregationfunction::AbstractAggregationFunction,
                             breakagefunction::AbstractBreakageFunction,
                             solver::AbstractSolver;
-                            time_idx::T = 0:5:305,
+                            diss::AbstractDissolutionFunction = nodissolution(),
+                            time_idx::T = 0:300:18300,
                             temp_profile = nothing,
                             initial_concentration = nothing,
                             initial_crystals = nothing,
@@ -390,6 +404,7 @@ function run_ensemble_fixed(samples::Matrix{Float64},
         sol = runsimulation(samples[:, i],
                             nucl = nucleationfunction,
                             gr = growthfunction,
+                            diss = diss,
                             agg = aggregationfunction,
                             br = breakagefunction,
                             initial_concentration = initial_concentration,

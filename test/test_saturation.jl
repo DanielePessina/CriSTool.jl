@@ -15,7 +15,7 @@
 
     # Callable model receives (T_K, t)
     callable = CallableSolubility((T, t) -> 1.0 + 1e-3 * t)
-    @test saturation_concentration(callable, prof, 30.0) ≈ 1.03
+    @test saturation_concentration(callable, prof, 1800.0) ≈ 2.8
 
     # supersaturation dispatch on the problem
     problem = CrystallisationProblem(; saturation_model = ConstantSolubility(2.47),
@@ -27,9 +27,9 @@ end
     run_std(p; nmoments = 4) = runsimulation(p; nucl = nucl_CNT(), gr = growth_empirical(),
                                              agg = noaggregation(), br = nobreakage(),
                                              initial_concentration = 14.67,
-                                             save_idx = [0.0, 30.0, 60.0, 120.0, 180.0, 270.0],
+                                             save_idx = [0.0, 1800.0, 3600.0, 7200.0, 10800.0, 16200.0],
                                              solver = MoM(nmoments = nmoments))[2]
-    p = [38.0, 0.6, 1.0, 3.0]
+    p = [38.0, 0.0006, 1e-9 / 60, 3.0]
 
     sol4 = run_std(p)
     sol3 = run_std(p; nmoments = 3)
@@ -44,7 +44,7 @@ end
 
     # Default reproduces the legacy 6-state model (d43 = µ4/µ3 etc.)
     @test sol4.concentration[end] ≈ 4.988605763490885 rtol = 1e-10
-    @test sol4.d43[end] ≈ 5.2659960089722 rtol = 1e-10
+    @test sol4.d43[end] ≈ 5.2665996075480655e-6 rtol = 1e-10
 
     # Unavailable metrics are NaN, available ones are finite
     @test all(isnan, sol2.d43)
@@ -55,11 +55,11 @@ end
 end
 
 @testset "Solution observables interface" begin
-    p = [38.0, 0.6, 1.0, 3.0]
+    p = [38.0, 0.0006, 1e-9 / 60, 3.0]
     _, sol = runsimulation(p; nucl = nucl_CNT(), gr = growth_empirical(),
                            agg = noaggregation(), br = nobreakage(),
                            initial_concentration = 14.67,
-                           save_idx = [0.0, 60.0, 120.0, 240.0],
+                           save_idx = [0.0, 3600.0, 7200.0, 14400.0],
                            solver = MoM())
     @test CriSTool.time(sol) == sol.time
     sv = state_vars(sol)
@@ -67,13 +67,13 @@ end
     sm = size_metrics(sol)
     @test sm.d43 === sol.d43
     @test sm.d32 === sol.d32
-    @test sm.mu2 === sol.mu2
+    @test sm.moment2 === sol.moment2
     @test size_metrics(sol).d43[end] == CriSTool.get_characteristic_size(sol)
 
     _, fvsol = runsimulation(p; nucl = nucl_CNT(), gr = growth_empirical(),
                              agg = noaggregation(), br = nobreakage(),
                              initial_concentration = 14.67,
-                             save_idx = collect(0.0:60.0:240.0),
+                             save_idx = collect(0.0:3600.0:14400.0),
                              solver = FiniteVol(meshsize = 50, lmax = 50e-6))
     @test state_vars(fvsol).numberdensity === fvsol.numberdensity
     @test size_metrics(fvsol).d50q === fvsol.d50q

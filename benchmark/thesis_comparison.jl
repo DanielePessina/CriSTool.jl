@@ -4,10 +4,10 @@
 
 using CriSTool, Chairmarks, Printf, StatsBase
 
-chosen_θ = Float64[38.0, 0.55, 0.7, 2.3]
+chosen_θ = Float64[38.0, 0.00055, 0.7e-9 / 60, 2.3]
 nucl_func = CriSTool.nucl_CNT()
 growth_func = CriSTool.growth_empirical()
-save_idx = 0:4:400
+save_idx = 0:240:24000                 # 0:4:400 minutes, expressed in seconds
 initial_conc = 18.0
 
 meshsizes = [50, 100, 200, 500]

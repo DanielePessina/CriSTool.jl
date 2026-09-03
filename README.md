@@ -10,7 +10,8 @@ The package provides:
   Quadrature Method of Moments (QMOM), finite volumes, and WENO;
 - nucleation, growth, aggregation, breakage, and signed dissolution kinetics;
 - measurement ingestion from CSV/table sources and typed experiment containers;
-- solver-aware initial crystal states from mass, d43, and distribution characteristics;
+- solver-aware initial crystal states from mass, d43, and explicit lognormal or
+  Gaussian distribution characteristics;
 - parameter estimation with Metaheuristics.jl and Optimization.jl;
 - likelihood-free ABCDE and Turing NUTS workflows;
 - sensitivity analysis, ensemble simulation, and Makie plotting utilities.
@@ -34,8 +35,9 @@ julia --project=examples -e 'using Pkg; Pkg.instantiate()'
 ## Quick start: one simulation
 
 `runsimulation` takes kinetic models, a parameter vector, and a solver. The
-flat parameter vector is ordered as `[nucleation; growth; aggregation;
-breakage]`; no-op aggregation and breakage models contribute empty blocks.
+flat parameter vector is ordered as `[nucleation; growth; dissolution;
+aggregation; breakage]`; the default `nodissolution()`, no-op aggregation,
+and no-op breakage models contribute empty blocks.
 
 ```julia
 using CriSTool
@@ -43,7 +45,7 @@ using CriSTool
 nucl = nucl_CNT()
 gr   = growth_empirical()
 
-parameters = [38.0, 0.6, 1.0, 3.0]
+parameters = [38.0, 0.0006, 1e-9 / 60, 3.0]
 problem, solution = runsimulation(
     parameters;
     nucl = nucl,
@@ -52,18 +54,18 @@ problem, solution = runsimulation(
     br = nobreakage(),
     solver = MoM(),
     initial_concentration = 18.0,
-    save_idx = 0.0:60.0:480.0,
+    save_idx = 0.0:3600.0:28800.0,
 )
 
 if solution.success
     println("Final concentration: ", solution.concentration[end])
-    println("Final d43: ", solution.d43[end], " μm")
+    println("Final d43 (m): ", solution.d43[end])
 end
 ```
 
 The function returns the constructed `CrystallisationProblem` and a solution
 trajectory. Moment solutions expose `concentration`, `d10`, `d32`, `d43`, and
-`mu2`; finite-volume and WENO solutions also expose the resolved size
+`moment2`; finite-volume and WENO solutions also expose the resolved size
 distribution and `d10q`, `d50q`, and `d90q` quantiles. QMOM additionally stores
 raw moments and reconstructed quadrature; see [Solvers](docs/solvers.md).
 
@@ -100,8 +102,8 @@ using ComponentArrays
 axis = paramaxis(nucl, gr, noaggregation(), nobreakage())
 parameters_named = ComponentArray(parameters, axis)
 
-parameters_named.nucl.Aj
-parameters_named.gr.g
+parameters_named.nucl.ln_nucleation_prefactor
+parameters_named.gr.growth_order
 ```
 
 See [Running simulations](docs/simulation.md) and [Kinetics](docs/kinetics.md)

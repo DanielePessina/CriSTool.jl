@@ -291,7 +291,7 @@ function aggregation_moment_source(aggregationfunction::AbstractAggregationFunct
                                   typeof(shape_factor)), maximum_order + 1)
 
     named_parameters = _named_params(aggregationfunction, parameters)
-    kernel_scale = exp10(named_parameters.logβ)
+    kernel_scale = exp10(named_parameters.log10_aggregation_coefficient)
     source_type = promote_type(eltype(quadrature.nodes),
                                eltype(quadrature.weights),
                                typeof(shape_factor),
@@ -334,7 +334,7 @@ aggregation_moment_source(aggregationfunction::AbstractAggregationFunction,
                           maximum_order::Integer,
                           problem::CrystallisationProblem) =
     aggregation_moment_source(aggregationfunction, parameters, quadrature,
-                              maximum_order; shape_factor = problem.kv)
+                              maximum_order; shape_factor = problem.volume_shape_factor)
 
 """
     breakage_moment_source(breakagefunction, parameters, quadrature,
@@ -495,7 +495,7 @@ function _qmom_solvent_derivatives(problem::CrystallisationProblem,
     concentration_position === nothing &&
         throw(ArgumentError("initial_solvent_state must define :concentration."))
     solvent_count = length(names)
-    concentration_rate = -problem.ρ * problem.kv * quadrature_volume_rate
+    concentration_rate = -problem.crystal_density * problem.volume_shape_factor * quadrature_volume_rate
 
     if problem.solvent_dynamics isa DefaultSolventDynamics
         return ntuple(index -> index == concentration_position ? concentration_rate :
@@ -522,12 +522,12 @@ function _qmom_extinction_callback(problem::CrystallisationProblem)
         throw(ArgumentError("initial_solvent_state must define :concentration."))
     concentration_index = n_moments + concentration_position
     state_count = n_moments + length(names)
-    threshold = _validate_solid_volume_threshold(problem)
-    condition = (state, time, integrator) -> problem.ρ * problem.kv * state[4] - threshold
+    threshold = _validate_solid_mass_concentration_threshold(problem)
+    condition = (state, time, integrator) -> problem.crystal_density * problem.volume_shape_factor * state[4] - threshold
     affect! = integrator -> nothing
     affect_neg! = integrator -> begin
         state = integrator.u
-        residual_mass = problem.ρ * problem.kv * state[4]
+        residual_mass = problem.crystal_density * problem.volume_shape_factor * state[4]
         integrator.u = SVector(ntuple(Val(state_count)) do state_index
             if state_index <= n_moments
                 zero(state[state_index])
@@ -638,7 +638,7 @@ This specialized six-moment/seven-state form also keeps the derivative in an
                                            problem,
                                            state,
                                            time)
-    concentration_rate = -3 * problem.kv * problem.ρ * scalar_growth_rate * state[3]
+    concentration_rate = -3 * problem.volume_shape_factor * problem.crystal_density * scalar_growth_rate * state[3]
     return SVector(nucleation_rate_value,
                    scalar_growth_rate * state[1],
                    2 * scalar_growth_rate * state[2],
@@ -727,7 +727,7 @@ function crystallisation_odeproblem(problem::CrystallisationProblem{NuclF, GrF, 
                     parameters.agg,
                     reconstructed_rule,
                     moment_order(problem.solver);
-                    shape_factor = problem.kv)
+                    shape_factor = problem.volume_shape_factor)
                 moment_derivatives .+= breakage_moment_source(
                     problem.kinetics_breakagefunction,
                     parameters.br,
@@ -777,11 +777,6 @@ function crystallisation_odeproblem(problem::CrystallisationProblem{NuclF, GrF, 
     return ode_problem, time_step_solver
 end
 
-function _qmom_safe_size_ratio(numerator, denominator)
-    denominator > zero(denominator) && isfinite(denominator) ?
-        CRISTOOL_MICROMETER_SCALE * numerator / denominator : zero(denominator)
-end
-
 function _wrap_solution(problem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
                                                           QMOM, NuP, GrP, BrP,
                                                           AggP, TP},
@@ -816,15 +811,18 @@ function _wrap_solution(problem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
         end
     end
 
-    d10 = [_qmom_safe_size_ratio(moment_matrix[2, index],
-                                 moment_matrix[1, index]) for index in 1:n_time_points]
-    d32 = [_qmom_safe_size_ratio(moment_matrix[4, index],
-                                 moment_matrix[3, index]) for index in 1:n_time_points]
+    d10 = [_safe_moment_size_ratio(moment_matrix[2, index],
+                                   moment_matrix[1, index], moment_matrix[1, index])
+           for index in 1:n_time_points]
+    d32 = [_safe_moment_size_ratio(moment_matrix[4, index],
+                                   moment_matrix[3, index], moment_matrix[1, index])
+           for index in 1:n_time_points]
     d43 = n_moments >= 5 ?
-          [_qmom_safe_size_ratio(moment_matrix[5, index],
-                                 moment_matrix[4, index]) for index in 1:n_time_points] :
+          [_safe_moment_size_ratio(moment_matrix[5, index],
+                                   moment_matrix[4, index], moment_matrix[1, index])
+           for index in 1:n_time_points] :
           zeros(element_type, n_time_points)
-    mu2 = collect(@view moment_matrix[3, :])
+    moment2 = collect(@view moment_matrix[3, :])
     solvent_solution_state = _solvent_solution_state(problem, solution)
     final_state = collect(solution[:, end])
     successful = OrdinaryDiffEq.SciMLBase.successful_retcode(solution.retcode)
@@ -837,7 +835,7 @@ function _wrap_solution(problem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
                                        d10,
                                        d32,
                                        d43,
-                                       mu2,
+                                       moment2,
                                        solvent_solution_state,
                                        final_state,
                                        solution.stats,
@@ -913,7 +911,7 @@ state_vars(solution::CrystallisationQMOMSolution) =
              quadrature_weights = solution.quadrature_weights))
 size_metrics(solution::CrystallisationQMOMSolution) =
     (; d10 = solution.d10, d32 = solution.d32, d43 = solution.d43,
-       mu2 = solution.mu2)
+       moment2 = solution.moment2)
 get_characteristic_size(solution::CrystallisationQMOMSolution) = solution.d43[end]
 _size_trajectory(solution::CrystallisationQMOMSolution) = solution.d43
 

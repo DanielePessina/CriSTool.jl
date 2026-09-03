@@ -68,7 +68,7 @@ using Turing
         n_chains = 1
 
         data = rand(rng, n_iters, n_params, n_chains)
-        param_names = [:Aⱼ, :γ, :Ag, :g]
+        param_names = [:ln_nucleation_prefactor, :surface_energy, :growth_coefficient, :growth_order]
 
         chain = Chains(data, param_names)
 
@@ -88,7 +88,7 @@ using Turing
         n_chains = 2
 
         data = rand(rng, n_iters, n_params, n_chains)
-        param_names = [:Aⱼ, :γ, :Ag, :g]
+        param_names = [:ln_nucleation_prefactor, :surface_energy, :growth_coefficient, :growth_order]
 
         chain = Chains(data, param_names)
 
@@ -110,7 +110,7 @@ using Turing
         n_chains = 2
 
         data = rand(rng, n_iters, n_params, n_chains)
-        param_names = [:Aⱼ, :γ, :Ag, :g]
+        param_names = [:ln_nucleation_prefactor, :surface_energy, :growth_coefficient, :growth_order]
 
         chain = Chains(data, param_names)
 
@@ -131,7 +131,7 @@ using Turing
 
         # Create data with internal parameters
         data = reshape(collect(1.0:30.0), n_iters, 5, n_chains)
-        param_names = [:Aⱼ, :γ, :Ag, :g, :lp]
+        param_names = [:ln_nucleation_prefactor, :surface_energy, :growth_coefficient, :growth_order, :lp]
 
         chain = Chains(data, param_names,
                       Dict(:internals => [:lp]))
@@ -176,7 +176,7 @@ using Turing
         n_chains = 2
 
         data = rand(rng, n_iters, n_params, n_chains)
-        param_names = [:Aⱼ, :γ, :Ag, :g]
+        param_names = [:ln_nucleation_prefactor, :surface_energy, :growth_coefficient, :growth_order]
 
         chain = Chains(data, param_names)
 
@@ -305,7 +305,7 @@ using Turing
             n_chains = size(chain, 3)
             expected_samples = n_iterations * n_chains
 
-            @test size(result, 1) == 4  # 4 parameters: Aⱼ, γ, Ag, g
+            @test size(result, 1) == 4  # 4 parameters: ln_nucleation_prefactor, surface_energy, growth_coefficient, growth_order
             @test size(result, 2) == expected_samples
             @test eltype(result) == Float64
             @test all(isfinite.(result))

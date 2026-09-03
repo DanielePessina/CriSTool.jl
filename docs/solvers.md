@@ -15,13 +15,13 @@ quadrature output.
 
 ## Outputs by solver
 
-- **MoM**: `concentration`, `d10`, `d32`, `d43`, `mu2`.
+- **MoM**: `concentration`, `d10`, `d32`, `d43`, `moment2`.
 - **QMOM**: `concentration`, raw `moments`, reconstructed
   `quadrature_nodes`/`quadrature_weights`, and the moment-derived
-  `d10`, `d32`, `d43`, `mu2` metrics. A three-node QMOM evolves `M₀:M₅`.
+  `d10`, `d32`, `d43`, `moment2` metrics. A three-node QMOM evolves `M₀:M₅`.
 - **FiniteVol/WENO**: `concentration`, `numberdensity`, `voldensity`,
   volume-density quantiles `d10q`, `d50q`, `d90q`, **and** the
-  moment-derived sizes `d10`, `d32`, `d43`, `mu2` (computed once at
+  moment-derived sizes `d10`, `d32`, `d43`, `moment2` (computed once at
   solve time so `sol.d43` works the same way as on a MoM solution).
 
 ## Mesh storage
@@ -49,7 +49,7 @@ FiniteVol/WENO model and is rejected by QMOM with an `ArgumentError`.
 ```julia
 using CriSTool
 
-params = [38.0, 0.7, 1.0, 3.0]
+params = [38.0, 0.0007, 1e-9 / 60, 3.0]
 problem, solution = runsimulation(
     params;
     nucl = nucl_CNT(),
@@ -58,7 +58,7 @@ problem, solution = runsimulation(
     br = nobreakage(),
     solver = QMOM(nquadrature = 3),
     initial_concentration = 18.0,
-    save_idx = 0.0:60.0:480.0,
+    save_idx = 0.0:3600.0:28800.0,
 )
 
 @show solution.moments[:, end]
@@ -71,7 +71,7 @@ problem, solution = runsimulation(
 ```julia
 using CriSTool
 
-params = [38.0, 0.7, 1.0, 3.0]
+params = [38.0, 0.0007, 1e-9 / 60, 3.0]
 nucl, gr = nucl_CNT(), growth_empirical()
 agg, br  = noaggregation(), nobreakage()
 
@@ -80,7 +80,7 @@ _, sol_mom = runsimulation(
     params; nucl = nucl, gr = gr, agg = agg, br = br,
     solver = MoM(),
     initial_concentration = 18.0,
-    save_idx = 0.0:60.0:480.0,
+    save_idx = 0.0:3600.0:28800.0,
 )
 
 # Finite volume
@@ -88,7 +88,7 @@ _, sol_fv = runsimulation(
     params; nucl = nucl, gr = gr, agg = agg, br = br,
     solver = FiniteVol(meshsize = 100, lmax = 50e-6),
     initial_concentration = 18.0,
-    save_idx = 0.0:60.0:480.0,
+    save_idx = 0.0:3600.0:28800.0,
 )
 
 # WENO
@@ -96,7 +96,7 @@ _, sol_weno = runsimulation(
     params; nucl = nucl, gr = gr, agg = agg, br = br,
     solver = WENO(meshsize = 100, lmax = 50e-6),
     initial_concentration = 18.0,
-    save_idx = 0.0:60.0:480.0,
+    save_idx = 0.0:3600.0:28800.0,
 )
 ```
 
@@ -110,7 +110,7 @@ solver field). This is used in the benchmarking scripts.
 using CriSTool
 import OrdinaryDiffEqSSPRK
 
-params = [38.0, 0.7, 1.0, 3.0]
+params = [38.0, 0.0007, 1e-9 / 60, 3.0]
 
 _, sol = runsimulation(
     params;
@@ -121,6 +121,6 @@ _, sol = runsimulation(
     solver = FiniteVol(meshsize = 200, lmax = 50e-6),
     timestepping_solver = OrdinaryDiffEqSSPRK.SSPRK43(),
     initial_concentration = 18.0,
-    save_idx = 0.0:60.0:480.0,
+    save_idx = 0.0:3600.0:28800.0,
 )
 ```

@@ -23,7 +23,10 @@ prior = product_distribution([TriangularDist(lb[i], ub[i], mode[i]) for i in 1:4
 ChainPairPlots(chain, optimalparameters; prior=prior, burnin=1024)
 
 # For VI results with custom parameter names
-ChainPairPlots(vi_result, optimalparameters; prior=prior, symbols=[:Aⱼ, :γ, :Ag, :g])
+ChainPairPlots(vi_result, optimalparameters;
+               prior=prior,
+               symbols=[:ln_nucleation_prefactor, :surface_energy,
+                         :growth_coefficient, :growth_order])
 ```
 """
 
@@ -150,7 +153,9 @@ Create pair plots from a raw sample matrix.
 # Example
 ```julia
 samples = rand(4, 1000)  # 4 parameters, 1000 samples
-ChainPairPlots(samples, optimalparameters; symbols=[:Aⱼ, :γ, :Ag, :g])
+ChainPairPlots(samples, optimalparameters;
+               symbols=[:ln_nucleation_prefactor, :surface_energy,
+                         :growth_coefficient, :growth_order])
 ```
 """
 function ChainPairPlots(samples::AbstractMatrix, params::Vector{Float64};
@@ -292,6 +297,7 @@ function ChainMeasurementPlots(chain, measurements::Vector{<:AbstractExperiment}
                                aggregationfunction::AbstractAggregationFunction,
                                breakagefunction::AbstractBreakageFunction,
                                solver::AbstractSolver;
+                               diss::AbstractDissolutionFunction = nodissolution(),
                                burnin::Int = 0,
                                title = "",
                                saveplot::Bool = false,
@@ -310,11 +316,12 @@ function ChainMeasurementPlots(chain, measurements::Vector{<:AbstractExperiment}
 
     ensembleresults = run_ensemble(samples_mat, measurements, nucleationfunction,
                                    growthfunction, aggregationfunction, breakagefunction,
-                                   solver)
+                                   solver; diss = diss)
 
     optimal_solutions = [(runsimulation(meanparameter,
                                                  nucl = nucleationfunction,
                                                  gr = growthfunction,
+                                                 diss = diss,
                                                  agg = aggregationfunction,
                                                  br = breakagefunction,
                                                  initial_concentration = initial_concentration(measurements[m]),
@@ -330,6 +337,7 @@ function ChainMeasurementPlots(chain, measurements::Vector{<:AbstractExperiment}
                                   parameters = meanparameter,
                                   nucleationfunction = nucleationfunction,
                                   growthfunction = growthfunction,
+                                  dissolutionfunction = diss,
                                   aggregationfunction = aggregationfunction,
                                   breakagefunction = breakagefunction, solver = solver,
                                   parameter_samples = samples_mat,
@@ -360,6 +368,8 @@ runs NUTS over the same loss that `PE_Routine`/`run_abc` use.
 - `nucleationfunction`, `growthfunction`, `aggregationfunction`,
   `breakagefunction`: kinetic models; their `paramaxis` order defines the
   parameter vector layout.
+- `diss`: optional independent dissolution model; its parameter block follows
+  the growth block.
 - `solver::AbstractSolver`: numerical solver used by the loss.
 - `lossfunction::AbstractPELossFunction`: loss used as the likelihood term.
 
@@ -374,14 +384,16 @@ function nuts_model(experiments::Vector{<:AbstractExperiment},
                     growthfunction::AbstractGrowthFunction,
                     aggregationfunction::AbstractAggregationFunction,
                     breakagefunction::AbstractBreakageFunction;
+                    diss::AbstractDissolutionFunction = nodissolution(),
                     solver::AbstractSolver,
                     lossfunction::AbstractPELossFunction)
     length(prior) == _total_nparams(nucleationfunction, growthfunction,
-                                    aggregationfunction, breakagefunction) ||
+                                    aggregationfunction, breakagefunction; diss = diss) ||
         throw(ArgumentError("nuts_model: length(prior) = $(length(prior)) does not match " *
                             "the total kinetic parameter count. Supply one prior per parameter."))
     problem = _build_loss_problem(nucleationfunction, growthfunction,
-                                  aggregationfunction, breakagefunction, solver)
+                                  aggregationfunction, breakagefunction, solver;
+                                  diss = diss)
     setup = prepare_loss(problem, experiments)
     # MCMCThreads may evaluate chains in independent tasks.  Julia's
     # task-local cache gives each chain one private LossSetup, while avoiding
@@ -407,11 +419,12 @@ end
 
 """
     kinetic_parameter_symbols(nucleationfunction, growthfunction,
-                              aggregationfunction, breakagefunction) -> Vector{Symbol}
+                              aggregationfunction, breakagefunction;
+                              diss=nodissolution()) -> Vector{Symbol}
 
 Parameter symbols for the combined kinetic models, in `paramaxis` order:
-the kinetics' own `symbols` where defined, else `:nu1`, `:gr1`, `:agg1`,
-`:br1`, … placeholders. Used to name MCMC chain columns.
+the kinetics' own `symbols` where defined, else `:nu1`, `:gr1`, `:diss1`,
+`:agg1`, `:br1`, … placeholders. Used to name MCMC chain columns.
 """
 
 """
@@ -476,6 +489,7 @@ function MCMC_Routine(measurements::Vector{<:AbstractExperiment},
                       growthfunction::AbstractGrowthFunction,
                       aggregationfunction::AbstractAggregationFunction,
                       breakagefunction::AbstractBreakageFunction;
+                      diss::AbstractDissolutionFunction = nodissolution(),
                       solver::AbstractSolver,
                       lossfunction::AbstractPELossFunction,
                       sampler = Turing.NUTS(1000, 0.65;
@@ -490,14 +504,15 @@ function MCMC_Routine(measurements::Vector{<:AbstractExperiment},
                       showplot::Bool = false,
                       verbosity::Int = 1)
     nparams = _total_nparams(nucleationfunction, growthfunction,
-                             aggregationfunction, breakagefunction)
+                             aggregationfunction, breakagefunction; diss = diss)
     length(prior) == nparams ||
         throw(ArgumentError("MCMC_Routine: length(prior) = $(length(prior)) does not " *
                             "match the total kinetic parameter count ($nparams)."))
 
     inferred_symbols = isnothing(symbols) ?
                        kinetic_parameter_symbols(nucleationfunction, growthfunction,
-                                                 aggregationfunction, breakagefunction) :
+                                                 aggregationfunction, breakagefunction;
+                                                 diss = diss) :
                        symbols
     length(inferred_symbols) == nparams ||
         throw(ArgumentError("MCMC_Routine: $(length(inferred_symbols)) symbols given for " *
@@ -513,6 +528,7 @@ function MCMC_Routine(measurements::Vector{<:AbstractExperiment},
 
     model = nuts_model(measurements, prior, nucleationfunction, growthfunction,
                        aggregationfunction, breakagefunction;
+                       diss = diss,
                        solver = solver, lossfunction = lossfunction)
 
     chain = Turing.sample(model, sampler, Turing.MCMCThreads(), n_samples, n_chains;
@@ -545,6 +561,7 @@ function MCMC_Routine(measurements::Vector{<:AbstractExperiment},
             ChainMeasurementPlots(named_chain, measurements, meanparameter,
                                   lossfunction, nucleationfunction, growthfunction,
                                   aggregationfunction, breakagefunction, solver;
+                                  diss = diss,
                                   burnin = 0, title = "$(now_str) $(extrastring)",
                                   saveplot = true,
                                   savestring = "$(now_str) $(extrastring)",
@@ -555,7 +572,8 @@ function MCMC_Routine(measurements::Vector{<:AbstractExperiment},
     return named_chain
 end
 
-_total_nparams(nucl, gr, agg, br) =
-    _nparams_of(nucl) + _nparams_of(gr) + _nparams_of(agg) + _nparams_of(br)
+_total_nparams(nucl, gr, agg, br; diss = nodissolution()) =
+    _nparams_of(nucl) + _nparams_of(gr) + _nparams_of(diss) +
+    _nparams_of(agg) + _nparams_of(br)
 
 _nparams_of(fn) = hasproperty(fn, :nparams) ? getproperty(fn, :nparams) : 0

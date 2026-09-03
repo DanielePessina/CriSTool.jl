@@ -52,17 +52,17 @@ function _mom_extinction_callback(CryProblem::CrystallisationProblem)
     concentration_position === nothing &&
         throw(ArgumentError("initial_solvent_state must define :concentration."))
     concentration_index = n_population + concentration_position
-    solid_volume_threshold = _validate_solid_volume_threshold(CryProblem)
+    solid_mass_concentration_threshold = _validate_solid_mass_concentration_threshold(CryProblem)
 
     condition = (state, time, integrator) ->
-        CryProblem.ρ * CryProblem.kv * state[4] - solid_volume_threshold
+        CryProblem.crystal_density * CryProblem.volume_shape_factor * state[4] - solid_mass_concentration_threshold
     affect! = integrator -> nothing
     affect_neg! = integrator -> begin
         state = integrator.u
         # Transfer the actual residual solid mass represented by µ3.  Do not
         # clamp it: an unexpected negative crossing must remain observable as
         # a failed physical state rather than being silently hidden.
-        residual_mass = CryProblem.ρ * CryProblem.kv * state[4]
+        residual_mass = CryProblem.crystal_density * CryProblem.volume_shape_factor * state[4]
         integrator.u = SVector(ntuple(Val(n_states)) do index
             if index <= n_population
                 zero(state[index])
@@ -219,22 +219,26 @@ function _wrap_solution(CryProblem::CrystallisationProblem{NuclF, GrF, nobreakag
     n_states = n_mom + 1 + length(propertynames(CryProblem.initial_solvent_state))
     # Fixed moment indices: state k holds µ_{k-1}; µ2 = state 3, µ3 = state 4,
     # µ4 = state 5. Higher moments (if any) do not change these metrics.
-    d32 = n_mom >= 3 ? CRISTOOL_MICROMETER_SCALE .* sol[4, :] ./
-                       (sol[3, :] .+ CRISTOOL_MOMENT_RATIO_FLOOR) :
+    d32 = n_mom >= 3 ?
+          [_safe_moment_size_ratio(sol[4, index], sol[3, index], sol[1, index])
+           for index in eachindex(sol.t)] :
           fill(NaN, length(sol.t))
-    d43 = n_mom >= 4 ? CRISTOOL_MICROMETER_SCALE .* sol[5, :] ./
-                       (sol[4, :] .+ CRISTOOL_MOMENT_RATIO_FLOOR) :
+    d43 = n_mom >= 4 ?
+          [_safe_moment_size_ratio(sol[5, index], sol[4, index], sol[1, index])
+           for index in eachindex(sol.t)] :
           fill(NaN, length(sol.t))
-    mu2 = n_mom >= 2 ? sol[3, :] : fill(NaN, length(sol.t))
+    moment2 = n_mom >= 2 ? sol[3, :] : fill(NaN, length(sol.t))
     solvent_solution_state = _solvent_solution_state(CryProblem, sol)
 
     return CrystallisationMoMSolution(sol.t,
                                       solvent_solution_state.concentration,
-                                      CRISTOOL_MICROMETER_SCALE * sol[2, :] ./
-                                      (sol[1, :] .+ CRISTOOL_MOMENT_RATIO_FLOOR),
+                                      [_safe_moment_size_ratio(sol[2, index],
+                                                               sol[1, index],
+                                                               sol[1, index])
+                                       for index in eachindex(sol.t)],
                                       d32,
                                       d43,
-                                      mu2,
+                                      moment2,
                                       solvent_solution_state,
                                       final_state,
                                       sol.stats,

@@ -32,9 +32,8 @@ experiments = load_measurements(path;
     metadata_cols = (; temperature = :Temperature, system = :System),
     initial_crystals_cols = (; mass_concentration = :SeedMass,
                              d43 = :SeedD43,
-                             distribution = :SeedDistribution,
-                             spread = :SeedSpread),
-    temperature_transform = T -> T + 273.15)
+                             geometric_std = :SeedGeometricStd),
+    temperature_transform = identity)
 ```
 
 `experiments_from_table` is the semantic normalizer. `load_measurements` is a
@@ -55,6 +54,8 @@ experiment is grouped by `Exp_ID` with columns such as `Time`,
 `Concentration`, `Concentration_var`, `Temperature`, and optional
 `PS`/`PS_var`. Use the `filters` keyword for arbitrary source columns and
 `initial_crystals_cols` to load initial seed characteristics.
+The bundled fixture already stores Kelvin; use an affine transform such as
+`T -> T + 273.15` only when adapting a separate Celsius source file.
 
 When a `PS` column is present, every usable particle-size row (blank rows are
 skipped) is stored as the `d43` time series. No sentinel values are required
@@ -71,10 +72,11 @@ The columns used by the default loader are:
 | `Concentration` | measured concentration |
 | `Concentration_var` | concentration variance, when replicate measurements exist |
 | `PS`, `PS_var` | optional particle-size measurement and variance at each sampled time |
-| `Temperature` | experiment temperature in degrees Celsius |
+| `Temperature` | experiment temperature in Kelvin |
 
-Use `load_measurements` when the file uses different column names, has
-additional observables, or needs a different temperature transform.
+Numeric measurement values use seconds, kg/m³, and metres. Use
+`temperature_transform` only when adapting a source file with a different
+temperature convention.
 
 ## Balancing repeated measurements and PSD variance
 
@@ -91,11 +93,11 @@ experiments = balance_variances(experiments; obs = :particle_size,
 
 ```julia
 expt = experiments[1]
-expt.observables.concentration.time    # measurement grid (minutes)
+expt.observables.concentration.time    # measurement grid (seconds)
 expt.observables.concentration.mean    # mean concentration per timepoint
 expt.observables.concentration.variance
 expt.observables.d43.time             # particle-size measurement times
-expt.observables.d43.mean             # d43 at those times (µm)
+expt.observables.d43.mean             # d43 at those times (m)
 expt.observables.d43.variance         # per-time variance, or nothing
 initial_concentration(expt)            # first concentration timepoint
 expt.temperature                       # Kelvin
@@ -123,5 +125,5 @@ parameter vector, and the experiments:
 problem = CrystallisationProblem(; kinetics_nucleationfunction = nucl_CNT(),
                                  kinetics_growthfunction = growth_empirical(),
                                  solver = MoM())
-L = loss(logMLE(), problem, [38.0, 0.6, 1.0, 3.0], experiments)
+L = loss(logMLE(), problem, [38.0, 0.0006, 1e-9 / 60, 3.0], experiments)
 ```

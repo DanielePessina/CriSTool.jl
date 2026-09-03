@@ -23,9 +23,9 @@ using JLD2
     solver = MoM()
     lf = logMLE(weighting = [1.0, 1.0])
 
-    save_grid = collect(0.0:60.0:300.0)
-    truth = ComponentVector(nucl = (Aj = 38.0, γ = 0.6),
-                            gr = (Ag = 1.0, g = 3.0),
+    save_grid = collect(0.0:3600.0:18000.0)
+    truth = ComponentVector(nucl = (ln_nucleation_prefactor = 38.0, surface_energy = 0.0006),
+                            gr = (growth_coefficient = 1e-9 / 60, growth_order = 3.0),
                             agg = Float64[], br = Float64[])
     _, ref = runsimulation(truth; nucl = nucl, gr = gr, agg = agg, br = br,
                            initial_concentration = 18.0, solver = solver,
@@ -39,15 +39,17 @@ using JLD2
                                                                      mean = noisy_c,
                                                                      variance = σ2),
                                           d43 = Observable(; time = save_grid, mean = ref.d43,
-                                                           variance = fill(0.1, length(save_grid)))),
+                                          variance = fill((1e-6)^2, length(save_grid)))),
                                       temperature = 295.0, exp_id = 1)]
 
-    prior = [TriangularDist(25.0, 50.0, 38.0), TriangularDist(0.3, 1.0, 0.6),
-             TriangularDist(0.3, 3.0, 1.0), TriangularDist(2.0, 4.0, 3.0)]
+    prior = [TriangularDist(25.0, 50.0, 38.0), TriangularDist(0.0003, 0.001, 0.0006),
+             TriangularDist(0.3e-9 / 60, 3e-9 / 60, 1e-9 / 60),
+             TriangularDist(2.0, 4.0, 3.0)]
 
     @testset "kinetic_parameter_symbols" begin
         syms = CriSTool.kinetic_parameter_symbols(nucl, gr, agg, br)
-        @test syms == [:Aⱼ, :γ, :Ag, :g]
+        @test syms == [:ln_nucleation_prefactor, :surface_energy,
+                       :growth_coefficient, :growth_order]
         @test length(syms) == 4
     end
 
@@ -62,7 +64,8 @@ using JLD2
     end
 
     @testset "rename_chain" begin
-        syms = [:Aⱼ, :γ, :Ag, :g]
+        syms = [:ln_nucleation_prefactor, :surface_energy,
+                :growth_coefficient, :growth_order]
         rng = MersenneTwister(42)
         chain = Chains(rand(rng, 50, 4, 2), [:θ1, :θ2, :θ3, :θ4])
         renamed = CriSTool.rename_chain(chain, syms)
@@ -101,7 +104,8 @@ using JLD2
                                   verbosity = 0)
         end
         @test chain isa MCMCChains.Chains
-        @test names(chain, :parameters) == [:Aⱼ, :γ, :Ag, :g]
+        @test names(chain, :parameters) == [:ln_nucleation_prefactor, :surface_energy,
+                                            :growth_coefficient, :growth_order]
         @test size(chain.value, 1) == 10
         @test isempty(readdir(outdir))
 
@@ -133,7 +137,8 @@ using JLD2
     end
 
     @testset "ChainStatsPlots renders (Makie)" begin
-        chain = Chains(rand(MersenneTwister(7), 30, 2, 1), [:Aⱼ, :γ])
+        chain = Chains(rand(MersenneTwister(7), 30, 2, 1),
+                       [:ln_nucleation_prefactor, :surface_energy])
         outdir = mktempdir()
         fig = CriSTool.ChainStatsPlots(chain; saveplot = true,
                                        savestring = "stats_test", savedir = outdir,

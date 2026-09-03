@@ -17,11 +17,11 @@ struct LinearSolubility <: CriSTool.AbstractSolubilityModel
     slope::Float64   # kg/m³ per °C
     intercept::Float64
 end
-function CriSTool.saturation_concentration(sm::LinearSaturation, temp_profile, t)
+function CriSTool.saturation_concentration(sm::LinearSolubility, temp_profile, t)
     return sm.slope * (CriSTool.temperature(temp_profile, t) - 273.15) + sm.intercept
 end
 
-problem = CrystallisationProblem(; saturation_model = LinearSaturation(0.25, 2.0), ...)
+problem = CrystallisationProblem(; saturation_model = LinearSolubility(0.25, 2.0), ...)
 ```
 
 Built-ins: `ConstantSolubility(c)`, `PolynomialSolubility(coeffs, Tref)`,
@@ -66,15 +66,15 @@ struct growth_custom <: AbstractFPScalarGrowthFunction
     string::String
     symbols::Vector{Symbol}
 end
-growth_custom() = growth_custom(2, "Custom Gr", [:Ag, :g])
+growth_custom() = growth_custom(2, "Custom Gr", [:growth_coefficient, :growth_order])
 
-paramaxis(::growth_custom) = ComponentArrays.Axis(Ag = 1, g = 2)
+paramaxis(::growth_custom) = ComponentArrays.Axis(growth_coefficient = 1, growth_order = 2)
 
 function growthrate(gf::growth_custom, parameters,
                     prob::CrystallisationProblem, state, t)
     p = _named_params(gf, parameters)
     S = supersaturation(prob, state, t)   # state[end] / saturation_concentration(prob, t)
-    return S > 1.001 ? p.Ag * 1e-9 * (S - 1)^p.g : 0.0
+    return S > 1.001 ? p.growth_coefficient * (S - 1)^p.growth_order : 0.0
 end
 ```
 
@@ -91,13 +91,13 @@ experiment's `NamedTuple` — nothing else:
 ```julia
 expt = CrystallisationExperiment(;
     observables = (;
-        concentration = Observable(; time = [0.0, 30.0, 60.0],
+        concentration = Observable(; time = [0.0, 1800.0, 3600.0],
                                    mean = [25.0, 20.0, 16.0],
                                    variance = [0.5, 0.5, 0.5]),
-        mass = Observable(; time = [0.0, 30.0, 60.0],     # custom observable
+        mass = Observable(; time = [0.0, 1800.0, 3600.0],     # custom observable
                           mean = [0.0, 5.0, 9.0]),
-        d43 = Observable(; time = [30.0, 60.0], mean = [6.0, 8.0],
-                         variance = [1.0, 1.0]))
+        d43 = Observable(; time = [1800.0, 3600.0], mean = [6e-6, 8e-6],
+                         variance = [1e-12, 1e-12])),
     temperature = 293.15, exp_id = 1)
 ```
 
@@ -112,18 +112,35 @@ Loaders for the standard CSV long format use
 ## 4. Simulation, loss, estimation
 
 ```julia
-_, sol = runsimulation([8.0, 2.0, 1.0, 2.0];
+custom_problem = CrystallisationProblem(
+    kinetics_nucleationfunction = nucl_empirical(),
+    kinetics_growthfunction = growth_custom(),
+    parameterset_nucleation = [8.0, 2.0],
+    parameterset_growth = [1e-9 / 60, 2.0],
+    solver = MoM(),
+    saturation_model = LinearSolubility(0.25, 2.0))
+custom_parameters = [8.0, 2.0, 1e-9 / 60, 2.0]
+_, sol = runsimulation(custom_parameters;
                        nucl = nucl_empirical(), gr = growth_custom(),
                        agg = noaggregation(), br = nobreakage(),
-                       solver = MoM(), save_idx = [0.0, 30.0, 60.0, 120.0],
-                       saturation_model = LinearSaturation(0.25, 2.0))
+                       solver = MoM(), save_idx = [0.0, 1800.0, 3600.0, 7200.0],
+                       initial_concentration = 25.0,
+                       saturation_model = LinearSolubility(0.25, 2.0))
+
+# The custom `mass` field above needs its own `observable_values` method before
+# it can participate in a loss. Use the built-in observables for this example.
+fit_experiment = CrystallisationExperiment(
+    observables = (; concentration = expt.observables.concentration,
+                    d43 = expt.observables.d43),
+    temperature = expt.temperature,
+    exp_id = expt.exp_id)
 
 # one-off loss
-L = loss(logMLE(), problem, [8.0, 2.0, 1.0, 2.0], [expt])
+L = loss(logMLE(), custom_problem, custom_parameters, [fit_experiment])
 
 # optimisation loop: prepare once, evaluate via remake
-setup = prepare_loss(problem, [expt])
-L  = loss(logMLE(), setup, [8.0, 2.0, 1.0, 2.0])
+setup = prepare_loss(custom_problem, [fit_experiment])
+L  = loss(logMLE(), setup, custom_parameters)
 ```
 
 `PE_Routine`, `run_abc` and the MCMC tutorials consume the same types — swap

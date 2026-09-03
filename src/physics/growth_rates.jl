@@ -82,8 +82,10 @@ growthrate_at_length(gf::AbstractFPLengthDissolutionFunction,
                      crystal_length::Real) = dissolutionrate_at_length(
                          gf, parameters, problem, state, time, crystal_length)
 
-@inline _growth_activation_rate(Ag, activation_energy, temperature, gas_constant) =
-    exp10(Ag) * exp(-activation_energy / (gas_constant * temperature))
+@inline _growth_activation_rate(log10_growth_coefficient, activation_energy,
+                                temperature, gas_constant) =
+    exp10(log10_growth_coefficient) *
+    exp(-activation_energy / (gas_constant * temperature))
 
 @inline function _dissolution_drive(supersaturation_ratio)
     tolerance = CRISTOOL_DISSOLUTION_EQUILIBRIUM_TOLERANCE
@@ -92,13 +94,15 @@ growthrate_at_length(gf::AbstractFPLengthDissolutionFunction,
         zero(supersaturation_ratio)
 end
 
-@inline function _dissolution_rate(Ad, Ead, exponent, supersaturation_ratio,
+@inline function _dissolution_rate(dissolution_coefficient, activation_energy,
+                                   dissolution_order, supersaturation_ratio,
                                    temperature, gas_constant)
     driving_force = _dissolution_drive(supersaturation_ratio)
     return driving_force == zero(driving_force) ?
            zero(driving_force) :
-           -(Ad * 1e-9) * exp(-(Ead * 1e3) / (gas_constant * temperature)) *
-           driving_force^exponent
+           -dissolution_coefficient *
+           exp(-activation_energy / (gas_constant * temperature)) *
+           driving_force^dissolution_order
 end
 
 @inline _dissolution_zero(parameters, state) =
@@ -178,14 +182,16 @@ function dissolutionrate(dissolutionfunction::AbstractFPLengthDissolutionFunctio
     return destination
 end
 
-@inline function _growth_energy_rate(Ag, exponent, activation_energy,
+@inline function _growth_energy_rate(log10_growth_coefficient, growth_order,
+                                     activation_energy,
                                      supersaturation_ratio, temperature,
                                      gas_constant)
     threshold = one(supersaturation_ratio) +
                 CRISTOOL_DISSOLUTION_EQUILIBRIUM_TOLERANCE
     return supersaturation_ratio > threshold ?
-           _growth_activation_rate(Ag, activation_energy, temperature, gas_constant) *
-           (supersaturation_ratio - one(supersaturation_ratio))^exponent :
+           _growth_activation_rate(log10_growth_coefficient, activation_energy,
+                                   temperature, gas_constant) *
+           (supersaturation_ratio - one(supersaturation_ratio))^growth_order :
            zero(supersaturation_ratio)
 end
 
@@ -297,8 +303,10 @@ function _validate_dissolution_parameters(model::growth_dissolution,
                                           problem::CrystallisationProblem)
     _validate_dissolution_scalar_parameters(model, parameters)
     p = _named_params(model, parameters)
-    p.Ad >= 0.0 || throw(ArgumentError("growth_dissolution Ad must be nonnegative."))
-    p.d > 0.0 || throw(ArgumentError("growth_dissolution d must be strictly positive."))
+    p.dissolution_coefficient >= 0.0 ||
+        throw(ArgumentError("dissolution_coefficient must be nonnegative."))
+    p.dissolution_order > 0.0 ||
+        throw(ArgumentError("dissolution_order must be strictly positive."))
     return nothing
 end
 
@@ -312,9 +320,11 @@ function _validate_dissolution_parameters(model::growth_energy_dissolution,
                                           problem::CrystallisationProblem)
     _validate_dissolution_scalar_parameters(model, parameters)
     p = _named_params(model, parameters)
-    p.Ad >= 0.0 || throw(ArgumentError("growth_energy_dissolution Ad must be nonnegative."))
-    p.g > 0.0 || throw(ArgumentError("growth_energy_dissolution g must be strictly positive."))
-    p.d > 0.0 || throw(ArgumentError("growth_energy_dissolution d must be strictly positive."))
+    p.dissolution_coefficient >= 0.0 ||
+        throw(ArgumentError("dissolution_coefficient must be nonnegative."))
+    p.growth_order > 0.0 || throw(ArgumentError("growth_order must be strictly positive."))
+    p.dissolution_order > 0.0 ||
+        throw(ArgumentError("dissolution_order must be strictly positive."))
     return nothing
 end
 
@@ -330,11 +340,13 @@ function _validate_dissolution_parameters(model::growth_dissolution_length,
     isfinite(model.Lref) && model.Lref > 0.0 ||
         throw(ArgumentError("growth_dissolution_length Lref must be finite and strictly positive."))
     p = _named_params(model, parameters)
-    p.Ad >= 0.0 || throw(ArgumentError("growth_dissolution_length Ad must be nonnegative."))
-    p.d > 0.0 || throw(ArgumentError("growth_dissolution_length d must be strictly positive."))
+    p.dissolution_coefficient >= 0.0 ||
+        throw(ArgumentError("dissolution_coefficient must be nonnegative."))
+    p.dissolution_order > 0.0 ||
+        throw(ArgumentError("dissolution_order must be strictly positive."))
     if problem.solver isa AbstractDiscretisedSolver
-        lower_base = 1.0 + p.κ * problem.solver.lmin / model.Lref
-        upper_base = 1.0 + p.κ * problem.solver.lmax / model.Lref
+        lower_base = 1.0 + p.size_dependence_coefficient * problem.solver.lmin / model.Lref
+        upper_base = 1.0 + p.size_dependence_coefficient * problem.solver.lmax / model.Lref
         lower_base > 0.0 && upper_base > 0.0 ||
             throw(ArgumentError("growth_dissolution_length size factor must stay positive " *
                                 "over the configured mesh."))
@@ -354,9 +366,8 @@ _validate_growth_parameters(model::growth_dissolution_length,
 Calculate crystal growth rate using an empirical power law model.
 
 # Arguments
-- `parameters`: Vector containing [A_g, g] where:
-  - A_g: Growth rate constant
-  - g: Growth rate order
+- `parameters`: Vector containing [growth_coefficient, growth_order], where
+  the coefficient is in m/s.
 - `S`: Supersaturation ratio
 - `system`: System parameters
 - `temperature`: Instantaneous temperature in Kelvin
@@ -369,7 +380,7 @@ function growthrate(gf::growth_empirical, parameters::T, prob::CrystallisationPr
     p = _named_params(gf, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
-    return S > 1.001 ? (p.Ag * 1e-9) * ((S - 1)^p.g) : 0.0
+    return S > 1.001 ? p.growth_coefficient * (S - 1)^p.growth_order : 0.0
 end
 """
     growthrate(gf::growth_energy, parameters::AbstractVector, S::Real,
@@ -378,8 +389,8 @@ end
 Calculate growth rate with Arrhenius temperature dependence using fixed activation energy.
 
 # Arguments
-- `gf`: Growth function with embedded activation energy Ea
-- `parameters`: Vector [Ag, g] where Ag is pre-exponential (log10 scale), g is exponent
+- `gf`: Growth function with embedded activation energy
+- `parameters`: Vector [log10_growth_coefficient, growth_order]
 - `S`: Supersaturation ratio
 - `system`: System parameters
 - `temperature`: Temperature in Kelvin
@@ -392,7 +403,8 @@ function growthrate(gf::growth_energy, parameters::T, prob::CrystallisationProbl
     p = _named_params(gf, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
-    return _growth_energy_rate(p.Ag, p.g, gf.Ea, S, temp, prob.R)
+    return _growth_energy_rate(p.log10_growth_coefficient, p.growth_order,
+                               gf.activation_energy, S, temp, prob.R_gas_constant)
     ## multiply by 1e12 to convert to typical units
 end
 
@@ -404,7 +416,8 @@ Calculate growth rate with Arrhenius temperature dependence and estimated activa
 
 # Arguments
 - `gf`: Growth function struct
-- `parameters`: Vector [Ag, Eag, g] where Ag is pre-exponential (log10), Eag is activation energy (kJ/mol), g is exponent
+- `parameters`: Vector [log10_growth_coefficient, activation_energy, growth_order],
+  with activation energy in J/mol.
 - `S`: Supersaturation ratio
 - `system`: System parameters
 - `temperature`: Temperature in Kelvin
@@ -417,7 +430,8 @@ function growthrate(gf::growth_energy_est, parameters::T, prob::CrystallisationP
     p = _named_params(gf, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
-    return _growth_energy_rate(p.Ag, p.g, p.Eag * 1e3, S, temp, prob.R)
+    return _growth_energy_rate(p.log10_growth_coefficient, p.growth_order,
+                               p.activation_energy, S, temp, prob.R_gas_constant)
     ## multiply by 1e12 to convert to typical units
 end
 
@@ -428,9 +442,8 @@ end
 Calculate crystal growth rate using Burton-Cabrera-Frank (BCF) surface diffusion model.
 
 # Arguments
-- `parameters`: Vector containing [C3, C4] where:
-  - C3: Growth rate constant (model parameter based on physical properties)
-  - C4: Surface energy barrier parameter (model parameter based on physical properties)
+- `parameters`: Vector containing [growth_coefficient, activation_temperature]
+  where the first entry is in m/s and the second is in K.
 - `S`: Supersaturation ratio
 - `system`: System parameters
 - `temperature`: Instantaneous temperature in Kelvin
@@ -449,9 +462,9 @@ function growthrate(gf::growth_BCF, parameters::T, prob::CrystallisationProblem,
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
     return if S > 1.001
-        (1e-9) * p.C3 * temp / p.C4 *
+        p.growth_coefficient * temp / p.activation_temperature *
         (S - 1) *
-        tanh(p.C4 / (temp * log(S)))
+        tanh(p.activation_temperature / (temp * log(S)))
     else
         0.0
     end
@@ -464,9 +477,9 @@ end
 Calculate crystal growth rate using Birth and Spread (B+S) model based on nucleation theory.
 
 # Arguments
-- `parameters`: Vector containing [C1, C2] where:
-  - C1: Growth rate constant (model parameter based on physical properties fitted to experimental data)
-  - C2: Energy barrier parameter (model parameter based on physical properties fitted to experimental data)
+- `parameters`: Vector containing [growth_coefficient,
+  energy_barrier_temperature_squared], with the first entry in m/s and the
+  second in K².
 - `S`: Supersaturation ratio
 - `system`: System parameters
 - `temperature`: Instantaneous temperature in Kelvin
@@ -486,11 +499,10 @@ function growthrate(gf::growth_BpS, parameters::T, prob::CrystallisationProblem,
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
     return if S > 1.001
-        (1e-9) *
-        p.C1 *
+        p.growth_coefficient *
         ((S - 1)^(2 / 3)) *
         (log(S))^(1 / 6) *
-        exp(-p.C2 / (temp^2 * log(S)))
+        exp(-p.energy_barrier_temperature_squared / (temp^2 * log(S)))
     else
         0.0
     end
@@ -506,7 +518,10 @@ Calculate length-dependent dissolution rate (negative growth).
 
 # Arguments
 - `gf`: Dissolution growth function
-- `parameters`: Vector [Ad, Ead, d, κ, p] for dissolution kinetics
+- `parameters`: Vector [dissolution_coefficient, activation_energy,
+  dissolution_order, size_dependence_coefficient, size_dependence_exponent]
+  for dissolution kinetics; the coefficient is in m/s and activation energy
+  in J/mol.
 - `S`: Supersaturation ratio
 - `mesh`: Cell-centre coordinates (length-dependence is evaluated on each mesh cell)
 - `temperature`: Temperature in Kelvin
@@ -569,15 +584,17 @@ function dissolutionrate!(destination::AbstractVector,
     end
 
     temp = temperature(prob.temp_profile, t)
-    dissolution_prefactor = -(pn.Ad * 1e-9) *
-                            exp(-(pn.Ead * 1e3) / (prob.R * temp)) *
-                            driving_force^pn.d
+    dissolution_prefactor = -pn.dissolution_coefficient *
+                            exp(-pn.activation_energy / (prob.R_gas_constant * temp)) *
+                            driving_force^pn.dissolution_order
     @inbounds for index in eachindex(destination, mesh)
-        size_factor_base = one(mesh[index]) + pn.κ * (mesh[index] / gf.Lref)
+        size_factor_base = one(mesh[index]) +
+                           pn.size_dependence_coefficient * (mesh[index] / gf.Lref)
         size_factor_base > zero(size_factor_base) ||
             throw(DomainError(size_factor_base,
                               "growth_dissolution_length size factor must be positive."))
-        destination[index] = dissolution_prefactor * size_factor_base^pn.p
+        destination[index] = dissolution_prefactor *
+                             size_factor_base^pn.size_dependence_exponent
     end
     return destination
 end
@@ -611,12 +628,15 @@ function dissolutionrate_at_length(gf::growth_dissolution_length,
     driving_force == zero(driving_force) && return zero(driving_force)
 
     temp = temperature(prob.temp_profile, t)
-    size_factor_base = one(crystal_length) + pn.κ * (crystal_length / gf.Lref)
+    size_factor_base = one(crystal_length) +
+                       pn.size_dependence_coefficient * (crystal_length / gf.Lref)
     size_factor_base > zero(size_factor_base) ||
         throw(DomainError(size_factor_base,
                           "growth_dissolution_length size factor must be positive."))
-    return -(pn.Ad * 1e-9) * exp(-(pn.Ead * 1e3) / (prob.R * temp)) *
-           driving_force^pn.d * size_factor_base^pn.p
+    return -pn.dissolution_coefficient *
+           exp(-pn.activation_energy / (prob.R_gas_constant * temp)) *
+           driving_force^pn.dissolution_order *
+           size_factor_base^pn.size_dependence_exponent
 end
 
 growthrate_at_length(gf::growth_dissolution_length,
@@ -635,7 +655,9 @@ Calculate scalar dissolution rate (negative growth) with Arrhenius temperature d
 
 # Arguments
 - `gf`: Dissolution growth function
-- `parameters`: Vector [Ad, Ead, d] for dissolution kinetics
+- `parameters`: Vector [dissolution_coefficient, activation_energy,
+  dissolution_order] for dissolution kinetics; the coefficient is in m/s and
+  activation energy in J/mol.
 - `S`: Supersaturation ratio
 - `system`: System parameters
 - `temperature`: Temperature in Kelvin
@@ -648,7 +670,8 @@ function growthrate(gf::growth_dissolution, parameters::T, prob::Crystallisation
     p = _named_params(gf, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
-    return _dissolution_rate(p.Ad, p.Ead, p.d, S, temp, prob.R)
+    return _dissolution_rate(p.dissolution_coefficient, p.activation_energy,
+                             p.dissolution_order, S, temp, prob.R_gas_constant)
 end
 
 """Independent dissolution dispatch for the legacy empirical law."""
@@ -667,7 +690,9 @@ Uses `growth_energy` for supersaturated conditions (S > 1.001) and
 
 # Arguments
 - `gf`: Combined growth/dissolution function
-- `parameters`: Vector [Ag, g, Ad, Ead, d] for combined kinetics
+- `parameters`: Vector [log10_growth_coefficient, growth_order,
+  dissolution_coefficient, activation_energy, dissolution_order] for the
+  combined kinetics.
 - `S`: Supersaturation ratio
 - `system`: System parameters
 - `temperature`: Temperature in Kelvin
@@ -683,9 +708,11 @@ function growthrate(gf::growth_energy_dissolution, parameters::T, prob::Crystall
     growth_threshold = one(S) + CRISTOOL_DISSOLUTION_EQUILIBRIUM_TOLERANCE
     dissolution_threshold = one(S) - CRISTOOL_DISSOLUTION_EQUILIBRIUM_TOLERANCE
     if S > growth_threshold
-        return _growth_energy_rate(p.Ag, p.g, 53e3, S, temp, prob.R)
+        return _growth_energy_rate(p.log10_growth_coefficient, p.growth_order,
+                                   53e3, S, temp, prob.R_gas_constant)
     elseif S < dissolution_threshold
-        return _dissolution_rate(p.Ad, p.Ead, p.d, S, temp, prob.R)
+        return _dissolution_rate(p.dissolution_coefficient, p.activation_energy,
+                                 p.dissolution_order, S, temp, prob.R_gas_constant)
     end
     return zero(S)
 end
@@ -696,7 +723,8 @@ function dissolutionrate(gf::growth_energy_dissolution, parameters::T,
     p = _named_params(gf, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
-    return _dissolution_rate(p.Ad, p.Ead, p.d, S, temp, prob.R)
+    return _dissolution_rate(p.dissolution_coefficient, p.activation_energy,
+                             p.dissolution_order, S, temp, prob.R_gas_constant)
 end
 
 ###
@@ -708,7 +736,7 @@ end
 Calculate empirical growth rate using pre-fixed parameters embedded in the struct.
 
 # Arguments
-- `grf`: Fixed empirical growth function with embedded Ag and g parameters
+- `grf`: Fixed empirical growth function with embedded growth coefficient and order
 - `parameters`: Ignored (parameters taken from grf)
 - `S`: Supersaturation ratio
 - `system`: Crystallisation problem
@@ -720,5 +748,6 @@ Calculate empirical growth rate using pre-fixed parameters embedded in the struc
 """
 function growthrate(grf::growth_empirical_fixed, parameters, prob::CrystallisationProblem, state, t)
     S = supersaturation(prob, state, t)
-    return S > 1.001 ? (grf.Ag * 1e-9) * ((S - 1)^grf.g) : 0.0
+    return S > 1.001 ? grf.growth_coefficient *
+                       (S - 1)^grf.growth_order : 0.0
 end

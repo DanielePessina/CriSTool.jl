@@ -17,7 +17,8 @@ supersaturation(prob, state, t) = state[end] / saturation_concentration(prob, t)
 prob = CrystallisationProblem(; saturation_model = ConstantSolubility(2.47))
 
 # Polynomial in (T_K - Tref): coeffs[1] + coeffs[2] x + coeffs[3] x² + ...
-# (default Tref = 273.15, i.e. temperature in Celsius), Horner evaluation
+# (default Tref = 273.15 K; temperature differences are equivalent to Celsius
+# differences), Horner evaluation
 prob = CrystallisationProblem(;
     saturation_model = PolynomialSolubility(coeffs = [1.0, -0.1, 0.002]))
 
@@ -27,8 +28,8 @@ prob = CrystallisationProblem(;
 ```
 
 `lysozyme_solubility()` returns the legacy lysozyme solubility polynomial
-(`0.3705 + 7.171e-2 ΔT - 1.924e-3 ΔT² + 17.97e-5 ΔT³`, ΔT in °C) and is the
-default, so existing models and the gold fixture reproduce identically.
+(`0.3705 + 7.171e-2 ΔT - 1.924e-3 ΔT² + 17.97e-5 ΔT³`, with ΔT in K) and is the
+default. The gold fixture records the converted SI trajectories.
 
 For a reversible seeded run using a constant saturation value, see
 [Tutorial 6 — Dissolution](<../examples/Tutorial 6 Dissolution.jl>).

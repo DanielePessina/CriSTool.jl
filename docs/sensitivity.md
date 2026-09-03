@@ -5,6 +5,12 @@ chosen simulation output. The package supplies the forward model through
 `runsimulation`; the sampling and sensitivity estimators come from
 GlobalSensitivity.jl and QuasiMonteCarlo.jl.
 
+The lower-level `forwardsensitivity` helper currently covers scalar growth and
+independent scalar dissolution with MoM or FiniteVol, using the same numeric SI
+parameters as `runsimulation`. It rejects length-dependent kinetics and binary
+aggregation/breakage explicitly because those source terms need a separate
+sensitivity implementation.
+
 [Tutorial 3 — Sensitivity Analysis](<../examples/Tutorial 3 Sensitivity Analysis.jl>)
 is the full runnable example. It uses the terminal concentration as its
 scalar output and computes Sobol and DGSM measures over parameter bounds.
@@ -24,7 +30,7 @@ using Distributions
 nucl, gr = nucl_CNT(), growth_empirical()
 agg, br  = noaggregation(), nobreakage()
 solver   = MoM()
-save_grid = 0.0:6.0:360.0
+save_grid = 0.0:360.0:21600.0
 
 simulate_terminal_concentration = function (parameters)
     _, solution = runsimulation(
@@ -47,7 +53,7 @@ Generate two quasi-random design matrices over the bounds and pass them to
 GlobalSensitivity's `gsa` function:
 
 ```julia
-baseline = [38.0, 0.7, 1.0, 3.0]
+baseline = [38.0, 0.0007, 1e-9 / 60, 3.0]
 lower = 0.5 .* baseline
 upper = 1.5 .* baseline
 A, B = QuasiMonteCarlo.generate_design_matrices(

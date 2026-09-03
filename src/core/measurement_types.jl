@@ -106,8 +106,8 @@ Fields:
   The `concentration` observable is mandatory for loss evaluation.
 - `temperature::Float64`: run temperature in Kelvin
 - `exp_id::Int`: experiment identifier
-- `initial_crystals::Union{Nothing,NamedTuple}`: optional initial seed
-  characteristics used to construct the solver state
+- `initial_crystals::Union{Nothing,AbstractInitialCrystals}`: optional initial
+  seed characteristics used to construct the solver state
 - `metadata::M`: additional typed run metadata
 
 The `NamedTuple` shape keeps the container type-stable and Tables.jl
@@ -115,7 +115,7 @@ compatible; additional observables (pH, mass, PSD, ...) are added as new
 fields, not new container types.
 """
 Base.@kwdef @concrete struct CrystallisationExperiment{O <: NamedTuple,
-                                                       I <: Union{Nothing, NamedTuple},
+                                                       I <: Union{Nothing, AbstractInitialCrystals},
                                                        M <: NamedTuple} <:
                  AbstractExperiment
     observables::O

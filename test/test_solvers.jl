@@ -8,9 +8,9 @@
         # Use the same kinetic parameters for both solvers
         nucl_func = nucl_CNT()
         grow_func = growth_empirical()
-        params = [38.0, 0.7, 1.0, 3.0]
+        params = [38.0, 0.0007, 1e-9 / 60, 3.0]
         initial_conc = 18.0
-        save_times = collect(0:60.0:480.0)
+        save_times = collect(0:3600.0:28800.0)
 
         # Run with MoM
         _,
@@ -47,7 +47,7 @@
     end
 
     @testset "FiniteVol Quantile Ordering" begin
-        params = [38.0, 0.7, 1.0, 3.0]
+        params = [38.0, 0.0007, 1e-9 / 60, 3.0]
 
         _,
         solution = runsimulation(params,
@@ -56,7 +56,7 @@
                                  noaggregation(),
                                  nobreakage(),
                                  18.0;
-                                 save_idx = collect(0:60.0:480.0),
+                                 save_idx = collect(0:3600.0:28800.0),
                                  solver = FiniteVol(meshsize = 100, lmax = 50e-6))
 
         @test solution.success
@@ -68,7 +68,7 @@
     end
 
     @testset "WENO Solver Basic Test" begin
-        params = [38.0, 0.7, 1.0, 3.0]
+        params = [38.0, 0.0007, 1e-9 / 60, 3.0]
 
         _,
         solution = runsimulation(params,
@@ -77,7 +77,7 @@
                                  noaggregation(),
                                  nobreakage(),
                                  18.0;
-                                 save_idx = collect(0:120.0:480.0),
+                                 save_idx = collect(0:7200.0:28800.0),
                                  solver = WENO(meshsize = 100, lmax = 50e-6))
 
         @test solution.success
@@ -86,8 +86,8 @@
 
     @testset "Mesh Size Independence" begin
         # Results should be qualitatively similar with different mesh sizes
-        params = [38.0, 0.7, 1.0, 3.0]
-        save_times = collect(0:120.0:480.0)
+        params = [38.0, 0.0007, 1e-9 / 60, 3.0]
+        save_times = collect(0:7200.0:28800.0)
 
         # Coarse mesh
         _,
@@ -120,19 +120,19 @@
     end
 
     @testset "ODE Solver Returns Success Code" begin
-        params = [38.0, 0.7, 1.0, 3.0]
+        params = [38.0, 0.0007, 1e-9 / 60, 3.0]
 
         # Test all solver types return proper success codes
         for solver in [MoM(), FiniteVol(meshsize = 50), WENO(meshsize = 50)]
             if solver isa MoM
                 _,
                 sol = runsimulation(params, nucl_CNT(), growth_empirical(), 18.0;
-                                    solver = solver, save_idx = 0:120.0:240.0)
+                                    solver = solver, save_idx = 0:7200.0:14400.0)
             else
                 _,
                 sol = runsimulation(params, nucl_CNT(), growth_empirical(),
                                     noaggregation(), nobreakage(), 18.0;
-                                    solver = solver, save_idx = collect(0:120.0:240.0))
+                                    solver = solver, save_idx = collect(0:7200.0:14400.0))
             end
             @test sol.success
         end

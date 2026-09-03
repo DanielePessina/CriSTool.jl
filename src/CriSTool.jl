@@ -56,10 +56,7 @@ using StaticArrays
 # Shared numerical policies. Keeping these names centralized makes model,
 # measurement, uncertainty, and plotting behavior auditable and configurable
 # without scattering magic values across source files.
-const CRISTOOL_VARIANCE_FLOOR = 1e-6
-const CRISTOOL_MOMENT_RATIO_FLOOR = 1e-6
 const CRISTOOL_MOMENT_DENSITY_FLOOR = 1e-8
-const CRISTOOL_MICROMETER_SCALE = 1e6
 const CRISTOOL_WENO_EPSILON = 1e-6
 const CRISTOOL_DISSOLUTION_EQUILIBRIUM_TOLERANCE = 1e-3
 const CRISTOOL_DISSOLUTION_LREF = 1e-6
@@ -79,19 +76,26 @@ export CrystallisationFVSolution, CrystallisationMoMSolution,
        CrystallisationProblem
 export Observable, ObservableColumns, CrystallisationExperiment, AbstractExperiment,
        initial_concentration
+export AbstractInitialCrystals, LogNormalInitialCrystals, GaussianInitialCrystals
 export AbstractSolubilityModel, ConstantSolubility, PolynomialSolubility, CallableSolubility,
        AbstractSaturationModel, ConstantSaturation, PolynomialSaturation, CallableSaturation,
        lysozyme_solubility, lysozyme_saturation, saturation_concentration, supersaturation
+export AbstractTemperature, ConstantTemperature, LinearTemperature, RampTemperature,
+       CallableTemperature, temperature
 export AbstractSolution, state_vars, size_metrics, observable_values, solvent_state,
        default_solvent_dynamics
 export AbstractNucleationFunction, AbstractGrowthFunction, nucl_CNT,
-       nucl_empirical, nucl_CNTnoS, AbstractDissolutionFunction,
+       nucl_empirical, nucl_empirical_energy, nucl_CNTnoS, nucl_secondary,
+       nucl_prim_plus_second, nucl_CNT_plus_second, nucl_CNT_fixed,
+       nucl_empirical_fixed, AbstractDissolutionFunction,
        AbstractFPScalarDissolutionFunction, AbstractFPLengthDissolutionFunction,
        AbstractScalarDissolutionFunction, AbstractLengthDissolutionFunction,
        nodissolution, nondissolution, dissolutionrate, dissolutionrate!, dissolutionrate_at_length,
        net_growth_rate, net_growth_rate!, net_growth_rate_at_length,
-       growth_empirical, growth_BpS, growth_BCF,
+       growth_empirical, growth_empirical_fixed, growth_energy, growth_energy_est,
+       growth_BpS, growth_BCF,
        growth_dissolution, growth_dissolution_length, growth_energy_dissolution,
+       nucleationrate, growthrate, aggregationrate, breakagerate,
        growthrate!, growthrate_at_length, net_growthrate
 export AbstractAggregationFunction, AbstractBreakageFunction, nobreakage,
        breakage_empirical, breakage_uniform, noaggregation,
@@ -123,6 +127,7 @@ export CRISTOOL_PALETTE
 include("core/solution_types.jl")
 include("core/kinetic_types.jl")
 include("core/loss_types.jl")
+include("core/initial_crystal_types.jl")
 include("core/measurement_types.jl")
 include("core/solver_types.jl")
 include("core/temperature_types.jl")

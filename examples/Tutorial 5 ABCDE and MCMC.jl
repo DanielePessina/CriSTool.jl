@@ -22,11 +22,11 @@ function main()
     nucl, gr, agg, br = nucl_CNT(), growth_empirical(), noaggregation(), nobreakage()
     solver = MoM()
     loss   = logMLE(weighting = [1.0, 1.0])
-    truth  = ComponentVector(nucl = (Aj = 38.0, γ = 0.6),
-                             gr   = (Ag = 1.0, g = 3.0),
+    truth  = ComponentVector(nucl = (ln_nucleation_prefactor = 38.0, surface_energy = 0.0006),
+                             gr   = (growth_coefficient = 1e-9 / 60, growth_order = 3.0),
                              agg  = Float64[], br = Float64[])
 
-    save_grid     = collect(0.0:30.0:300.0)
+    save_grid     = collect(0.0:1800.0:18000.0)
     T_K             = 295.0
     C0            = 18.0
 
@@ -42,11 +42,11 @@ function main()
                                                           concentration = Observable(; time = save_grid, mean = noisy_c,
                                                           variance = σ2),
                                                           d43 = Observable(; time = save_grid, mean = ref.d43,
-                                                                            variance = fill(0.1, length(save_grid)))),
+                                                                            variance = fill((0.1e-6)^2, length(save_grid)))),
                                                           temperature = T_K, exp_id = 1)
 
-    lb = [25.0, 0.30, 0.30, 2.0]
-    ub = [50.0, 1.00, 3.00, 4.0]
+    lb = [25.0, 0.00030, 0.3e-9 / 60, 2.0]
+    ub = [50.0, 0.00100, 3.0e-9 / 60, 4.0]
 
     # 1. ABCDE.
     println("ABCDE...")
@@ -73,12 +73,14 @@ function main()
                           solver = solver, lossfunction = loss,
                           sampler = NUTS(50, 0.65; adtype = AutoForwardDiff(chunksize = 4)),
                           n_samples = 100, n_chains = 1, verbosity = 0)
-    nuts_means = [mean(chain[:Aⱼ]), mean(chain[:γ]), mean(chain[:Ag]), mean(chain[:g])]
+    nuts_means = [mean(chain[:ln_nucleation_prefactor]), mean(chain[:surface_energy]),
+                  mean(chain[:growth_coefficient]), mean(chain[:growth_order])]
     println("  $(round(time() - t, digits=1))s, mean = ", round.(nuts_means, digits=3))
 
     # 3. Side-by-side comparison.
     println("\nparam │ truth │ ABCDE │ NUTS")
-    for (i, name) in enumerate(("Aⱼ", "γ", "Ag", "g"))
+    for (i, name) in enumerate(("ln_nucleation_prefactor", "surface_energy",
+                                "growth_coefficient", "growth_order"))
         println(rpad(name, 6), "│ ", rpad(round(truth[i], digits = 3), 6),
                 "│ ", rpad(round(abc_means[i], digits = 3), 6),
                 "│ ", round(nuts_means[i], digits = 3))

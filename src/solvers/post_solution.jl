@@ -47,21 +47,21 @@ function momentcalculator(mesh::AbstractVector, numberdensity::AbstractMatrix,
 end
 
 """
-    volumeweighteddensity(mesh, numberdensity, kv)
+    volumeweighteddensity(mesh, numberdensity, shape_factor)
 
 Compute volume-weighted density distribution.
 """
-function volumeweighteddensity(mesh::AbstractVector, numberdensity::AbstractVecOrMat, kv)
-    kv .* (numberdensity .* (mesh .^ 3.0))
+function volumeweighteddensity(mesh::AbstractVector, numberdensity::AbstractVecOrMat, shape_factor)
+    shape_factor .* (numberdensity .* (mesh .^ 3.0))
 end
 
 """
-    surfaceweighteddensity(mesh, numberdensity, kv)
+    surfaceweighteddensity(mesh, numberdensity, shape_factor)
 
 Compute surface-weighted density distribution.
 """
-function surfaceweighteddensity(mesh::AbstractVector, numberdensity::AbstractVector, kv)
-    kv .* (numberdensity .* mesh .^ 2.0)
+function surfaceweighteddensity(mesh::AbstractVector, numberdensity::AbstractVector, shape_factor)
+    shape_factor .* (numberdensity .* mesh .^ 2.0)
 end
 
 """
@@ -103,12 +103,12 @@ function quantilecalculator(cellcentre::AbstractVector{T}, voldensity::AbstractV
                 # Linear interpolation
                 x0, x1 = prev_cumulative / total, cumulative / total
                 y0, y1 = cellcentre[i-1], cellcentre[i]
-                return (y0 + (quantile - x0) * (y1 - y0) / (x1 - x0)) * CRISTOOL_MICROMETER_SCALE
+                return y0 + (quantile - x0) * (y1 - y0) / (x1 - x0)
             end
         end
     end
 
-    return cellcentre[end] * CRISTOOL_MICROMETER_SCALE
+    return cellcentre[end]
 end
 
 """
@@ -122,7 +122,7 @@ Calculate particle size at a specified quantile for multiple time points.
 - `quantiles::W`: Quantile value (0-1, e.g., 0.5 for median)
 
 # Returns
-- `Vector`: Particle sizes (in μm) at the specified quantile for each time point
+- `Vector`: Particle sizes (in m) at the specified quantile for each time point
 """
 function quantilecalculator(cellcentre::AbstractVector{T},
                             voldensitymatrix::AbstractMatrix{K},
@@ -136,26 +136,46 @@ end
 """
     _momentsizes(mesh, numberdensity)
 
-Compute the four moment-derived size metrics (d10, d32, d43, μ₂) from a number-density
+Compute the four moment-derived size metrics (d10, d32, d43, moment2) from a number-density
 matrix and mesh. Used by FV solvers at solution-construction time so that the resulting
 `CrystallisationFVSolution` carries these sizes as fields — the same way a
 `CrystallisationMoMSolution` does. Callers should not need this directly.
 """
+function _safe_moment_size_ratio(numerator, denominator, particle_count)
+    isfinite(particle_count) ||
+        throw(DomainError(particle_count,
+                          "Particle count must be finite when computing a size metric."))
+    if particle_count >= zero(particle_count) &&
+       particle_count <= CRISTOOL_MOMENT_DENSITY_FLOOR
+        return zero(promote_type(typeof(numerator), typeof(denominator)))
+    end
+    isfinite(numerator) && numerator >= zero(numerator) ||
+        throw(DomainError(numerator,
+                          "A nonempty population requires a finite nonnegative moment numerator."))
+    isfinite(denominator) && denominator > zero(denominator) ||
+        throw(DomainError(denominator,
+                          "A nonempty population requires a finite positive moment denominator."))
+    return numerator / denominator
+end
+
 function _momentsizes(mesh::AbstractVector, numberdensity::AbstractMatrix)
     mu0 = momentcalculator(mesh, numberdensity, 0)
     mu1 = momentcalculator(mesh, numberdensity, 1)
-    mu2 = momentcalculator(mesh, numberdensity, 2)
+    moment2 = momentcalculator(mesh, numberdensity, 2)
     mu3 = momentcalculator(mesh, numberdensity, 3)
     mu4 = momentcalculator(mesh, numberdensity, 4)
-    return (d10 = CRISTOOL_MICROMETER_SCALE .* (mu1 ./ (mu0 .+ CRISTOOL_MOMENT_DENSITY_FLOOR)),
-            d32 = CRISTOOL_MICROMETER_SCALE .* (mu3 ./ (mu2 .+ CRISTOOL_MOMENT_DENSITY_FLOOR)),
-            d43 = CRISTOOL_MICROMETER_SCALE .* (mu4 ./ (mu3 .+ CRISTOOL_MOMENT_DENSITY_FLOOR)),
-            mu2 = CRISTOOL_MICROMETER_SCALE .* mu2)
+    d10 = [_safe_moment_size_ratio(mu1[index], mu0[index], mu0[index])
+           for index in eachindex(mu0)]
+    d32 = [_safe_moment_size_ratio(mu3[index], moment2[index], mu0[index])
+           for index in eachindex(mu0)]
+    d43 = [_safe_moment_size_ratio(mu4[index], mu3[index], mu0[index])
+           for index in eachindex(mu0)]
+    return (; d10, d32, d43, moment2)
 end
 
 function getmomentsizes(::CrystallisationProblem,
                         solution::CrystallisationFVSolution)
-    return (d10 = solution.d10, d32 = solution.d32, d43 = solution.d43, mu2 = solution.mu2)
+    return (d10 = solution.d10, d32 = solution.d32, d43 = solution.d43, moment2 = solution.moment2)
 end
 """
     getmomentsizes(problem::CrystallisationProblem, solution::CrystallisationMoMSolution) -> NamedTuple
@@ -167,11 +187,11 @@ Extract characteristic crystal sizes from a Method of Moments solution.
 - `solution::CrystallisationMoMSolution`: MoM simulation solution
 
 # Returns
-- `NamedTuple{(:d10, :d32, :d43, :mu2)}`: Named tuple with size metrics directly from solution
+- `NamedTuple{(:d10, :d32, :d43, :moment2)}`: Named tuple with size metrics directly from solution
 """
 function getmomentsizes(problem::CrystallisationProblem,
                         solution::CrystallisationMoMSolution)
-    return (d10 = solution.d10, d32 = solution.d32, d43 = solution.d43, mu2 = solution.mu2)
+    return (d10 = solution.d10, d32 = solution.d32, d43 = solution.d43, moment2 = solution.moment2)
 end
 
 """
@@ -229,10 +249,10 @@ state_vars(sol::CrystallisationFVSolution) = merge(sol.solvent_state,
 """
     size_metrics(sol::CrystallisationMoMSolution) -> NamedTuple
 
-Particle-size metrics of a MoM solution: `d10`, `d32`, `d43`, `mu2`.
+Particle-size metrics of a MoM solution: `d10`, `d32`, `d43`, `moment2`.
 """
 size_metrics(sol::CrystallisationMoMSolution) =
-    (; d10 = sol.d10, d32 = sol.d32, d43 = sol.d43, mu2 = sol.mu2)
+    (; d10 = sol.d10, d32 = sol.d32, d43 = sol.d43, moment2 = sol.moment2)
 
 """
     size_metrics(sol::CrystallisationFVSolution) -> NamedTuple

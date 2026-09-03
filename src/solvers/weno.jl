@@ -497,7 +497,7 @@ function _wrap_solution(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF
     n_solvent = length(propertynames(CryProblem.initial_solvent_state))
     nd_matrix = sol[1:(end - n_solvent), :]
     vol_weighted_dens = volumeweighteddensity(CryProblem.solver.cell_centre, nd_matrix,
-                                              CryProblem.kv)
+                                              CryProblem.volume_shape_factor)
     moments = _momentsizes(CryProblem.solver.cell_centre, nd_matrix)
     solvent_solution_state = _solvent_solution_state(CryProblem, sol)
 
@@ -514,7 +514,7 @@ function _wrap_solution(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF
                                      moments.d10,
                                      moments.d32,
                                      moments.d43,
-                                     moments.mu2,
+                                     moments.moment2,
                                      solvent_solution_state,
                                      sol[:, end],
                                      sol.stats,

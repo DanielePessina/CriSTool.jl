@@ -25,8 +25,8 @@ experiments = load_measurements(path)
 # Model and bounds
 nucl_f = nucl_CNT()
 growth_f = growth_energy()
-PE_lb = [10.0, 0.15, -10.0, 1.0]
-PE_ub = [65.0, 2.5, 10.0, 3.5]
+PE_lb = [10.0, 0.00015, -20.0, 1.0]
+PE_ub = [65.0, 0.0025, 0.0, 3.5]
 
 solver = MoM()
 lossfn = logMLE(weighting = [1.0, 1.0])
@@ -149,8 +149,8 @@ chain = rename_chain(chain, kinetic_parameter_symbols(nucl_f, growth_f,
 ```
 
 Chain parameters are sampled as `θ[1]`, `θ[2]`, … and renamed afterwards
-with `rename_chain`; `kinetic_parameter_symbols` infers the names (`:Aⱼ`,
-`:γ`, `:Ag`, `:g`, …) from the kinetics' own symbols.
+with `rename_chain`; `kinetic_parameter_symbols` infers descriptive ASCII names
+from each kinetic model's `symbols` declaration.
 
 `MCMC_Routine` wraps the whole flow (model build + sampling + rename +
 persistence) and mirrors `run_abc`:

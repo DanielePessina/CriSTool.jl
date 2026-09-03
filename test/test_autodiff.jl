@@ -5,6 +5,10 @@ import DifferentiationInterface as DI
 import ForwardDiff
 import FiniteDifferences
 
+_si_test_parameters(parameters) =
+    [parameters[1], parameters[2] * 1e-3,
+     clamp(parameters[3], 0.0, 5.0) * (1e-9 / 60), parameters[4]]
+
 @testset "Automatic Differentiation" begin
 
     # Define AD backends
@@ -21,11 +25,11 @@ import FiniteDifferences
         # Define objective function: final concentration
         function objective_mom(params)
             _,
-            solution = runsimulation(params,
+            solution = runsimulation(_si_test_parameters(params),
                                      nucl_func,
                                      grow_func,
                                      initial_conc;
-                                     save_idx = 0:60.0:240.0,
+                                     save_idx = 0:3600.0:14400.0,
                                      solver = MoM())
             return solution.concentration[end]
         end
@@ -49,13 +53,13 @@ import FiniteDifferences
 
         function objective_fv(params)
             _,
-            solution = runsimulation(params,
+            solution = runsimulation(_si_test_parameters(params),
                                      nucl_func,
                                      grow_func,
                                      agg_func,
                                      br_func,
                                      initial_conc;
-                                     save_idx = collect(0:60.0:240.0),
+                                     save_idx = collect(0:3600.0:14400.0),
                                      solver = FiniteVol(meshsize = 50, lmax = 50e-6))
             return solution.concentration[end]
         end
@@ -77,11 +81,11 @@ import FiniteDifferences
 
         function objective_verify(params)
             _,
-            solution = runsimulation(params,
+            solution = runsimulation(_si_test_parameters(params),
                                      nucl_func,
                                      grow_func,
                                      initial_conc;
-                                     save_idx = 0:120.0:240.0,
+                                     save_idx = 0:7200.0:14400.0,
                                      solver = MoM())
             return solution.concentration[end]
         end
@@ -112,13 +116,13 @@ import FiniteDifferences
 
         function objective_verify_fv(params)
             _,
-            solution = runsimulation(params,
+            solution = runsimulation(_si_test_parameters(params),
                                      nucl_func,
                                      grow_func,
                                      agg_func,
                                      br_func,
                                      initial_conc;
-                                     save_idx = collect(0:120.0:240.0),
+                                     save_idx = collect(0:7200.0:14400.0),
                                      solver = FiniteVol(meshsize = 50, lmax = 50e-6))
             return solution.concentration[end]
         end
@@ -146,11 +150,11 @@ import FiniteDifferences
 
         function multi_objective(params)
             _,
-            solution = runsimulation(params,
+            solution = runsimulation(_si_test_parameters(params),
                                      nucl_func,
                                      grow_func,
                                      initial_conc;
-                                     save_idx = 0:60.0:240.0,
+                                     save_idx = 0:3600.0:14400.0,
                                      solver = MoM())
             return solution.concentration[1:3]
         end
@@ -174,13 +178,13 @@ import FiniteDifferences
 
         function objective_d50(params)
             _,
-            solution = runsimulation(params,
+            solution = runsimulation(_si_test_parameters(params),
                                      nucl_func,
                                      grow_func,
                                      agg_func,
                                      br_func,
                                      initial_conc;
-                                     save_idx = collect(0:60.0:240.0),
+                                     save_idx = collect(0:3600.0:14400.0),
                                      solver = FiniteVol(meshsize = 50, lmax = 50e-6))
             return solution.d50q[end]
         end

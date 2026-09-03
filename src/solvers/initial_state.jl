@@ -5,51 +5,30 @@ The public interface deliberately describes the population at a high level.
 The solver-specific raw moments or mesh values remain an implementation detail.
 """
 
-const _INITIAL_CRYSTAL_DISTRIBUTIONS = (:lognormal, :gaussian)
-
-function _initial_crystal_distribution_symbol(value)
-    distribution = Symbol(lowercase(String(value)))
-    distribution in _INITIAL_CRYSTAL_DISTRIBUTIONS ||
-        throw(ArgumentError("initial_crystals.distribution must be :lognormal or :gaussian."))
-    return distribution
-end
-
-function _normalise_initial_crystals(initial_crystals::NamedTuple)
-    required = (:mass_concentration, :d43, :distribution, :spread)
-    all(name -> hasproperty(initial_crystals, name), required) ||
-        throw(ArgumentError("initial_crystals must define mass_concentration, d43, " *
-                            "distribution, and spread."))
-
-    mass_concentration = Float64(initial_crystals.mass_concentration)
-    d43 = Float64(initial_crystals.d43)
-    distribution = _initial_crystal_distribution_symbol(initial_crystals.distribution)
-    spread = Float64(initial_crystals.spread)
-
+function _validate_initial_crystals(initial_crystals::AbstractInitialCrystals)
+    mass_concentration = initial_crystals.mass_concentration
+    d43 = initial_crystals.d43
     isfinite(mass_concentration) && mass_concentration >= 0.0 ||
         throw(ArgumentError("initial crystal mass_concentration must be finite and nonnegative."))
     isfinite(d43) && d43 >= 0.0 ||
         throw(ArgumentError("initial crystal d43 must be finite and nonnegative."))
-    isfinite(spread) ||
-        throw(ArgumentError("initial crystal spread must be finite."))
-
     if d43 == 0.0
         mass_concentration == 0.0 ||
             throw(ArgumentError("initial crystal d43 = 0 requires mass_concentration = 0."))
-        return (; mass_concentration = 0.0, d43 = 0.0,
-                distribution = distribution, spread = spread)
+        return initial_crystals
     end
 
     mass_concentration > 0.0 ||
         throw(ArgumentError("positive initial crystal d43 requires positive mass_concentration."))
-    if distribution === :lognormal
-        spread > 1.0 ||
-            throw(ArgumentError("lognormal initial crystal spread must be greater than 1."))
+    if initial_crystals isa LogNormalInitialCrystals
+        isfinite(initial_crystals.geometric_std) && initial_crystals.geometric_std > 1.0 ||
+            throw(ArgumentError("geometric_std must be finite and greater than 1."))
     else
-        spread > 0.0 ||
-            throw(ArgumentError("gaussian initial crystal spread must be strictly positive."))
+        isfinite(initial_crystals.standard_deviation) &&
+            initial_crystals.standard_deviation > 0.0 ||
+            throw(ArgumentError("standard_deviation must be finite and strictly positive."))
     end
-
-    return (; mass_concentration, d43, distribution, spread)
+    return initial_crystals
 end
 
 function _positive_gaussian_raw_moment(mean_value, standard_deviation, order::Integer)
@@ -112,19 +91,18 @@ function _gaussian_mean_for_d43(target_d43, standard_deviation)
     return (lower + upper) / 2.0
 end
 
-function _initial_crystal_distribution_model(initial_crystals)
-    target_d43 = initial_crystals.d43 * 1e-6
-    if initial_crystals.distribution === :lognormal
-        log_spread = log(initial_crystals.spread)
-        log_median = log(target_d43) - 3.5 * log_spread^2
-        lognormal = LogNormal(log_median, log_spread)
-        raw_moment = order -> exp(order * log_median +
-                                  0.5 * order^2 * log_spread^2)
-        density = length_value -> length_value > 0.0 ? pdf(lognormal, length_value) : 0.0
-        return (; raw_moment, density)
-    end
+function _initial_crystal_distribution_model(initial_crystals::LogNormalInitialCrystals)
+    log_spread = log(initial_crystals.geometric_std)
+    log_median = log(initial_crystals.d43) - 3.5 * log_spread^2
+    lognormal = LogNormal(log_median, log_spread)
+    raw_moment = order -> exp(order * log_median + 0.5 * order^2 * log_spread^2)
+    density = length_value -> length_value > 0.0 ? pdf(lognormal, length_value) : 0.0
+    return (; raw_moment, density)
+end
 
-    standard_deviation = initial_crystals.spread * 1e-6
+function _initial_crystal_distribution_model(initial_crystals::GaussianInitialCrystals)
+    target_d43 = initial_crystals.d43
+    standard_deviation = initial_crystals.standard_deviation
     mean_value = _gaussian_mean_for_d43(target_d43, standard_deviation)
     normal = Normal(mean_value, standard_deviation)
     positive_probability = cdf(Normal(), mean_value / standard_deviation)
@@ -151,7 +129,7 @@ end
 
 function _initial_moment_population(problem::CrystallisationProblem, initial_crystals)
     model = _initial_crystal_distribution_model(initial_crystals)
-    target_mu3 = initial_crystals.mass_concentration / (problem.ρ * problem.kv)
+    target_mu3 = initial_crystals.mass_concentration / (problem.crystal_density * problem.volume_shape_factor)
     population_count = moment_count(problem.solver)
     number_scale = target_mu3 / model.raw_moment(3)
     return [number_scale * model.raw_moment(moment_order_value)
@@ -162,7 +140,7 @@ function _initial_mesh_population(problem::CrystallisationProblem, initial_cryst
     model = _initial_crystal_distribution_model(initial_crystals)
     solver = problem.solver
     mesh = solver.cell_centre
-    target_mu3 = initial_crystals.mass_concentration / (problem.ρ * problem.kv)
+    target_mu3 = initial_crystals.mass_concentration / (problem.crystal_density * problem.volume_shape_factor)
     number_scale = target_mu3 / model.raw_moment(3)
     numberdensity = [number_scale * model.density(length_value) for length_value in mesh]
 
@@ -179,9 +157,9 @@ end
 
 Construct the complete solver state from an initial crystal population
 specification. `mass_concentration` is crystal solid mass per batch volume in
-kg/m³, `d43` is in µm, `distribution` is `:lognormal` or `:gaussian`, and
-`spread` is the distribution-specific width (`geometric standard deviation`
-for lognormal or standard deviation in µm for Gaussian profiles).
+kg/m³, and `d43` is in metres. Use `LogNormalInitialCrystals` with a
+dimensionless `geometric_std`, or `GaussianInitialCrystals` with a metre-valued
+`standard_deviation`.
 
 The returned vector contains population variables followed by the values from
 `problem.initial_solvent_state`. For discretised solvers, the profile is
@@ -190,8 +168,8 @@ approximation. A zero d43 represents an empty population and must be paired
 with zero mass concentration.
 """
 function initial_state_from_characteristics(problem::CrystallisationProblem,
-                                             initial_crystals::NamedTuple)
-    characteristics = _normalise_initial_crystals(initial_crystals)
+                                             initial_crystals::AbstractInitialCrystals)
+    characteristics = _validate_initial_crystals(initial_crystals)
     solvent_values = Float64.(collect(values(problem.initial_solvent_state)))
     population_count = _population_state_count(problem.solver)
 
@@ -205,7 +183,7 @@ function initial_state_from_characteristics(problem::CrystallisationProblem,
     supports_d43 ||
         throw(ArgumentError("The initial d43 characteristic requires a moment solver " *
                             "that tracks through the fourth raw moment."))
-    _validate_initial_crystal_domain(problem, characteristics.d43 * 1e-6)
+    _validate_initial_crystal_domain(problem, characteristics.d43)
     population = problem.solver isa AbstractMomentSolver ?
                  _initial_moment_population(problem, characteristics) :
                  _initial_mesh_population(problem, characteristics)

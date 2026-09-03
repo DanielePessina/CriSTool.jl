@@ -2,16 +2,16 @@ using JSON
 
 @testset "Measurements container" begin
     # Construction and accessors
-    conc = Observable(; time = [0.0, 30.0, 60.0], mean = [14.0, 12.0, 9.0],
+    conc = Observable(; time = [0.0, 1800.0, 3600.0], mean = [14.0, 12.0, 9.0],
                             variance = [0.1, 0.2, 0.3])
-    d43 = Observable(; time = [60.0], mean = [10.5], variance = [2.0])
+    d43 = Observable(; time = [3600.0], mean = [10.5e-6], variance = [2e-12])
     expt = CrystallisationExperiment(; observables = (; concentration = conc, d43 = d43),
                                      temperature = 290.15, exp_id = 7)
 
     @test expt.observables.concentration === conc
     @test expt.observables.d43 === d43
-    @test expt.observables.d43.time == [60.0]
-    @test expt.observables.d43.mean == [10.5]
+    @test expt.observables.d43.time == [3600.0]
+    @test expt.observables.d43.mean == [10.5e-6]
     @test initial_concentration(expt) == 14.0
     @test expt.temperature == 290.15
     @test expt.exp_id == 7
@@ -37,20 +37,20 @@ end
     # Hand-checked from the sheet (Exp 3): 9 timepoints, initial conc = mean of
     # the three first-column replicates
     conc3 = ms[1].observables.concentration
-    @test conc3.time == [0.0, 30.0, 60.0, 90.0, 120.0, 150.0, 180.0, 225.0, 270.0]
+    @test conc3.time == [0.0, 1800.0, 3600.0, 5400.0, 7200.0, 9000.0, 10800.0, 13500.0, 16200.0]
     @test conc3.mean[1] ≈ 14.674666666666667
     @test conc3.variance[1] ≈ 0.17471214420678713
     @test conc3.mean[3] ≈ 7.7071
 
     # Particle size is a one-point time series because the fixture has a
     # particle-size value only at the final time.
-    @test ms[1].observables.d43.mean[1] ≈ 9.2480539
-    @test ms[1].observables.d43.variance[1] ≈ 5.345406308581576
+    @test ms[1].observables.d43.mean[1] ≈ 9.2480539e-6
+    @test ms[1].observables.d43.variance[1] ≈ 5.345406308581576e-12
     @test ms[1].observables.d43.time == [conc3.time[end]]
 
     # Exp 9 (7th experiment) has a different final PS value.
-    @test ms[7].observables.d43.mean[1] ≈ 11.868243
-    @test ms[7].observables.d43.variance[1] ≈ 0.2669785799800902
+    @test ms[7].observables.d43.mean[1] ≈ 11.868243e-6
+    @test ms[7].observables.d43.variance[1] ≈ 0.2669785799800902e-12
 
     # Generic filtering still returns no data for an unknown system.
     @test isempty(load_measurements(fixture; filters = (; System = "UNKNOWN")))
@@ -65,15 +65,14 @@ end
                        particle_size = ObservableColumns(
                            time = :Time, mean = :PS, variance = :PS_var)),
         metadata_cols = (; temperature = :Temperature, system = :System),
-        temperature_transform = value -> value + 273.15,
         filters = (; System = "Unseeded"))
 
     @test length(measurements) == 7
     @test propertynames(measurements[1].observables) == (:concentration, :particle_size)
     @test measurements[1].observables.concentration.time ==
-          [0.0, 30.0, 60.0, 90.0, 120.0, 150.0, 180.0, 225.0, 270.0]
-    @test measurements[1].observables.particle_size.time == [270.0]
-    @test measurements[1].observables.particle_size.mean[1] ≈ 9.2480539
+          [0.0, 1800.0, 3600.0, 5400.0, 7200.0, 9000.0, 10800.0, 13500.0, 16200.0]
+    @test measurements[1].observables.particle_size.time == [16200.0]
+    @test measurements[1].observables.particle_size.mean[1] ≈ 9.2480539e-6
     @test measurements[1].temperature == 290.15
     @test measurements[1].initial_crystals === nothing
     @test measurements[1].metadata.system == "Unseeded"
@@ -82,14 +81,14 @@ end
 @testset "Repeated particle-size observations" begin
     table = DataFrame(
         Exp_ID = [1, 1, 1, 1, 2, 2, 2, 2],
-        Time = [0.0, 30.0, 60.0, 90.0, 0.0, 30.0, 60.0, 90.0],
+        Time = [0.0, 1800.0, 3600.0, 5400.0, 0.0, 1800.0, 3600.0, 5400.0],
         Concentration = [20.0, 18.0, 15.0, 12.0, 19.0, 17.0, 14.0, 11.0],
         Concentration_var = fill(0.25, 8),
-        PS = [missing, 4.0, missing, 7.0, missing, 3.5, 5.5, missing],
-        PS_var = [missing, 0.16, missing, 0.49, missing, 0.09, 0.25, missing],
-        ParticleTime = [missing, 30.0, missing, 90.0,
-                        missing, 30.0, 60.0, missing],
-        Temperature = fill(20.0, 8),
+        PS = [missing, 4e-6, missing, 7e-6, missing, 3.5e-6, 5.5e-6, missing],
+        PS_var = [missing, 0.16e-12, missing, 0.49e-12, missing, 0.09e-12, 0.25e-12, missing],
+        ParticleTime = [missing, 1800.0, missing, 5400.0,
+                        missing, 1800.0, 3600.0, missing],
+        Temperature = fill(293.15, 8),
     )
 
     experiments = experiments_from_table(
@@ -99,15 +98,14 @@ end
                        d43 = ObservableColumns(time = :ParticleTime,
                                               mean = :PS, variance = :PS_var)),
         metadata_cols = (; temperature = :Temperature),
-        temperature_transform = value -> value + 273.15,
     )
 
     @test length(experiments) == 2
-    @test experiments[1].observables.d43.time == [30.0, 90.0]
-    @test experiments[1].observables.d43.mean == [4.0, 7.0]
-    @test experiments[1].observables.d43.variance == [0.16, 0.49]
-    @test experiments[2].observables.d43.time == [30.0, 60.0]
-    @test experiments[2].observables.d43.mean == [3.5, 5.5]
+    @test experiments[1].observables.d43.time == [1800.0, 5400.0]
+    @test experiments[1].observables.d43.mean == [4e-6, 7e-6]
+    @test experiments[1].observables.d43.variance == [0.16e-12, 0.49e-12]
+    @test experiments[2].observables.d43.time == [1800.0, 3600.0]
+    @test experiments[2].observables.d43.mean == [3.5e-6, 5.5e-6]
 
     # A scalar variance is normalized to one value per observation.
     normalized = Observable(; time = [0.0, 1.0], mean = [2.0, 3.0], variance = 0.25)
@@ -120,13 +118,13 @@ end
 @testset "JSON measurement adapter" begin
     records = [
         (; Exp_ID = 11, Time = 0.0, Concentration = 20.0,
-           Concentration_var = 0.25, Temperature = 21.0,
-           ParticleTime = 0.0, PS = 3.0, PS_var = 0.09),
-        (; Exp_ID = 11, Time = 60.0, Concentration = 15.0,
-           Concentration_var = 0.25, Temperature = 21.0,
-           ParticleTime = 60.0, PS = 6.0, PS_var = 0.36),
-        (; Exp_ID = 11, Time = 30.0, Concentration = 18.0,
-           Concentration_var = 0.25, Temperature = 21.0,
+           Concentration_var = 0.25, Temperature = 294.15,
+           ParticleTime = 0.0, PS = 3e-6, PS_var = 0.09e-12),
+        (; Exp_ID = 11, Time = 3600.0, Concentration = 15.0,
+           Concentration_var = 0.25, Temperature = 294.15,
+           ParticleTime = 3600.0, PS = 6e-6, PS_var = 0.36e-12),
+        (; Exp_ID = 11, Time = 1800.0, Concentration = 18.0,
+           Concentration_var = 0.25, Temperature = 294.15,
            ParticleTime = nothing, PS = nothing, PS_var = nothing),
     ]
     mktempdir() do directory
@@ -144,9 +142,9 @@ end
             metadata_cols = (; temperature = :Temperature),
             temperature_transform = identity)
         @test length(experiments) == 1
-        @test experiments[1].observables.d43.time == [0.0, 60.0]
-        @test experiments[1].observables.d43.mean == [3.0, 6.0]
-        @test experiments[1].temperature == 21.0
+        @test experiments[1].observables.d43.time == [0.0, 3600.0]
+        @test experiments[1].observables.d43.mean == [3e-6, 6e-6]
+        @test experiments[1].temperature == 294.15
     end
 end
 

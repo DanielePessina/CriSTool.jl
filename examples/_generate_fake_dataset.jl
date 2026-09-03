@@ -3,17 +3,17 @@ Generate a synthetic experimental crystallisation dataset for CriSTool's
 `load_measurements(csv_path)` loader.
 
 Truth model:
-    nucl = nucl_CNT(),         params = [Aj=38.0, γ=0.6]
-    gr   = growth_empirical(), params = [Ag=1.0, g=3.0]
+    nucl = nucl_CNT(),         params = [ln_nucleation_prefactor = 38.0, surface_energy=0.0006]
+    gr   = growth_empirical(), params = [growth_coefficient = 1e-9 / 60, growth_order = 3.0]
     agg  = noaggregation(), br = nobreakage(), solver = MoM()
 
 CSV layout matches `CriSTool.load_measurements(filepath)` (long format):
-    Exp_ID | System | Temperature [°C] | Time [min]
-    | Concentration [mg/mL] | Concentration_var | PS [μm] | PS_var
-    | SeedMass [kg/m³] | SeedD43 [μm] | SeedDistribution | SeedSpread
+    Exp_ID | System | Temperature [K] | Time [s]
+    | Concentration [kg/m³] | Concentration_var | PS [m] | PS_var
+    | SeedMass [kg/m³] | SeedD43 [m] | SeedGeometricStd
 PS / PS_var are populated at every sampled timepoint, exercising the
 time-series particle-size observable path.
-Temperature is stored in Celsius — the loader adds 273.15 to convert to K.
+All numeric physical values are stored in SI.
 """
 
 using Pkg
@@ -30,7 +30,7 @@ const OUT_PATH = joinpath(@__DIR__, "fake-experimental-dataset.csv")
 # Truth parameters and kinetics
 # ----------------------------------------------------------------------
 
-const θ_TRUTH = [38.0, 0.6, 1.0, 3.0]   # [Aj, γ, Ag, g]
+const θ_TRUTH = [38.0, 0.0006, 1e-9 / 60, 3.0]
 nucl_f = nucl_CNT()
 gr_f   = growth_empirical()
 agg_f  = noaggregation()
@@ -77,12 +77,12 @@ function build_time_grid(rng::AbstractRNG, exp_idx::Int)
     for j in 2:(length(base) - 1)
         jittered[j] += (rand(rng) - 0.5) * 1.0
     end
-    return round.(jittered, digits = 2)
+    return round.(60 .* jittered, digits = 2)
 end
 
 # Heteroscedastic noise parameters
 const SIGMA_C_REL  = 0.03   # 3% relative noise on concentration
-const SIGMA_C_FLOOR = 0.02  # mg/mL absolute floor
+const SIGMA_C_FLOOR = 0.02  # kg/m^3 absolute floor
 const SIGMA_D_REL  = 0.08   # 8% relative noise on d43
 
 # ----------------------------------------------------------------------
@@ -129,23 +129,19 @@ for (idx, (T_K, c0)) in enumerate(exp_conditions)
     d43_obs = max.(solution.d43 .+ σ_d .* randn(rng, length(times)), 1e-12)
     d43_var = σ_d .^ 2
 
-    # Convert temperature to Celsius for storage (loader adds 273.15)
-    T_C = T_K - 273.15
-
     for j in eachindex(times)
         push!(rows, (
             Exp_ID            = idx,
             System            = "FAKE_SYS_A",
-            Temperature       = round(T_C, digits = 2),
+            Temperature       = round(T_K, digits = 2),
             Time              = times[j],
-            Concentration     = round(c_obs[j], digits = 6),
-            Concentration_var = round(c_var[j], digits = 8),
-            PS                = round(d43_obs[j], digits = 6),
-            PS_var            = round(d43_var[j], digits = 8),
+            Concentration     = round(c_obs[j], digits = 12),
+            Concentration_var = round(c_var[j], digits = 16),
+            PS                = round(d43_obs[j], digits = 12),
+            PS_var            = round(d43_var[j], digits = 16),
             SeedMass          = 0.0,
             SeedD43           = 0.0,
-            SeedDistribution  = "lognormal",
-            SeedSpread        = 1.25,
+            SeedGeometricStd  = 1.25,
         ))
     end
 end
@@ -170,8 +166,7 @@ loaded = CriSTool.load_measurements(
     OUT_PATH;
     initial_crystals_cols = (; mass_concentration = :SeedMass,
                              d43 = :SeedD43,
-                             distribution = :SeedDistribution,
-                             spread = :SeedSpread),
+                             geometric_std = :SeedGeometricStd),
 )
 
 println("\n========== VERIFICATION ==========")

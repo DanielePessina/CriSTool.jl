@@ -4,17 +4,18 @@
         # Nucleation functions
         @test nucl_CNT().nparams == 2
         @test nucl_CNT().string == "CNT"
-        @test nucl_CNT().symbols == [:Aⱼ, :γ]
+        @test nucl_CNT().symbols == [:ln_nucleation_prefactor, :surface_energy]
 
         @test nucl_empirical().nparams == 2
-        @test nucl_empirical().symbols == [:Aj, :j]
+        @test nucl_empirical().symbols ==
+              [:log10_nucleation_prefactor, :nucleation_order]
 
         @test nucl_CNTnoS().nparams == 2
 
         # Growth functions
         @test growth_empirical().nparams == 2
         @test growth_empirical().string == "Emp. Gr"
-        @test growth_empirical().symbols == [:Ag, :g]
+        @test growth_empirical().symbols == [:growth_coefficient, :growth_order]
 
         @test growth_BCF().nparams == 2
         @test growth_BpS().nparams == 2

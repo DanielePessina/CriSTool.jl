@@ -17,7 +17,8 @@ fluxlimiter_ospre(r) = (1.5 * (r^2) + r) / (r^2 + r + 1)
 
 # Generic fallback for kinetics that haven't declared a custom paramaxis.
 # Generates `θ1, θ2, ...` from `model.nparams`. Specific paramaxis methods
-# (e.g. `paramaxis(::nucl_CNT) = ComponentArrays.Axis(Aj=1, γ=2)`) take precedence.
+# (e.g. `paramaxis(::nucl_CNT) = ComponentArrays.Axis(ln_nucleation_prefactor=1,
+# surface_energy=2)`) take precedence.
 function paramaxis(model::Union{AbstractNucleationFunction, AbstractGrowthFunction,
                                 AbstractDissolutionFunction,
                                 AbstractAggregationFunction, AbstractBreakageFunction})

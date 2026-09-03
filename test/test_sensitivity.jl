@@ -3,8 +3,8 @@
         kinetics_nucleationfunction = nucl_CNT(),
         kinetics_growthfunction = growth_empirical(),
         solver = MoM(),
-        parameterset_nucleation = [38.0, 0.6],
-        parameterset_growth = [1.0, 3.0],
+        parameterset_nucleation = [38.0, 0.0006],
+        parameterset_growth = [1e-9 / 60, 3.0],
         initial_concentration = 14.67,
         temp_profile = CriSTool.ConstantTemperature(290.15))
     saveat = [0.0, 60.0, 120.0, 180.0]
@@ -25,7 +25,7 @@
     # Verify the forward sensitivity against an independent central
     # difference of the public simulation interface.
     function final_concentration_at_Aj(Aj)
-        _, solution = runsimulation([Aj, 0.6, 1.0, 3.0];
+        _, solution = runsimulation([Aj, 0.0006, 1e-9 / 60, 3.0];
                                     nucl = nucl_CNT(), gr = growth_empirical(),
                                     solver = MoM(), initial_concentration = 14.67,
                                     temp_profile = CriSTool.ConstantTemperature(290.15),
@@ -43,8 +43,8 @@
         kinetics_nucleationfunction = nucl_CNT(),
         kinetics_growthfunction = growth_empirical(),
         solver = FiniteVol(meshsize = 100),
-        parameterset_nucleation = [38.0, 0.6],
-        parameterset_growth = [1.0, 3.0],
+        parameterset_nucleation = [38.0, 0.0006],
+        parameterset_growth = [1e-9 / 60, 3.0],
         initial_concentration = 14.67,
         temp_profile = CriSTool.ConstantTemperature(290.15))
 
@@ -55,4 +55,30 @@
     # Concentration is the last state; more nucleation -> faster depletion
     @test size(dp_fv[1]) == (101, 4)
     @test dp_fv[1][101, end] < 0
+
+    @testset "Unsupported FV sensitivity sources fail explicitly" begin
+        aggregation_problem = CrystallisationProblem(
+            kinetics_nucleationfunction = nucl_CNT(),
+            kinetics_growthfunction = growth_empirical(),
+            kinetics_aggregationfunction = aggr_scalar(),
+            parameterset_nucleation = [38.0, 0.0006],
+            parameterset_growth = [1e-9 / 60, 3.0],
+            parameterset_aggregation = [log10(1e-12)],
+            solver = FiniteVol(meshsize = 20),
+            initial_concentration = 14.67,
+            temp_profile = CriSTool.ConstantTemperature(290.15))
+        @test_throws ArgumentError CriSTool.forwardsensitivity(aggregation_problem, saveat)
+
+        length_dissolution_problem = CrystallisationProblem(
+            kinetics_nucleationfunction = nucl_CNT(),
+            kinetics_growthfunction = growth_empirical(),
+            kinetics_dissolutionfunction = growth_dissolution_length(),
+            parameterset_nucleation = [38.0, 0.0006],
+            parameterset_growth = [1e-9 / 60, 3.0],
+            parameterset_dissolution = [1e-9 / 60, 0.0, 1.5, 1.0, 2.0],
+            solver = FiniteVol(meshsize = 20),
+            initial_concentration = 14.67,
+            temp_profile = CriSTool.ConstantTemperature(290.15))
+        @test_throws ArgumentError CriSTool.forwardsensitivity(length_dissolution_problem, saveat)
+    end
 end

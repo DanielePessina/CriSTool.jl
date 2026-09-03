@@ -131,25 +131,25 @@
         problem = CrystallisationProblem(; saturation_model = ConstantSolubility(10.0),
                                          initial_concentration = 20.0,
                                          solver = QMOM(nquadrature = 3))
-        concentration_rate = -problem.ρ * problem.kv * growth_source[4]
+        concentration_rate = -problem.crystal_density * problem.volume_shape_factor * growth_source[4]
         elapsed_time = 10.0
         initial_concentration = problem.initial_concentration
         initial_volume_moment = initial_moments[4]
         predicted_concentration = initial_concentration + elapsed_time * concentration_rate
         predicted_volume_moment = initial_volume_moment + elapsed_time * growth_source[4]
         initial_total_solute = initial_concentration +
-                               problem.ρ * problem.kv * initial_volume_moment
+                               problem.crystal_density * problem.volume_shape_factor * initial_volume_moment
         predicted_total_solute = predicted_concentration +
-                                  problem.ρ * problem.kv * predicted_volume_moment
+                                  problem.crystal_density * problem.volume_shape_factor * predicted_volume_moment
         @test predicted_total_solute ≈ initial_total_solute rtol = 1e-14
     end
 
     @testset "Scalar dissolution extinction and length rejection" begin
-        no_nucleation = CriSTool.nucl_empirical_fixed(Aj = -Inf, j = 1.0)
+        no_nucleation = CriSTool.nucl_empirical_fixed(log10_nucleation_prefactor = -Inf, nucleation_order = 1.0)
         dissolution_initial_state = [1.0e12, 1.0e6, 1.0, 1.0e-6,
                                      1.0e-12, 1.0e-18, 5.0]
         dissolution_problem, dissolution_solution = runsimulation(
-            [1000.0, 0.0, 1.0];
+            [1000e-9 / 60, 0.0, 1.0];
             nucl = no_nucleation,
             gr = growth_dissolution(),
             agg = noaggregation(),
@@ -158,11 +158,11 @@
             initial_concentration = 5.0,
             initial_state = dissolution_initial_state,
             saturation_model = ConstantSolubility(10.0),
-            solid_volume_threshold = 5.0e-4,
-            save_idx = collect(0.0:0.1:1.0))
+            solid_mass_concentration_threshold = 5.0e-4,
+            save_idx = collect(0.0:360.0:3600.0))
 
         expected_total_solute = dissolution_solution.concentration[1] +
-                                dissolution_problem.ρ * dissolution_problem.kv *
+                                dissolution_problem.crystal_density * dissolution_problem.volume_shape_factor *
                                 dissolution_solution.moments[4, 1]
         @test dissolution_solution.success
         @test all(iszero, dissolution_solution.final_state[1:6])
@@ -176,7 +176,7 @@
             kinetics_nucleationfunction = no_nucleation,
             kinetics_growthfunction = growth_dissolution_length(),
             parameterset_nucleation = Float64[],
-            parameterset_growth = [1000.0, 0.0, 1.0, 1.0, 2.0],
+            parameterset_growth = [1000e-9 / 60, 0.0, 1.0, 1.0, 2.0],
             saturation_model = ConstantSolubility(10.0),
             initial_concentration = 5.0,
             solver = QMOM(nquadrature = 3))

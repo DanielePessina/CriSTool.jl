@@ -5,6 +5,7 @@ function plot_measurements_vs_simulation(measurements::Vector{<:AbstractExperime
                                          aggregationfunction::AbstractAggregationFunction,
                                          breakagefunction::AbstractBreakageFunction,
                                          solver::AbstractSolver;
+                                         dissolutionfunction = nothing,
                                          title = "", savename = "", colors = nothing, colouroffset = 0,
                                          showplot::Bool = true, showtext = true,
                                          show_thesistext = false, show_title::Bool = true,
@@ -20,6 +21,7 @@ function plot_measurements_vs_simulation(measurements::Vector{<:AbstractExperime
         prob, sol = runsimulation(parameters,
                                   nucl = nucleationfunction,
                                   gr = growthfunction,
+                                  diss = dissolutionfunction,
                                   agg = aggregationfunction,
                                   br = breakagefunction,
                                   initial_concentration = initial_concentration(measurements[m]),
@@ -98,7 +100,7 @@ function plot_measurements_vs_simulation(measurements::Vector{<:AbstractExperime
                            yminorticks = Makie.IntervalsBetween(4),
                            xminorticks = Makie.IntervalsBetween(4),
                            limits = ((0,
-                                      maximum([_experiment_time_span(measurements[m])[2]
+                                      maximum([_experiment_time_span(measurements[m])[2] / 60
                                                for m in eachindex(measurements)]) + 20),
                                      nothing))
         ax1 = Makie.Axis(figure[1, 1]; merge(axis_defaults, axis_kwargs)...)
@@ -110,6 +112,8 @@ function plot_measurements_vs_simulation(measurements::Vector{<:AbstractExperime
         param_groups = [
             (nucleationfunction.symbols, "Nucleation"),
             (growthfunction.symbols, "Growth"),
+            dissolutionfunction === nothing ? (Symbol[], "Dissolution") :
+                                              (dissolutionfunction.symbols, "Dissolution"),
             (aggregationfunction.symbols, "Aggregation"),
             (breakagefunction.symbols, "Breakage")
         ]
@@ -139,21 +143,21 @@ function plot_measurements_vs_simulation(measurements::Vector{<:AbstractExperime
         for m in eachindex(measurements)
             sol = solutions[m]
 
-            Makie.lines!(ax1, sol.time, sol.concentration,
+            Makie.lines!(ax1, _plot_time_minutes(sol.time), sol.concentration,
                          color = resolve_experiment_color(colors, m, color_palette, colouroffset),
                          linewidth = ms_linewidth,
                          linestyle = :dash)
 
             concentration = measurements[m].observables.concentration
             if concentration.variance !== nothing
-                Makie.errorbars!(ax1, concentration.time, concentration.mean,
+                Makie.errorbars!(ax1, _plot_time_minutes(concentration.time), concentration.mean,
                                  sqrt.(concentration.variance),
                                  color = :black,
                                  whiskerwidth = ms_whiskerwidth,
                                  linewidth = ms_linewidtheb)
             end
 
-            p = Makie.scatter!(ax1, concentration.time, concentration.mean,
+            p = Makie.scatter!(ax1, _plot_time_minutes(concentration.time), concentration.mean,
                                color = resolve_experiment_color(colors, m, color_palette, colouroffset),
                                markersize = ms_markersize,
                                strokewidth = 2)
@@ -164,13 +168,13 @@ function plot_measurements_vs_simulation(measurements::Vector{<:AbstractExperime
 
             size_name, measured_size = _measured_size_observable(measurements[m], sol)
             if measured_size !== nothing
-                predicted_size = _solution_observable_trajectory(sol, size_name)[end]
+                predicted_size = 1e6 * _solution_observable_trajectory(sol, size_name)[end]
                 pred_label = size_name === :d50q ? "D50" : uppercase(string(size_name))
                 pred_str = "Exp. $(exp_id) T = $(round(measurements[m].temperature-273,digits = 2) )°C, " *
                            "Pred. $(pred_label) = $(round(predicted_size, sigdigits=2)) μm"
-                measured_final = measured_size.mean[end]
+                measured_final = 1e6 * measured_size.mean[end]
                 measured_std = measured_size.variance === nothing ? nothing :
-                               sqrt(measured_size.variance[end])
+                               1e6 * sqrt(measured_size.variance[end])
                 meas_str = measured_std === nothing ?
                             "Meas. = $(round(measured_final, sigdigits=3)) μm" :
                             "Meas. = $(round(measured_final, sigdigits=3)) ± " *
@@ -186,7 +190,7 @@ function plot_measurements_vs_simulation(measurements::Vector{<:AbstractExperime
             param_string *= "\nParticle Sizes:\n"
             param_string *= join(size_info, "\n")
 
-            max_time = maximum([_experiment_time_span(m)[2] for m in measurements])
+            max_time = maximum([_experiment_time_span(m)[2] / 60 for m in measurements])
             max_conc = maximum([initial_concentration(m) for m in measurements])
 
             Makie.text!(ax1, max_time * 0.75, max_conc, text = param_string,
@@ -269,6 +273,7 @@ function plot_ps_measurements_vs_simulation(measurements::Vector{<:AbstractExper
                                             aggregationfunction::AbstractAggregationFunction,
                                             breakagefunction::AbstractBreakageFunction,
                                             solver::AbstractSolver;
+                                            dissolutionfunction = nothing,
                                             title = "", savename = "", colors = nothing, colouroffset = 0,
                                             showplot::Bool = true,
                                             savedir::Union{Nothing, AbstractString} = nothing,
@@ -313,6 +318,8 @@ function plot_ps_measurements_vs_simulation(measurements::Vector{<:AbstractExper
         param_groups = [
             (nucleationfunction.symbols, "Nucleation"),
             (growthfunction.symbols, "Growth"),
+            dissolutionfunction === nothing ? (Symbol[], "Dissolution") :
+                                              (dissolutionfunction.symbols, "Dissolution"),
             (aggregationfunction.symbols, "Aggregation"),
             (breakagefunction.symbols, "Breakage")
         ]
@@ -344,6 +351,7 @@ function plot_ps_measurements_vs_simulation(measurements::Vector{<:AbstractExper
             sol = runsimulation(parameters,
                                 nucl = nucleationfunction,
                                 gr = growthfunction,
+                                diss = dissolutionfunction,
                                 agg = aggregationfunction,
                                 br = breakagefunction,
                                 initial_concentration = initial_concentration(measurements[m]),
@@ -358,28 +366,31 @@ function plot_ps_measurements_vs_simulation(measurements::Vector{<:AbstractExper
             particlessizes = size_name === nothing ? _size_trajectory(sol) :
                              _solution_observable_trajectory(sol, size_name)
 
-            Makie.lines!(ax1, sol.time, particlessizes,
+            Makie.lines!(ax1, _plot_time_minutes(sol.time),
+                         _plot_size_micrometres(particlessizes),
                          color = resolve_experiment_color(colors, m, color_palette, colouroffset),
                          linewidth = ms_linewidth,
                          linestyle = :dash)
 
             measured_size === nothing && continue
             if measured_size.variance !== nothing
-                Makie.errorbars!(ax1, measured_size.time, measured_size.mean,
-                                 sqrt.(measured_size.variance),
+                Makie.errorbars!(ax1, _plot_time_minutes(measured_size.time),
+                                 _plot_size_micrometres(measured_size.mean),
+                                 _plot_size_micrometres(sqrt.(measured_size.variance)),
                                  color = :black,
                                  whiskerwidth = ms_whiskerwidth,
                                  linewidth = ms_linewidtheb)
             end
 
-            p = Makie.scatter!(ax1, measured_size.time, measured_size.mean,
+            p = Makie.scatter!(ax1, _plot_time_minutes(measured_size.time),
+                               _plot_size_micrometres(measured_size.mean),
                                color = resolve_experiment_color(colors, m, color_palette, colouroffset),
                                markersize = ms_markersize,
                                strokewidth = 2)
 
             push!(plot_elements, p)
 
-            predicted_size = particlessizes[end]
+            predicted_size = 1e6 * particlessizes[end]
 
             temp_str = "T = $(round(measurements[m].temperature-273.15, digits=2)) °C"
 
@@ -389,9 +400,9 @@ function plot_ps_measurements_vs_simulation(measurements::Vector{<:AbstractExper
             pred_label = size_name === :d50q ? "D50" : uppercase(string(size_name))
             pred_str = "Exp. $(exp_id) T = $(round(measurements[m].temperature-273,digits = 2) )°C, " *
                        "Pred. $(pred_label) = $(round(predicted_size, sigdigits=2)) μm"
-            measured_final = measured_size.mean[end]
+            measured_final = 1e6 * measured_size.mean[end]
             measured_std = measured_size.variance === nothing ? nothing :
-                           sqrt(measured_size.variance[end])
+                           1e6 * sqrt(measured_size.variance[end])
             meas_str = measured_std === nothing ?
                         "Meas. = $(round(measured_final, sigdigits=3)) μm" :
                         "Meas. = $(round(measured_final, sigdigits=3)) ± " *
@@ -409,7 +420,7 @@ function plot_ps_measurements_vs_simulation(measurements::Vector{<:AbstractExper
 
         # Add text box with all information
 
-        max_time = maximum([_experiment_time_span(m)[2] for m in measurements])
+        max_time = maximum([_experiment_time_span(m)[2] / 60 for m in measurements])
         max_conc = maximum([initial_concentration(m) for m in measurements])
 
         Makie.text!(ax1, max_time * 0.75, max_conc, text = param_string,

@@ -134,15 +134,15 @@ Classical Nucleation Theory (CNT) nucleation function.
 Fields:
 - `nparams::Int64`: Number of parameters (2)
 - `string::String`: String identifier ("CNT")
-- `symbols::Vector{Symbol}`: Parameter symbols [:Aⱼ, :γ]
+- `symbols::Vector{Symbol}`: Parameter symbols [:ln_nucleation_prefactor, :surface_energy]
 """
 Base.@kwdef @concrete struct nucl_CNT <: AbstractFPNucleationFunction
     nparams::Int64 = 2
     string::String = "CNT"
-    symbols::Vector{Symbol} = [:Aⱼ, :γ]
+    symbols::Vector{Symbol} = [:ln_nucleation_prefactor, :surface_energy]
 end
 
-paramaxis(::nucl_CNT) = ComponentArrays.Axis(Aj = 1, γ = 2)
+paramaxis(::nucl_CNT) = ComponentArrays.Axis(ln_nucleation_prefactor = 1, surface_energy = 2)
 
 """
     nucl_empirical <: AbstractFPNucleationFunction
@@ -152,15 +152,15 @@ Empirical nucleation rate function.
 Fields:
 - `nparams::Int64`: Number of parameters (2)
 - `string::String`: String identifier ("Emp. Nu")
-- `symbols::Vector{Symbol}`: Parameter symbols [:Aj, :j]
+- `symbols::Vector{Symbol}`: Parameter symbols [:log10_nucleation_prefactor, :nucleation_order]
 """
 Base.@kwdef @concrete struct nucl_empirical <: AbstractFPNucleationFunction
     nparams::Int64 = 2
     string::String = "Emp. Nu"
-    symbols::Vector{Symbol} = [:Aj, :j]
+    symbols::Vector{Symbol} = [:log10_nucleation_prefactor, :nucleation_order]
 end
 
-paramaxis(::nucl_empirical) = ComponentArrays.Axis(Aj = 1, j = 2)
+paramaxis(::nucl_empirical) = ComponentArrays.Axis(log10_nucleation_prefactor = 1, nucleation_order = 2)
 
 """
     nucl_empirical_energy <: AbstractFPNucleationFunction
@@ -170,15 +170,17 @@ Empirical nucleation rate function.
 Fields:
 - `nparams::Int64`: Number of parameters (3)
 - `string::String`: String identifier ("Emp. Nu")
-- `symbols::Vector{Symbol}`: Parameter symbols [:Aj, :Ea, :j]
+- `symbols::Vector{Symbol}`: Parameter symbols [:ln_nucleation_prefactor, :activation_energy, :nucleation_order]
 """
 Base.@kwdef @concrete struct nucl_empirical_energy <: AbstractFPNucleationFunction
     nparams::Int64 = 3
     string::String = "Emp. Nu"
-    symbols::Vector{Symbol} = [:Aj, :Ea, :j]
+    symbols::Vector{Symbol} = [:ln_nucleation_prefactor, :activation_energy, :nucleation_order]
 end
 
-paramaxis(::nucl_empirical_energy) = ComponentArrays.Axis(Aj = 1, Ea = 2, j = 3)
+paramaxis(::nucl_empirical_energy) = ComponentArrays.Axis(ln_nucleation_prefactor = 1,
+                                                          activation_energy = 2,
+                                                          nucleation_order = 3)
 
 """
     nucl_CNTnoS <: AbstractFPNucleationFunction
@@ -188,15 +190,15 @@ Classical Nucleation Theory without supersaturation dependency.
 Fields:
 - `nparams::Int64`: Number of parameters (2)
 - `string::String`: String identifier ("CNT no S")
-- `symbols::Vector{Symbol}`: Parameter symbols [:Aⱼ, :γ]
+- `symbols::Vector{Symbol}`: Parameter symbols [:ln_nucleation_prefactor, :surface_energy]
 """
 Base.@kwdef @concrete struct nucl_CNTnoS <: AbstractFPNucleationFunction
     nparams::Int64 = 2
     string::String = "CNT no S"
-    symbols::Vector{Symbol} = [:Aⱼ, :γ]
+    symbols::Vector{Symbol} = [:ln_nucleation_prefactor, :surface_energy]
 end
 
-paramaxis(::nucl_CNTnoS) = ComponentArrays.Axis(Aj = 1, γ = 2)
+paramaxis(::nucl_CNTnoS) = paramaxis(nucl_CNT())
 
 """
     nucl_secondary <: AbstractFPNucleationFunction
@@ -206,15 +208,15 @@ Secondary nucleation rate function.
 Fields:
 - `nparams::Int64`: Number of parameters (3)
 - `string::String`: String identifier ("Sec. Nu")
-- `symbols::Vector{Symbol}`: Parameter symbols [:Aⱼ, :Ea, :j]
+- `symbols::Vector{Symbol}`: Parameter symbols [:ln_nucleation_prefactor, :activation_energy, :nucleation_order]
 """
 Base.@kwdef @concrete struct nucl_secondary <: AbstractFPNucleationFunction
     nparams::Int64 = 3
     string::String = "Sec. Nu"
-    symbols::Vector{Symbol} = [:Aⱼ, :Ea, :j]
+    symbols::Vector{Symbol} = [:ln_nucleation_prefactor, :activation_energy, :nucleation_order]
 end
 
-paramaxis(::nucl_secondary) = ComponentArrays.Axis(Aj = 1, Ea = 2, j = 3)
+paramaxis(::nucl_secondary) = paramaxis(nucl_empirical_energy())
 
 """
     nucl_prim_plus_second <: AbstractFPNucleationFunction
@@ -224,12 +226,17 @@ Primary plus secondary nucleation rate function.
 Fields:
 - `nparams::Int64`: Number of parameters (6)
 - `string::String`: String identifier ("Prim. + Sec. Nu")
-- `symbols::Vector{Symbol}`: Parameter symbols [:Aⱼ_prim, :Ea_prim, :j_prim, :Aⱼ_sec, :Ea_sec, :j_sec]
+- `symbols::Vector{Symbol}`: Flattened primary/secondary parameter symbols
 """
 Base.@kwdef @concrete struct nucl_prim_plus_second <: AbstractFPNucleationFunction
     nparams::Int64 = 6
     string::String = "Prim. + Sec. Nu"
-    symbols::Vector{Symbol} = [:Aⱼ_prim, :Ea_prim, :j_prim, :Aⱼ_sec, :Ea_sec, :j_sec]
+    symbols::Vector{Symbol} = [:ln_nucleation_prefactor_primary,
+                               :activation_energy_primary,
+                               :nucleation_order_primary,
+                               :ln_nucleation_prefactor_secondary,
+                               :activation_energy_secondary,
+                               :nucleation_order_secondary]
 end
 
 paramaxis(::nucl_prim_plus_second) = ComponentArrays.Axis(prim = ViewAxis(1:3,
@@ -244,12 +251,15 @@ Classical nucleation plus secondary nucleation.
 Fields:
 - `nparams::Int64`: Number of parameters (5)
 - `string::String`: String identifier ("CNT + Sec. Nu")
-- `symbols::Vector{Symbol}`: Parameter symbols [:Aⱼ_CNT, :γ, :Aⱼ_sec, :Ea, :j]
+- `symbols::Vector{Symbol}`: Flattened CNT/secondary parameter symbols
 """
 Base.@kwdef @concrete struct nucl_CNT_plus_second <: AbstractFPNucleationFunction
     nparams::Int64 = 5
     string::String = "CNT + Sec. Nu"
-    symbols::Vector{Symbol} = [:Aⱼ_CNT, :γ, :Aⱼ_sec, :Ea, :j]
+    symbols::Vector{Symbol} = [:ln_nucleation_prefactor_cnt, :surface_energy,
+                               :ln_nucleation_prefactor_secondary,
+                               :activation_energy_secondary,
+                               :nucleation_order_secondary]
 end
 
 paramaxis(::nucl_CNT_plus_second) = ComponentArrays.Axis(cnt = ViewAxis(1:2, paramaxis(nucl_CNT())),
@@ -263,14 +273,14 @@ Classical Nucleation Theory (CNT) nucleation function with fixed (pre-set) param
 Fields:
 - `nparams::Int64`: Number of free parameters (0, since parameters are fixed)
 - `string::String`: String identifier ("CNT fixed")
-- `Aj::Float64`: Pre-exponential nucleation rate constant
-- `γ::Float64`: Interfacial tension parameter
+- `ln_nucleation_prefactor::Float64`: Natural-log nucleation prefactor
+- `surface_energy::Float64`: Interfacial energy (J/m²)
 """
 Base.@kwdef @concrete struct nucl_CNT_fixed <: AbstractFPNucleationFunction
     nparams::Int64 = 0
     string::String = "CNT fixed"
-    Aj::Float64
-    γ::Float64
+    ln_nucleation_prefactor::Float64
+    surface_energy::Float64
 end
 
 paramaxis(::nucl_CNT_fixed) = ComponentArrays.Axis()
@@ -282,13 +292,13 @@ Convert a `nucl_CNT` model to a `nucl_CNT_fixed` model with embedded parameters.
 
 # Arguments
 - `NuF::nucl_CNT`: The nucleation function to fix
-- `params::AbstractArray{<:Real}`: Parameter array [Aj, γ]
+- `params::AbstractArray{<:Real}`: Parameter array [ln_nucleation_prefactor, surface_energy]
 
 # Returns
 - `nucl_CNT_fixed`: Fixed nucleation function with embedded parameters
 """
 function _fixkinetics(NuF::nucl_CNT, params::AbstractArray{<:Real})
-    nucl_CNT_fixed(Aj = params[1], γ = params[2])
+    nucl_CNT_fixed(ln_nucleation_prefactor = params[1], surface_energy = params[2])
 end
 
 """
@@ -297,13 +307,13 @@ end
 Construct a `nucl_CNT_fixed` from a parameter array.
 
 # Arguments
-- `params::AbstractArray{<:Real}`: Parameter array [Aj, γ]
+- `params::AbstractArray{<:Real}`: Parameter array [ln_nucleation_prefactor, surface_energy]
 
 # Returns
 - `nucl_CNT_fixed`: Fixed nucleation function with embedded parameters
 """
 function nucl_CNT_fixed(params::AbstractArray{<:Real})
-    nucl_CNT_fixed(Aj = params[1], γ = params[2])
+    nucl_CNT_fixed(ln_nucleation_prefactor = params[1], surface_energy = params[2])
 end
 """
     nucl_empirical_fixed <: AbstractFPNucleationFunction
@@ -313,14 +323,14 @@ Empirical nucleation function with fixed (pre-set) parameters.
 Fields:
 - `nparams::Int64`: Number of free parameters (0, since parameters are fixed)
 - `string::String`: String identifier ("Emp. Nu Fixed")
-- `Aj::Float64`: Pre-exponential nucleation rate constant
-- `j::Float64`: Supersaturation exponent
+- `log10_nucleation_prefactor::Float64`: Base-10 logarithm of the nucleation prefactor
+- `nucleation_order::Float64`: Supersaturation exponent
 """
 Base.@kwdef @concrete struct nucl_empirical_fixed <: AbstractFPNucleationFunction
     nparams::Int64 = 0
     string::String = "Emp. Nu Fixed"
-    Aj::Float64
-    j::Float64
+    log10_nucleation_prefactor::Float64
+    nucleation_order::Float64
 end
 
 paramaxis(::nucl_empirical_fixed) = ComponentArrays.Axis()
@@ -332,13 +342,13 @@ Convert a `nucl_empirical` model to a `nucl_empirical_fixed` model with embedded
 
 # Arguments
 - `NuF::nucl_empirical`: The nucleation function to fix
-- `params::AbstractArray{<:Real}`: Parameter array [Aj, j]
+- `params::AbstractArray{<:Real}`: Parameter array [log10_nucleation_prefactor, nucleation_order]
 
 # Returns
 - `nucl_empirical_fixed`: Fixed nucleation function with embedded parameters
 """
 function _fixkinetics(NuF::nucl_empirical, params::AbstractArray{<:Real})
-    nucl_empirical_fixed(Aj = params[1], j = params[2])
+    nucl_empirical_fixed(log10_nucleation_prefactor = params[1], nucleation_order = params[2])
 end
 
 """
@@ -347,13 +357,13 @@ end
 Construct a `nucl_empirical_fixed` from a parameter array.
 
 # Arguments
-- `params::AbstractArray{<:Real}`: Parameter array [Aj, j]
+- `params::AbstractArray{<:Real}`: Parameter array [log10_nucleation_prefactor, nucleation_order]
 
 # Returns
 - `nucl_empirical_fixed`: Fixed nucleation function with embedded parameters
 """
 function nucl_empirical_fixed(params::AbstractArray{<:Real})
-    nucl_empirical_fixed(Aj = params[1], j = params[2])
+    nucl_empirical_fixed(log10_nucleation_prefactor = params[1], nucleation_order = params[2])
 end
 
 
@@ -365,15 +375,15 @@ Empirical crystal growth rate function.
 Fields:
 - `nparams::Int64`: Number of parameters (2)
 - `string::String`: String identifier ("Emp. Gr")
-- `symbols::Vector{Symbol}`: Parameter symbols [:Ag, :g]
+- `symbols::Vector{Symbol}`: Parameter symbols [:growth_coefficient, :growth_order]
 """
 Base.@kwdef @concrete struct growth_empirical <: AbstractFPScalarGrowthFunction
     nparams::Int64 = 2
     string::String = "Emp. Gr"
-    symbols::Vector{Symbol} = [:Ag, :g]
+    symbols::Vector{Symbol} = [:growth_coefficient, :growth_order]
 end
 
-paramaxis(::growth_empirical) = ComponentArrays.Axis(Ag = 1, g = 2)
+paramaxis(::growth_empirical) = ComponentArrays.Axis(growth_coefficient = 1, growth_order = 2)
 """
     growth_energy <: AbstractFPScalarGrowthFunction
 
@@ -382,17 +392,17 @@ Empirical crystal growth rate function with activation energy.
 Fields:
 - `nparams::Int64`: Number of parameters (2)
 - `string::String`: String identifier ("Emp. Gr")
-- `symbols::Vector{Symbol}`: Parameter symbols [:Ag, :g]
-- `Ea::Float64`: Activation energy (default: 0.0)
+- `symbols::Vector{Symbol}`: Parameter symbols [:log10_growth_coefficient, :growth_order]
+- `activation_energy::Float64`: Activation energy (J/mol)
 """
 Base.@kwdef @concrete struct growth_energy <: AbstractFPScalarGrowthFunction
     nparams::Int64 = 2
     string::String = "GrEnergy"
-    symbols::Vector{Symbol} = [:Ag, :g]
-    Ea::Float64 = 53 * 1e3  # Activation energy in J/mol - default to 50 kJ/mol, range is supposedly 50-60 kJ/mol https://doi.org/10.1016/j.jcrysgro.2016.09.049
+    symbols::Vector{Symbol} = [:log10_growth_coefficient, :growth_order]
+    activation_energy::Float64 = 53e3
 end
 
-paramaxis(::growth_energy) = ComponentArrays.Axis(Ag = 1, g = 2)
+paramaxis(::growth_energy) = ComponentArrays.Axis(log10_growth_coefficient = 1, growth_order = 2)
 
 """
     growth_energy_est <: AbstractFPScalarGrowthFunction
@@ -402,16 +412,17 @@ Empirical crystal growth rate function with activation energy.
 Fields:
 - `nparams::Int64`: Number of parameters (2)
 - `string::String`: String identifier ("Emp. Gr")
-- `symbols::Vector{Symbol}`: Parameter symbols [:Ag, :g]
-- `Ea::Float64`: Activation energy (default: 0.0)
+- `symbols::Vector{Symbol}`: Parameter symbols [:log10_growth_coefficient, :activation_energy, :growth_order]
 """
 Base.@kwdef @concrete struct growth_energy_est <: AbstractFPScalarGrowthFunction
     nparams::Int64 = 3
     string::String = "GrEnergy_Est"
-    symbols::Vector{Symbol} = [:Ag, :Eag, :g]
+    symbols::Vector{Symbol} = [:log10_growth_coefficient, :activation_energy, :growth_order]
 end
 
-paramaxis(::growth_energy_est) = ComponentArrays.Axis(Ag = 1, Eag = 2, g = 3)
+paramaxis(::growth_energy_est) = ComponentArrays.Axis(log10_growth_coefficient = 1,
+                                                      activation_energy = 2,
+                                                      growth_order = 3)
 
 """
     growth_BCF <: AbstractFPScalarGrowthFunction
@@ -421,15 +432,16 @@ Burton-Cabrera-Frank (BCF) crystal growth rate function.
 Fields:
 - `nparams::Int64`: Number of parameters (2)
 - `string::String`: String identifier ("BCF Gr")
-- `symbols::Vector{Symbol}`: Parameter symbols [:C3, :C4]
+- `symbols::Vector{Symbol}`: Parameter symbols [:growth_coefficient, :activation_temperature]
 """
 Base.@kwdef @concrete struct growth_BCF <: AbstractFPScalarGrowthFunction
     nparams::Int64 = 2
     string::String = "BCF Gr"
-    symbols::Vector{Symbol} = [:C3, :C4]
+    symbols::Vector{Symbol} = [:growth_coefficient, :activation_temperature]
 end
 
-paramaxis(::growth_BCF) = ComponentArrays.Axis(C3 = 1, C4 = 2)
+paramaxis(::growth_BCF) = ComponentArrays.Axis(growth_coefficient = 1,
+                                               activation_temperature = 2)
 
 """
     growth_BpS <: AbstractFPScalarGrowthFunction
@@ -439,15 +451,16 @@ Birth and Spread (B+S) crystal growth rate function.
 Fields:
 - `nparams::Int64`: Number of parameters (2)
 - `string::String`: String identifier ("BpS Gr")
-- `symbols::Vector{Symbol}`: Parameter symbols [:C1, :C2]
+- `symbols::Vector{Symbol}`: Parameter symbols [:growth_coefficient, :energy_barrier_temperature_squared]
 """
 Base.@kwdef @concrete struct growth_BpS <: AbstractFPScalarGrowthFunction
     nparams::Int64 = 2
     string::String = "BpS Gr"
-    symbols::Vector{Symbol} = [:C1, :C2]
+    symbols::Vector{Symbol} = [:growth_coefficient, :energy_barrier_temperature_squared]
 end
 
-paramaxis(::growth_BpS) = ComponentArrays.Axis(C1 = 1, C2 = 2)
+paramaxis(::growth_BpS) = ComponentArrays.Axis(growth_coefficient = 1,
+                                               energy_barrier_temperature_squared = 2)
 
 """
     growth_empirical_fixed <: AbstractFPScalarGrowthFunction
@@ -456,14 +469,14 @@ Empirical growth function with fixed (pre-set) parameters.
 
 Fields:
 - `nparams::Int64`: Number of free parameters (0, since parameters are fixed)
-- `Ag::Float64`: Growth rate constant
-- `g::Float64`: Supersaturation exponent
+- `growth_coefficient::Float64`: Growth coefficient (m/s)
+- `growth_order::Float64`: Supersaturation exponent
 - `string::String`: String identifier ("Emp. Gr Fixed")
 """
 Base.@kwdef @concrete struct growth_empirical_fixed <: AbstractFPScalarGrowthFunction
     nparams::Int64 = 0
-    Ag::Float64
-    g::Float64
+    growth_coefficient::Float64
+    growth_order::Float64
     string::String = "Emp. Gr Fixed"
 end
 
@@ -476,13 +489,13 @@ Convert a `growth_empirical` model to a `growth_empirical_fixed` model with embe
 
 # Arguments
 - `GrF::growth_empirical`: The growth function to fix
-- `params::AbstractArray{<:Real}`: Parameter array [Ag, g]
+- `params::AbstractArray{<:Real}`: Parameter array [growth_coefficient, growth_order]
 
 # Returns
 - `growth_empirical_fixed`: Fixed growth function with embedded parameters
 """
 function _fixkinetics(GrF::growth_empirical, params::AbstractArray{<:Real})
-    growth_empirical_fixed(Ag = params[1], g = params[2])
+    growth_empirical_fixed(growth_coefficient = params[1], growth_order = params[2])
 end
 
 """
@@ -491,13 +504,13 @@ end
 Construct a `growth_empirical_fixed` from a parameter array.
 
 # Arguments
-- `params::AbstractArray{<:Real}`: Parameter array [Ag, g]
+- `params::AbstractArray{<:Real}`: Parameter array [growth_coefficient, growth_order]
 
 # Returns
 - `growth_empirical_fixed`: Fixed growth function with embedded parameters
 """
 function growth_empirical_fixed(params::AbstractArray{<:Real})
-    growth_empirical_fixed(Ag = params[1], g = params[2])
+    growth_empirical_fixed(growth_coefficient = params[1], growth_order = params[2])
 end
 
 
@@ -510,15 +523,17 @@ Empirical crystal growth rate function with activation energy.
 Fields:
 - `nparams::Int64`: Number of parameters (3)
 - `string::String`: String identifier ("GrDissolution")
-- `symbols::Vector{Symbol}`: Parameter symbols [:Ad, :Ead, :d]
+- `symbols::Vector{Symbol}`: Parameter symbols [:dissolution_coefficient, :activation_energy, :dissolution_order]
 """
 Base.@kwdef @concrete struct growth_dissolution <: AbstractFPScalarDissolutionFunction
     nparams::Int64 = 3
     string::String = "GrDissolution"
-    symbols::Vector{Symbol} = [:Ad, :Ead, :d]
+    symbols::Vector{Symbol} = [:dissolution_coefficient, :activation_energy, :dissolution_order]
 end
 
-paramaxis(::growth_dissolution) = ComponentArrays.Axis(Ad = 1, Ead = 2, d = 3)
+paramaxis(::growth_dissolution) = ComponentArrays.Axis(dissolution_coefficient = 1,
+                                                       activation_energy = 2,
+                                                       dissolution_order = 3)
 """
     growth_dissolution_length <: AbstractFPLengthGrowthFunction
 
@@ -527,16 +542,20 @@ Length-dependent dissolution growth function with activation energy.
 Fields:
 - `nparams::Int64`: Number of parameters (5)
 - `string::String`: String identifier ("GrDissolution_length")
-- `symbols::Vector{Symbol}`: Parameter symbols [:Ad, :Ead, :d, :κ, :p]
+- `symbols::Vector{Symbol}`: Parameter symbols [:dissolution_coefficient, :activation_energy, :dissolution_order, :size_dependence_coefficient, :size_dependence_exponent]
 """
 Base.@kwdef @concrete struct growth_dissolution_length <: AbstractFPLengthDissolutionFunction
     nparams::Int64 = 5
     string::String = "GrDissolution_length"
-    symbols::Vector{Symbol} = [:Ad, :Ead, :d, :κ, :p]
+    symbols::Vector{Symbol} = [:dissolution_coefficient, :activation_energy,
+                               :dissolution_order, :size_dependence_coefficient,
+                               :size_dependence_exponent]
     Lref::Float64 = CRISTOOL_DISSOLUTION_LREF
 end
 
-paramaxis(::growth_dissolution_length) = ComponentArrays.Axis(Ad = 1, Ead = 2, d = 3, κ = 4, p = 5)
+paramaxis(::growth_dissolution_length) = ComponentArrays.Axis(
+    dissolution_coefficient = 1, activation_energy = 2, dissolution_order = 3,
+    size_dependence_coefficient = 4, size_dependence_exponent = 5)
 
 """
     growth_energy_dissolution <: AbstractFPScalarGrowthFunction
@@ -546,15 +565,19 @@ Combined scalar growth and dissolution rate function.
 Fields:
 - `nparams::Int64`: Number of parameters (5)
 - `string::String`: String identifier ("GrEnergyDissolution")
-- `symbols::Vector{Symbol}`: Parameter symbols [:Ag, :g, :Ad, :Ead, :d]
+- `symbols::Vector{Symbol}`: Parameter symbols [:log10_growth_coefficient, :growth_order, :dissolution_coefficient, :activation_energy, :dissolution_order]
 """
 Base.@kwdef @concrete struct growth_energy_dissolution <: AbstractFPScalarDissolutionFunction
     nparams::Int64 = 5
     string::String = "GrEnergyDissolution"
-    symbols::Vector{Symbol} = [:Ag, :g, :Ad, :Ead, :d]
+    symbols::Vector{Symbol} = [:log10_growth_coefficient, :growth_order,
+                               :dissolution_coefficient, :activation_energy,
+                               :dissolution_order]
 end
 
-paramaxis(::growth_energy_dissolution) = ComponentArrays.Axis(Ag = 1, g = 2, Ad = 3, Ead = 4, d = 5)
+paramaxis(::growth_energy_dissolution) = ComponentArrays.Axis(
+    log10_growth_coefficient = 1, growth_order = 2, dissolution_coefficient = 3,
+    activation_energy = 4, dissolution_order = 5)
 
 
 """
@@ -587,9 +610,11 @@ Fields:
 Base.@kwdef @concrete struct breakage_empirical <: AbstractBreakageFunction
     nparams::Int64 = 2
     string::String = "Emp. Br"
+    symbols::Vector{Symbol} = [:breakage_coefficient, :breakage_size_exponent]
 end
 
-paramaxis(::breakage_empirical) = ComponentArrays.Axis(b = 1, n = 2)
+paramaxis(::breakage_empirical) = ComponentArrays.Axis(breakage_coefficient = 1,
+                                                       breakage_size_exponent = 2)
 
 """
     breakage_uniform <: AbstractBreakageFunction
@@ -603,9 +628,12 @@ Fields:
 Base.@kwdef @concrete struct breakage_uniform <: AbstractBreakageFunction
     nparams::Int64 = 2
     string::String = "Uniform. Br"
+    symbols::Vector{Symbol} = [:ln_breakage_coefficient, :breakage_size_exponent]
+    reference_length::Float64 = 1e-6
 end
 
-paramaxis(::breakage_uniform) = ComponentArrays.Axis(logb = 1, n = 2)
+paramaxis(::breakage_uniform) = ComponentArrays.Axis(ln_breakage_coefficient = 1,
+                                                     breakage_size_exponent = 2)
 
 """
     noaggregation <: AbstractAggregationFunction
@@ -637,9 +665,10 @@ Fields:
 Base.@kwdef @concrete struct aggr_scalar <: AbstractAggregationFunction
     nparams::Int64 = 1
     string::String = "Scalar Aggr"
+    symbols::Vector{Symbol} = [:log10_aggregation_coefficient]
 end
 
-paramaxis(::aggr_scalar) = ComponentArrays.Axis(logβ = 1)
+paramaxis(::aggr_scalar) = ComponentArrays.Axis(log10_aggregation_coefficient = 1)
 
 """
     aggr_linear <: AbstractAggregationFunction
@@ -653,9 +682,10 @@ Fields:
 Base.@kwdef @concrete struct aggr_linear <: AbstractAggregationFunction
     nparams::Int64 = 1
     string::String = "Linear Aggr"
+    symbols::Vector{Symbol} = [:log10_aggregation_coefficient]
 end
 
-paramaxis(::aggr_linear) = ComponentArrays.Axis(logβ = 1)
+paramaxis(::aggr_linear) = ComponentArrays.Axis(log10_aggregation_coefficient = 1)
 
 """
     aggr_linearvol <: AbstractAggregationFunction
@@ -669,9 +699,10 @@ Fields:
 Base.@kwdef @concrete struct aggr_linearvol <: AbstractAggregationFunction
     nparams::Int64 = 1
     string::String = "Linear Volume Aggr"
+    symbols::Vector{Symbol} = [:log10_aggregation_coefficient]
 end
 
-paramaxis(::aggr_linearvol) = ComponentArrays.Axis(logβ = 1)
+paramaxis(::aggr_linearvol) = ComponentArrays.Axis(log10_aggregation_coefficient = 1)
 
 """
     aggr_avg <: AbstractAggregationFunction
@@ -685,6 +716,7 @@ Fields:
 Base.@kwdef @concrete struct aggr_avg <: AbstractAggregationFunction
     nparams::Int64 = 1
     string::String = "Average Aggr"
+    symbols::Vector{Symbol} = [:log10_aggregation_coefficient]
 end
 
-paramaxis(::aggr_avg) = ComponentArrays.Axis(logβ = 1)
+paramaxis(::aggr_avg) = ComponentArrays.Axis(log10_aggregation_coefficient = 1)

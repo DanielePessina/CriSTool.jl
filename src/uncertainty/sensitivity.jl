@@ -15,8 +15,10 @@ function forwardsensitivity(CryProblem::CrystallisationProblem{NuclF, GrF, nobre
                                            SM <: AbstractSolubilityModel}
 
     function MoM_model(du, u, p, t)
-        scalargrowth = growthrate(CryProblem.kinetics_growthfunction,
-                                  p.gr, CryProblem, u, t)
+        scalargrowth = net_growth_rate(CryProblem.kinetics_growthfunction,
+                                       p.gr,
+                                       CryProblem.kinetics_dissolutionfunction,
+                                       p.diss, CryProblem, u, t)
 
         n_mom = CryProblem.solver.nmoments
         @assert n_mom >= 2 "MoM solver requires nmoments >= 2 (concentration closure uses µ2)"
@@ -31,7 +33,8 @@ function forwardsensitivity(CryProblem::CrystallisationProblem{NuclF, GrF, nobre
     end
 
     θ = ComponentArray(nucl = CryProblem.parameterset_nucleation,
-                       gr = CryProblem.parameterset_growth)
+                       gr = CryProblem.parameterset_growth,
+                       diss = CryProblem.parameterset_dissolution)
 
     ET = eltype(CryProblem.parameterset_nucleation)
     u0_typed = ET.(_get_initial_state(CryProblem))
@@ -64,6 +67,17 @@ function forwardsensitivity(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, 
                                            TP <: AbstractTemperature,
                                            SM <: AbstractSolubilityModel}
 
+    CryProblem.kinetics_aggregationfunction isa noaggregation ||
+        throw(ArgumentError("FiniteVol forwardsensitivity currently supports noaggregation() only."))
+    CryProblem.kinetics_breakagefunction isa nobreakage ||
+        throw(ArgumentError("FiniteVol forwardsensitivity currently supports nobreakage() only."))
+    CryProblem.kinetics_growthfunction isa AbstractFPLengthGrowthFunction &&
+        throw(ArgumentError("FiniteVol forwardsensitivity does not support length-dependent growth."))
+    CryProblem.kinetics_growthfunction isa AbstractFPLengthDissolutionFunction &&
+        throw(ArgumentError("FiniteVol forwardsensitivity does not support length-dependent growth."))
+    CryProblem.kinetics_dissolutionfunction isa AbstractFPLengthDissolutionFunction &&
+        throw(ArgumentError("FiniteVol forwardsensitivity does not support length-dependent dissolution."))
+
     function HRFV_FLWmodel(dstdt, st, p, t)
 
         numberdensity = crystal_state(CryProblem, st)
@@ -73,8 +87,9 @@ function forwardsensitivity(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, 
         flux = Vector{promote_type(eltype(st), eltype(p))}(undef,
                                                             length(numberdensity) + 1)
 
-        scalargrowth = growthrate(CryProblem.kinetics_growthfunction, p.gr,
-                                  CryProblem, st, t)
+        scalargrowth = net_growth_rate(CryProblem.kinetics_growthfunction, p.gr,
+                                       CryProblem.kinetics_dissolutionfunction,
+                                       p.diss, CryProblem, st, t)
 
         if scalargrowth > zero(scalargrowth)
             flux[1] = nucleationrate(CryProblem.kinetics_nucleationfunction, p.nucl,
@@ -110,6 +125,7 @@ function forwardsensitivity(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, 
 
     θ = ComponentArray(nucl = CryProblem.parameterset_nucleation,
                        gr = CryProblem.parameterset_growth,
+                       diss = CryProblem.parameterset_dissolution,
                        br = CryProblem.parameterset_breakage,
                        agg = CryProblem.parameterset_aggregation)
     ODEprob = ODEForwardSensitivityProblem(HRFV_FLWmodel,

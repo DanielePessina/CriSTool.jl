@@ -128,6 +128,8 @@ choice of sampler (ABCDE, Turner ABCDE, …) is selected via `sampler`.
 - `optimalpara`: reference parameter vector of length nν+ng+na+nb.
 - `prior`: prior distribution (e.g. `Distributions.product_distribution([...])`).
 - `solver`: numerical solver used by the loss function.
+- `diss`: optional independent dissolution model; its parameter block follows
+  the growth block.
 - `sampler`: which ABC algorithm to run. Defaults to `ABCDESampler()`.
 - `nparticles`, `generations`: ABC population size and iteration count.
 - `confidenceinterval`, `test`: stopping criterion (F-statistic or χ²).
@@ -150,6 +152,7 @@ function run_abc(lossfunction::AbstractPELossFunction,
                  growthfunction::AbstractGrowthFunction,
                  aggregationfunction::AbstractAggregationFunction,
                  breakagefunction::AbstractBreakageFunction;
+                 diss::AbstractDissolutionFunction = nodissolution(),
                  solver::AbstractSolver,
                  sampler::AbstractABCSampler = ABCDESampler(),
                  validation::Union{Nothing, Vector{<:AbstractExperiment}} = nothing,
@@ -162,7 +165,8 @@ function run_abc(lossfunction::AbstractPELossFunction,
     dof = _dofcalculator(lossfunction, measurement) - length(optimalpara)
 
     loss_problem = _build_loss_problem(nucleationfunction, growthfunction,
-                                       aggregationfunction, breakagefunction, solver)
+                                       aggregationfunction, breakagefunction, solver;
+                                       diss = diss)
     loss_setup = prepare_loss(loss_problem, measurement)
 
     optimallossfunction = loss(lossfunction, loss_setup, optimalpara)
@@ -230,10 +234,12 @@ function run_abc(lossfunction::AbstractPELossFunction,
                 nucleationfunction = nucleationfunction,
                 growthfunction = growthfunction,
                 aggregationfunction = aggregationfunction,
-                breakagefunction = breakagefunction)
+                breakagefunction = breakagefunction,
+                diss = diss)
 
         _ABCmeasurementplot(res, lossfunction, measurement, optimalpara, nucleationfunction,
                             growthfunction, aggregationfunction, breakagefunction, solver;
+                            diss = diss,
                             saveplot = saveplot,
                             title = "$(now_str) $(extrastring)$(save_suffix)\nCI = $confidenceinterval_str",
                             HPC = HPC,
@@ -244,6 +250,7 @@ function run_abc(lossfunction::AbstractPELossFunction,
             _ABCmeasurementplot(res, lossfunction, validation, optimalpara,
                                 nucleationfunction, growthfunction, aggregationfunction,
                                 breakagefunction, solver;
+                                diss = diss,
                                 saveplot = saveplot,
                                 title = "$(now_str) $(extrastring)$(save_suffix) Validation",
                                 savestring = "$(now_str) $(extrastring)$(save_suffix) Validation",
@@ -281,6 +288,7 @@ function ABCDE_Routine(lossfunction::AbstractPELossFunction,
                        growthfunction::AbstractGrowthFunction,
                        aggregationfunction::AbstractAggregationFunction,
                        breakagefunction::AbstractBreakageFunction;
+                       diss::AbstractDissolutionFunction = nodissolution(),
                        solver::AbstractSolver,
                        validation::Union{Nothing, Vector{<:AbstractExperiment}} = nothing,
                        extrastring::String = "Empty", nparticles::Int64 = 1024,
@@ -291,6 +299,7 @@ function ABCDE_Routine(lossfunction::AbstractPELossFunction,
                        outputdir::Union{Nothing, AbstractString} = nothing)
     return run_abc(lossfunction, measurement, optimalpara, prior, nucleationfunction,
                    growthfunction, aggregationfunction, breakagefunction;
+                   diss = diss,
                    solver = solver, sampler = ABCDESampler(α = alpha),
                    validation = validation, extrastring = extrastring,
                    nparticles = nparticles, generations = generations, saveplot = saveplot,
@@ -312,6 +321,7 @@ function ABCDE_Turner_Routine(lossfunction::AbstractPELossFunction,
                               growthfunction::AbstractGrowthFunction,
                               aggregationfunction::AbstractAggregationFunction,
                               breakagefunction::AbstractBreakageFunction;
+                              diss::AbstractDissolutionFunction = nodissolution(),
                               solver::AbstractSolver,
                               validation::Union{Nothing, Vector{<:AbstractExperiment}} = nothing,
                               extrastring::String = "Empty",
@@ -337,6 +347,7 @@ function ABCDE_Turner_Routine(lossfunction::AbstractPELossFunction,
                                  burnin_frac = burnin_frac)
     return run_abc(lossfunction, measurement, optimalpara, prior, nucleationfunction,
                    growthfunction, aggregationfunction, breakagefunction;
+                   diss = diss,
                    solver = solver, sampler = sampler,
                    validation = validation, extrastring = extrastring,
                    nparticles = nparticles, generations = generations, saveplot = saveplot,
@@ -359,10 +370,12 @@ function _append_symbols!(names::Vector{Symbol}, fn, prefix::String)
 end
 
 function kinetic_parameter_symbols(nucleationfunction, growthfunction,
-                                   aggregationfunction, breakagefunction)
+                                   aggregationfunction, breakagefunction;
+                                   diss = nodissolution())
     names = Symbol[]
     _append_symbols!(names, nucleationfunction, "nu")
     _append_symbols!(names, growthfunction, "gr")
+    _append_symbols!(names, diss, "diss")
     _append_symbols!(names, aggregationfunction, "agg")
     _append_symbols!(names, breakagefunction, "br")
     return names
@@ -378,6 +391,7 @@ function ABCplot(abcres, params::Vector{Float64}, lossfunction::AbstractPELossFu
                  growthfunction::Union{AbstractGrowthFunction, Nothing} = nothing,
                  aggregationfunction::Union{AbstractAggregationFunction, Nothing} = nothing,
                  breakagefunction::Union{AbstractBreakageFunction, Nothing} = nothing,
+                 diss::AbstractDissolutionFunction = nodissolution(),
                  showplot::Bool = true)
     samples_mat = _abc_particles_matrix(abcres.P)
     if isnothing(samples_mat)
@@ -391,7 +405,8 @@ function ABCplot(abcres, params::Vector{Float64}, lossfunction::AbstractPELossFu
     mle = abcres.C
     df = DataFrame([samples_mat;; Vector(mle)], :auto)
     param_names = kinetic_parameter_symbols(nucleationfunction, growthfunction,
-                                            aggregationfunction, breakagefunction)
+                                            aggregationfunction, breakagefunction;
+                                            diss = diss)
     if length(param_names) < length(params)
         append!(param_names,
                 [Symbol("θ_$i") for i in (length(param_names) + 1):length(params)])
@@ -430,7 +445,9 @@ function _ABCmeasurementplot(abcres, lossfunction::AbstractPELossFunction,
                              growthfunction::AbstractGrowthFunction,
                              aggregationfunction::AbstractAggregationFunction,
                              breakagefunction::AbstractBreakageFunction,
-                             solver::AbstractSolver; saveplot::Bool = true, title = "",
+                             solver::AbstractSolver;
+                             diss::AbstractDissolutionFunction = nodissolution(),
+                             saveplot::Bool = true, title = "",
                              savestring::String = "", colouroffset::Int64 = 0,
                              HPC::Bool = false, showtext::Bool = true,
                              savedir::Union{Nothing, AbstractString} = nothing)
@@ -442,11 +459,12 @@ function _ABCmeasurementplot(abcres, lossfunction::AbstractPELossFunction,
     samples = permutedims(samples_mat)
     ensembleresults = run_ensemble(samples, measurements, nucleationfunction,
                                    growthfunction, aggregationfunction, breakagefunction,
-                                   solver, HPC = HPC)
+                                   solver; diss = diss, HPC = HPC)
 
     optimal_solutions = [(runsimulation(optimalparameters,
                                          nucl = nucleationfunction,
                                          gr = growthfunction,
+                                         diss = diss,
                                          agg = aggregationfunction,
                                          br = breakagefunction,
                                          initial_concentration = initial_concentration(measurements[m]),
@@ -463,6 +481,7 @@ function _ABCmeasurementplot(abcres, lossfunction::AbstractPELossFunction,
                                   parameters = optimalparameters,
                                   nucleationfunction = nucleationfunction,
                                   growthfunction = growthfunction,
+                                  dissolutionfunction = diss,
                                   aggregationfunction = aggregationfunction,
                                   breakagefunction = breakagefunction,
                                   solver = solver,
@@ -476,7 +495,9 @@ function _ABCmeasurementplot_ps(abcres, lossfunction::AbstractPELossFunction,
                                 growthfunction::AbstractGrowthFunction,
                                 aggregationfunction::AbstractAggregationFunction,
                                 breakagefunction::AbstractBreakageFunction,
-                                solver::AbstractSolver; saveplot::Bool = true, title = "",
+                                solver::AbstractSolver;
+                                diss::AbstractDissolutionFunction = nodissolution(),
+                                saveplot::Bool = true, title = "",
                                 savestring::String = "", colouroffset::Int64 = 0,
                                 HPC::Bool = false, showtext::Bool = true,
                                 savedir::Union{Nothing, AbstractString} = nothing)
@@ -488,11 +509,12 @@ function _ABCmeasurementplot_ps(abcres, lossfunction::AbstractPELossFunction,
     samples = permutedims(samples_mat)
     ensembleresults = run_ensemble(samples, measurements, nucleationfunction,
                                    growthfunction, aggregationfunction, breakagefunction,
-                                   solver, HPC = HPC)
+                                   solver; diss = diss, HPC = HPC)
 
     optimal_solutions = [(runsimulation(optimalparameters,
                                          nucl = nucleationfunction,
                                          gr = growthfunction,
+                                         diss = diss,
                                          agg = aggregationfunction,
                                          br = breakagefunction,
                                          initial_concentration = initial_concentration(measurements[m]),
@@ -509,6 +531,7 @@ function _ABCmeasurementplot_ps(abcres, lossfunction::AbstractPELossFunction,
                                      parameters = optimalparameters,
                                      nucleationfunction = nucleationfunction,
                                      growthfunction = growthfunction,
+                                     dissolutionfunction = diss,
                                      aggregationfunction = aggregationfunction,
                                      breakagefunction = breakagefunction,
                                      solver = solver,

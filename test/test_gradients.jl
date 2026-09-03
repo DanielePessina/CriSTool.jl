@@ -8,6 +8,15 @@ import DifferentiationInterface as DI
 import ForwardDiff
 import FiniteDifferences
 
+const TEST_SI_GROWTH_SCALE = 1e-9 / 60
+_si_growth_parameters(parameters) = [parameters[1] * TEST_SI_GROWTH_SCALE,
+                                     parameters[2]]
+_si_dissolution_parameters(parameters) = [parameters[1] * TEST_SI_GROWTH_SCALE,
+                                          parameters[2], parameters[3]]
+_si_full_growth_dissolution_parameters(parameters) =
+    [_si_growth_parameters(parameters[1:2]);
+     _si_dissolution_parameters(parameters[3:5])]
+
 @testset "Gradient harness (DI cross-backend)" begin
     fd_backend = DI.AutoFiniteDifferences(FiniteDifferences.central_fdm(5, 1))
     fwd_backend = DI.AutoForwardDiff()
@@ -35,14 +44,15 @@ import FiniteDifferences
         nd = [1e10, 1e11, 1e12, 1e13, 1e14]
         state = [nd; S * saturation_concentration(system, 0.0)]
 
-        f_nucl(p) = CriSTool.nucleationrate(nucl, p, system, state, 0.0)
+        f_nucl(p) = CriSTool.nucleationrate(nucl, [p[1], p[2] * 1e-3], system, state, 0.0)
         g_fd = DI.gradient(f_nucl, fd_backend, [38.0, 0.6])
         g_fwd = DI.gradient(f_nucl, fwd_backend, [38.0, 0.6])
         assert_gradient_agreement("nucleationrate (nucl_CNT)", g_fd, g_fwd; rtol = 1e-4)
 
         f_gr(p) = CriSTool.growthrate(gr, p, system, state, 0.0)
-        g_fd_gr = DI.gradient(f_gr, fd_backend, [1.0, 3.0])
-        g_fwd_gr = DI.gradient(f_gr, fwd_backend, [1.0, 3.0])
+        f_gr_scaled(parameters) = f_gr(_si_growth_parameters(parameters))
+        g_fd_gr = DI.gradient(f_gr_scaled, fd_backend, [1.0, 3.0])
+        g_fwd_gr = DI.gradient(f_gr_scaled, fwd_backend, [1.0, 3.0])
         assert_gradient_agreement("growthrate (growth_empirical)", g_fd_gr, g_fwd_gr;
                                   rtol = 1e-4)
 
@@ -51,10 +61,10 @@ import FiniteDifferences
     @testset "MoM solution observables" begin
         nucl = nucl_CNT()
         gr = growth_empirical()
-        save_idx = [0.0, 30.0, 60.0, 120.0, 180.0, 270.0]
+        save_idx = [0.0, 1800.0, 3600.0, 7200.0, 10800.0, 16200.0]
 
         function run_mom(params)
-            _, sol = runsimulation(params; nucl = nucl, gr = gr,
+            _, sol = runsimulation(_si_test_parameters(params); nucl = nucl, gr = gr,
                                    agg = noaggregation(), br = nobreakage(),
                                    initial_concentration = 14.67,
                                    save_idx = save_idx,
@@ -91,7 +101,7 @@ import FiniteDifferences
     @testset "FiniteVol final concentration" begin
         nucl = nucl_CNT()
         gr = growth_empirical()
-        save_idx = collect(0.0:60.0:240.0)
+        save_idx = collect(0.0:3600.0:14400.0)
 
         f_fv(params) = begin
             _, sol = runsimulation(params; nucl = nucl, gr = gr,
@@ -113,7 +123,7 @@ end
     fd_backend = DI.AutoFiniteDifferences(FiniteDifferences.central_fdm(5, 1))
     fwd_backend = DI.AutoForwardDiff()
 
-    fixed_no_nucleation = CriSTool.nucl_empirical_fixed(Aj = -Inf, j = 1.0)
+    fixed_no_nucleation = CriSTool.nucl_empirical_fixed(log10_nucleation_prefactor = -Inf, nucleation_order = 1.0)
     dissolution_model = growth_dissolution()
     growth_model = growth_empirical()
     shared_problem = CrystallisationProblem(;
@@ -121,8 +131,8 @@ end
         kinetics_growthfunction = growth_model,
         kinetics_dissolutionfunction = dissolution_model,
         parameterset_nucleation = Float64[],
-        parameterset_growth = [1.0, 2.0],
-        parameterset_dissolution = [2.0, 0.0, 1.5],
+        parameterset_growth = [TEST_SI_GROWTH_SCALE, 2.0],
+        parameterset_dissolution = [2e-9 / 60, 0.0, 1.5],
         saturation_model = ConstantSolubility(10.0),
         initial_concentration = 5.0,
         solver = MoM())
@@ -132,7 +142,8 @@ end
 
     @testset "Independent net rate" begin
         rate_objective(parameters) = net_growth_rate(
-            growth_model, parameters[1:2], dissolution_model, parameters[3:5],
+            growth_model, _si_growth_parameters(parameters[1:2]),
+            dissolution_model, _si_dissolution_parameters(parameters[3:5]),
             shared_problem, seeded_state, 0.0)
         fd_gradient = DI.gradient(rate_objective, fd_backend,
                                   [1.0, 2.0, 2.0, 0.0, 1.5])
@@ -143,7 +154,7 @@ end
 
     @testset "MoM independent dissolution simulation" begin
         simulation_objective(parameters) = begin
-            _, solution = runsimulation(parameters;
+            _, solution = runsimulation(_si_full_growth_dissolution_parameters(parameters);
                 nucl = fixed_no_nucleation,
                 gr = growth_model,
                 diss = dissolution_model,
@@ -165,7 +176,7 @@ end
 
     @testset "QMOM simulation and binary source gradients" begin
         qmom_objective(parameters) = begin
-            _, solution = runsimulation(parameters;
+            _, solution = runsimulation(_si_growth_parameters(parameters);
                 nucl = fixed_no_nucleation,
                 gr = growth_model,
                 diss = nodissolution(),

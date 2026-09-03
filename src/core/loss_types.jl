@@ -39,14 +39,15 @@ Log Maximum Likelihood Estimation loss function.
 Fields:
 - `weighting::Vector{Float64}`: Weighting factors by observable (default: concentration and size both 1.0)
 - `variance_model::AbstractVarianceModel`: Variance policy (default: measured variance)
-- `variance_floor::Float64`: Minimum variance used by the likelihood
+- `relative_variance_floor::Float64`: Dimensionless minimum variance fraction
+  relative to the squared observable magnitude
 - `string::String`: String identifier
 - `symbols::Vector{Symbol}`: Parameter symbols [:logMLE]
 """
 Base.@kwdef @concrete struct logMLE <: AbstractPELossFunction
     weighting::Vector{Float64} = [1.0, 1.0]
     variance_model::AbstractVarianceModel = MeasuredVariance()
-    variance_floor::Float64 = CRISTOOL_VARIANCE_FLOOR
+    relative_variance_floor::Float64 = 1e-12
     string::String = weighting == [1.0, 1.0] ? "Log MLE" : "Log MLE wgted $(weighting)"
     symbols::Vector{Symbol} = [:logMLE]
 end

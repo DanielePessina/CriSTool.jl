@@ -28,12 +28,13 @@ end
 
 function main()
     # `nucl_empirical_fixed` has no fitted parameters and returns no
-    # nucleation for this example; the three growth parameters are [Ad, Ead, d].
+    # nucleation for this example; the three parameters are SI
+    # [dissolution_coefficient, activation_energy, dissolution_order].
     nucl = CriSTool.nucl_empirical_fixed([0.0, 1.0])
     growth = growth_dissolution()
-    params = [2.0, 0.0, 1.5]
+    params = [2e-9 / 60, 0.0, 1.5]
     saturation = ConstantSolubility(10.0)
-    save_grid = collect(0.0:30.0:300.0)
+    save_grid = collect(0.0:1800.0:18000.0)
 
     solvers = [MoM(),
                FiniteVol(meshsize = 80, lmax = 50.0e-6),
@@ -57,7 +58,7 @@ function main()
     for (solver, solution) in zip(solvers, solutions)
         println("$(typeof(solver)): success=$(solution.success), " *
                 "c_final=$(round(solution.concentration[end], sigdigits = 5)), " *
-                "size_final=$(round(get_characteristic_size(solution), sigdigits = 5)) μm")
+                "size_final=$(round(1e6 * get_characteristic_size(solution), sigdigits = 5)) μm")
     end
 
     figure = Figure(size = (900, 650))
@@ -70,9 +71,9 @@ function main()
                                solution.d43 : solution.d50q
     for (solver, solution, color) in zip(solvers, solutions, colors)
         label = string(typeof(solver))
-        lines!(concentration_axis, solution.time, solution.concentration,
+        lines!(concentration_axis, solution.time ./ 60, solution.concentration,
                color = color, label = label)
-        lines!(size_axis, solution.time, size_trajectory(solution),
+        lines!(size_axis, solution.time ./ 60, 1e6 .* size_trajectory(solution),
                color = color, label = label)
     end
     axislegend(concentration_axis, position = :rb)

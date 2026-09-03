@@ -131,18 +131,18 @@ function main()
     isempty(measurements) && error("No experiments found in $DATA_FILE")
     println("Loaded ", length(measurements), " experiments from ", DATA_FILE)
 
-    mom_lower = [25.0, 0.30, 0.30, 2.0]
-    mom_upper = [50.0, 1.00, 3.00, 4.0]
+    mom_lower = [25.0, 0.00030, 0.3e-9 / 60, 2.0]
+    mom_upper = [50.0, 0.00100, 3.0e-9 / 60, 4.0]
     validate_bounds(mom_lower, mom_upper, 4)
     mom_result = fit_model(measurements,
                             MoM(reltol = 1e-7),
                             noaggregation(), nobreakage(),
                            mom_lower, mom_upper, "MoM: CNT + empirical growth")
 
-    finite_volume_lower = [mom_lower; -20.0; -20.0; 0.0]
-    finite_volume_upper = [mom_upper; -12.0; -10.0; 1.0]
+    finite_volume_lower = [mom_lower; -20.0 - log10(60); -20.0 - log(60); 0.0]
+    finite_volume_upper = [mom_upper; -12.0 - log10(60); -10.0 - log(60); 1.0]
     validate_bounds(finite_volume_lower, finite_volume_upper, 7)
-    finite_volume_reference = [mom_result[1]; -18.0; -18.0; 0.5]
+    finite_volume_reference = [mom_result[1]; -18.0 - log10(60); -18.0 - log(60); 0.5]
     all(finite_volume_lower .<= finite_volume_reference) &&
         all(finite_volume_reference .<= finite_volume_upper) ||
         throw(ArgumentError("FiniteVol ABCDE reference is outside its bounds"))

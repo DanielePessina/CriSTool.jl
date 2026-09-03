@@ -43,7 +43,7 @@ abstract type AbstractSolution end
     d10::TDm
     d32::TDm
     d43::TDm
-    mu2::TDm
+    moment2::TDm
 
     solvent_state::TL
 
@@ -54,7 +54,7 @@ abstract type AbstractSolution end
 end
 
 """
-    CrystallisationMoMSolution{Tt,TCo,TD1,TD3,TD4,TMu2} <: AbstractSolution where {Tt<:AbstractArray{<:Real},TCo<:AbstractArray{<:Real},TD1<:AbstractArray{<:Real},TD3<:AbstractArray{<:Real},TD4<:AbstractArray{<:Real},TMu2<:AbstractArray{<:Real}}
+    CrystallisationMoMSolution{Tt,TCo,TD1,TD3,TD4,TM2} <: AbstractSolution where {Tt<:AbstractArray{<:Real},TCo<:AbstractArray{<:Real},TD1<:AbstractArray{<:Real},TD3<:AbstractArray{<:Real},TD4<:AbstractArray{<:Real},TM2<:AbstractArray{<:Real}}
 
     Stores Method of Moments solver results.
 
@@ -64,7 +64,7 @@ end
     - `d10::TD1`: 10th percentile of number density
     - `d32::TD3`: Sauter mean diameter
     - `d43::TD4`: Volume mean diameter
-    - `mu2::TMu2`: Second moment of number density
+    - `moment2::TM2`: Second raw moment of number density (m⁻¹)
     - `ode_stats`: ODE solver statistics (e.g., DEStats) or `nothing`
     - `success::Bool`: Success flag
 
@@ -84,7 +84,7 @@ end
     d32::TD3
     d43::TD4
 
-    mu2::TMu2
+    moment2::TMu2
 
     solvent_state::TL
 
@@ -114,7 +114,7 @@ struct CrystallisationQMOMSolution{Tt, TCo, TM, TN, TW, TD1, TD3, TD4, TMu2,
     d10::TD1
     d32::TD3
     d43::TD4
-    mu2::TMu2
+    moment2::TMu2
     solvent_state::TL
     final_state::TF
     ode_stats::TS
