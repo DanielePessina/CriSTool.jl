@@ -49,8 +49,11 @@ Base.@kwdef @concrete struct FiniteVol <: AbstractDiscretisedSolver
     cell_dL::Float64 = cell_centre[2] - cell_centre[1]
     string::String = "FV"
     timestepping_algorithm::Symbol = :auto
-    reltol::Float64 = 1e-2
-    abstol::Float64 = 1e-6
+    # Tolerances re-derived for the SI seconds kernel (Step 3): the default
+    # loose pair (1e-2/1e-6) made FV gradients disagree with finite differences
+    # and allowed negative-density overshoot under the faster nm/s dynamics.
+    reltol::Float64 = 1e-4
+    abstol::Float64 = 1e-10
 end
 
 """
@@ -81,8 +84,9 @@ Base.@kwdef @concrete struct WENO <: AbstractDiscretisedSolver
     cell_dL::Float64 = cell_centre[2] - cell_centre[1]
     string::String = "WENO"
     timestepping_algorithm::Symbol = :auto
-    reltol::Float64 = 1e-1
-    abstol::Float64 = 1e-4
+    # Tolerances re-derived for the SI seconds kernel (Step 3); see FiniteVol.
+    reltol::Float64 = 1e-4
+    abstol::Float64 = 1e-10
 end
 
 """

@@ -78,7 +78,7 @@ using DataFrames
                                            solver = MoM(),
                                            initial_concentration = 18.0,
                                            initial_crystals = lognormal_initial_crystals,
-                                           save_idx = [0.0, 0.1])
+                                           save_idx = [0.0, 6.0])
         @test problem.initial_state !== nothing
         @test problem.initial_state[5] / problem.initial_state[4] ≈
               lognormal_initial_crystals.d43 rtol = 1e-12
@@ -92,14 +92,14 @@ using DataFrames
                                                  initial_concentration = 18.0,
                                                  initial_state = problem.initial_state,
                                                  initial_crystals = lognormal_initial_crystals,
-                                                 save_idx = [0.0, 0.1])
+                                                 save_idx = [0.0, 6.0])
 
 experiment = CrystallisationExperiment(;
             observables = (;
-                concentration = Observable(; time = [0.0, 0.1],
+                concentration = Observable(; time = [0.0, 6.0],
                                            mean = [18.0, solution.concentration[end]],
                                            variance = [1.0, 1.0]),
-                d43 = Observable(; time = [0.1], mean = [solution.d43[end]],
+                d43 = Observable(; time = [6.0], mean = [solution.d43[end]],
                                  variance = [1e-12])),
             temperature = 293.15,
             initial_crystals = lognormal_initial_crystals,
@@ -113,7 +113,7 @@ experiment = CrystallisationExperiment(;
         ensemble = run_ensemble_fixed(reshape(params, :, 1),
                                       nucl_CNT(), growth_empirical(),
                                       noaggregation(), nobreakage(), MoM();
-                                      time_idx = [0.0, 0.1],
+                                      time_idx = [0.0, 6.0],
                                       temp_profile = CriSTool.ConstantTemperature(293.15),
                                       initial_concentration = 18.0,
                                       initial_crystals = lognormal_initial_crystals,
@@ -125,8 +125,8 @@ experiment = CrystallisationExperiment(;
                                      solver = MoM(), initial_concentration = 18.0,
                                      initial_crystals = lognormal_initial_crystals,
                                      temp_profile = CriSTool.ConstantTemperature(293.15),
-                                     save_idx = [0.0, 0.1])
-        @test ensemble.time == [0.0, 0.1]
+                                     save_idx = [0.0, 6.0])
+        @test ensemble.time == [0.0, 6.0]
         @test ensemble.concentration[1, :] ≈ reference.concentration
         @test ensemble.d43[1, :] ≈ reference.d43
         @test ensemble.d43_mean ≈ reference.d43
@@ -138,8 +138,8 @@ experiment = CrystallisationExperiment(;
         measurement_ensemble = run_ensemble(
             prior, [experiment], nucl_CNT(), growth_empirical(),
             noaggregation(), nobreakage(), MoM(); n_samples = 1,
-            time_idx = [0.0, 0.1], verbosity = 0, HPC = true)
-        @test measurement_ensemble[1].time == [0.0, 0.1]
+            time_idx = [0.0, 6.0], verbosity = 0, HPC = true)
+        @test measurement_ensemble[1].time == [0.0, 6.0]
         @test measurement_ensemble[1].concentration[1, :] ≈ reference.concentration
         @test measurement_ensemble[1].d43[1, :] ≈ reference.d43
     end

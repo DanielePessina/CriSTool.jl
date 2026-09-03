@@ -152,7 +152,7 @@
         # Very short time span
         _,
         sol = runsimulation(params, nucl_CNT(), growth_empirical(), 18.0;
-                            solver = MoM(), save_idx = 0:1.0:5.0)
+                            solver = MoM(), save_idx = 0:60.0:300.0)
 
         @test sol.success
         @test length(sol.time) >= 2

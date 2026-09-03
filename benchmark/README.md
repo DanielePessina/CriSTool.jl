@@ -123,12 +123,13 @@ WENO200      4.632 ms         2478      1829856.0     2403      397        0    
   this same env. See `research/benchmark-perf-log.md` for the full story.
   `_simulatecrystallisation`); this is opaque to AllocCheck.
 
-## Numeric SI migration rerun (2026-09-03, worktree `92dd52b`)
+## Numeric SI migration reruns (2026-09-03)
 
 The harness was rerun after converting the parameters and fixed grids to SI
 (`CANONICAL_θ = [38.0, 0.0006, 1e-9 / 60, 3.0]`; FV/WENO grid
-`0:1800:16200` s). The worktree was uncommitted, so the hash identifies its
-base commit rather than a complete patch revision.
+`0:1800:16200` s). The first table is the SI migration commit with the
+pre-existing solver tolerances; the second is the final main checkout, which
+preserves the tighter FV/WENO tolerances from the original dirty checkout.
 
 ```
 solver     med time   med allocs      med bytes       nf     nacc   nrej   nsolve   nsave
@@ -138,15 +139,26 @@ WENO200     4.888 ms         2688      2011632.0     2487      411      0       
 QMOM3       2.036 ms        10034       647248.0    14499     2413      0        0      70
 ```
 
-Relative to the immediately preceding type-stable legacy-unit run, timing was
-approximately +5% (MoM), +15% (FV200), and +5% (WENO200). The extra QMOM row is
-new. These are small solver-tolerance/runtime effects from changing the
-independent-variable scale, not a 60× workload error; the trajectory oracle
-comparison shows concentration agreement better than 5×10⁻⁵ relative and
-discretised size-metric agreement better than 1.5×10⁻⁴ relative. The early MoM
-d43 values differ by up to 1.5% because the migration intentionally removed
-the old additive, dimensionally-invalid moment-ratio floor; final MoM d43
-agrees within 10⁻⁴ relative.
+The final main checkout (`edf7de8` plus the preserved uncommitted tolerance
+edits) measured:
+
+```
+solver     med time   med allocs      med bytes       nf     nacc   nrej   nsolve   nsave
+MoM         1.032 ms         1414       107984.0     7845     1304      0        0      57
+FV200       6.913 ms         2275      1192688.0     8877     1476      0        0      70
+WENO200    16.916 ms         2688      2011632.0     9747     1621      0        0      70
+QMOM3       1.990 ms        10034       647248.0    14499     2413      0        0      70
+```
+
+Relative to the immediately preceding type-stable legacy-unit run, the final
+main timings are approximately +2% (MoM), +155% (FV200), and +262% (WENO200).
+That FV/WENO increase is from the tighter tolerances, not a type-instability
+regression: accepted steps rise from `571→1476` and `397→1621`, respectively.
+The trajectory oracle comparison still shows concentration agreement better
+than 5×10⁻⁵ relative and discretised size-metric agreement better than
+1.5×10⁻⁴ relative. Early MoM d43 differs by up to 1.5% because the migration
+intentionally removed the old additive, dimensionally-invalid moment-ratio
+floor; final MoM d43 agrees within 10⁻⁴ relative.
 
 The isolated SI kernel benchmark (`kernel_benchmarks.jl`) measured:
 

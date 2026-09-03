@@ -73,7 +73,7 @@
         params = [38.0, 0.0007, 1e-9 / 60, 3.0,
                   -6.0 - log10(60), 1e-3 / 60, 1.0]
         initial_conc = 1.0
-        save_times = [0.0, 1.0, 2.0]
+        save_times = [0.0, 60.0, 120.0]
 
         problem,
         solution = runsimulation(params,

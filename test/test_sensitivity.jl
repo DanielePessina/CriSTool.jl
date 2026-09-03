@@ -7,7 +7,7 @@
         parameterset_growth = [1e-9 / 60, 3.0],
         initial_concentration = 14.67,
         temp_profile = CriSTool.ConstantTemperature(290.15))
-    saveat = [0.0, 60.0, 120.0, 180.0]
+    saveat = [0.0, 3600.0, 7200.0, 10800.0]
 
     sol_mom = CriSTool.forwardsensitivity(prob_mom, saveat)
     sol_vals, dp = CriSTool.extract_local_sensitivities(sol_mom)

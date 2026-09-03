@@ -164,7 +164,7 @@ end
                 initial_concentration = 5.0,
                 initial_state = seeded_state,
                 saturation_model = ConstantSolubility(10.0),
-                save_idx = [0.0, 0.1])
+                save_idx = [0.0, 6.0])
             solution.concentration[end]
         end
         fd_gradient = DI.gradient(simulation_objective, fd_backend,
@@ -186,7 +186,7 @@ end
                 initial_concentration = 20.0,
                 initial_state = [1.0e12, 1.0e6, 1.0, 1.0e-6, 1.0e-12, 1.0e-18, 20.0],
                 saturation_model = ConstantSolubility(10.0),
-                save_idx = [0.0, 0.1])
+                save_idx = [0.0, 6.0])
             solution.d43[end]
         end
         qmom_fd = DI.gradient(qmom_objective, fd_backend, [1.0, 2.0])
