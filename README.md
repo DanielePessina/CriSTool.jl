@@ -7,7 +7,8 @@ through population-balance models.
 The package provides:
 
 - population-balance solvers based on the Method of Moments (MoM), the
-  Quadrature Method of Moments (QMOM), finite volumes, and WENO;
+  Quadrature Method of Moments (QMOM), Direct QMOM (DQMOM), finite volumes,
+  and WENO;
 - nucleation, growth, aggregation, breakage, and signed dissolution kinetics;
 - measurement ingestion from CSV/table sources and typed experiment containers;
 - solver-aware initial crystal states from mass, d43, and explicit lognormal or
@@ -66,8 +67,9 @@ end
 The function returns the constructed `CrystallisationProblem` and a solution
 trajectory. Moment solutions expose `concentration`, `d10`, `d32`, `d43`, and
 `moment2`; finite-volume and WENO solutions also expose the resolved size
-distribution and `d10q`, `d50q`, and `d90q` quantiles. QMOM additionally stores
-raw moments and reconstructed quadrature; see [Solvers](docs/solvers.md).
+distribution and `d10q`, `d50q`, and `d90q` quantiles. QMOM and DQMOM expose
+raw moments and quadrature data; DQMOM currently requires seeded initial
+crystals. See [Solvers](docs/solvers.md).
 
 ## Choose a starting point
 
@@ -81,6 +83,7 @@ raw moments and reconstructed quadrature; see [Solvers](docs/solvers.md).
 | add a kinetic family or other system component | [Kinetics](docs/kinetics.md), [Bringing your own system](docs/bring-your-own-system.md) | [Tutorial 4](<examples/Tutorial 4 Defining a Custom Kinetic.jl>) |
 | model dissolution | [Kinetics](docs/kinetics.md), [Solvers](docs/solvers.md) | [Tutorial 6](<examples/Tutorial 6 Dissolution.jl>) |
 | inspect QMOM nodes and weights | [Solvers](docs/solvers.md) | [Tutorial 7](<examples/Tutorial 7 QMOM.jl>) |
+| run seeded DQMOM | [Solvers](docs/solvers.md), [Running simulations](docs/simulation.md) | — |
 | compare real-data MoM and QMOM fits | [Parameter estimation](docs/parameter-estimation.md), [Solvers](docs/solvers.md) | [Tutorial 8](<examples/Tutorial 8 Real-data MoM versus QMOM.jl>) |
 | run sensitivity studies | [Sensitivity analysis](docs/sensitivity.md) | [Tutorial 3](<examples/Tutorial 3 Sensitivity Analysis.jl>) |
 | run ensemble uncertainty studies | [Ensembles and uncertainty](docs/uq-ensembles.md) | — |

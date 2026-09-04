@@ -15,6 +15,7 @@ import StaticArrays
     include("test_dissolution.jl")
     include("test_weno_signed.jl")
     include("test_qmom.jl")
+    include("test_dqmom.jl")
     include("test_aggregation_breakage.jl")
     include("test_runsimulation.jl")
     include("test_solvers.jl")

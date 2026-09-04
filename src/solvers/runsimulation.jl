@@ -40,9 +40,9 @@ Simulate batch crystallisation for a given set of kinetic models.
 
 # Returns
 A tuple `(problem, solution)` where `problem` is a
-`CrystallisationProblem` and `solution` is either
-`CrystallisationFVSolution` or `CrystallisationMoMSolution` depending on
-`solver`.
+`CrystallisationProblem` and `solution` is the solver-specific
+`CrystallisationFVSolution`, `CrystallisationMoMSolution`,
+`CrystallisationQMOMSolution`, or `CrystallisationDQMOMSolution`.
 """
 function runsimulation(parameters::AbstractArray{TPara},
                        nucleationfunction::AbstractNucleationFunction,

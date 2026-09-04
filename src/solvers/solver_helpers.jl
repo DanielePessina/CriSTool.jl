@@ -79,6 +79,8 @@ _zero_state(solver::MoM, CryProblem) =
     [zeros(solver.nmoments + 1); collect(values(CryProblem.initial_solvent_state))]
 _zero_state(solver::QMOM, CryProblem) =
     [zeros(moment_count(solver)); collect(values(CryProblem.initial_solvent_state))]
+_zero_state(solver::DQMOM, CryProblem) =
+    [zeros(2 * solver.nquadrature); collect(values(CryProblem.initial_solvent_state))]
 
 """
     _build_timestepping_algorithm(algorithm_type; step_limiter=nothing, stage_limiter=nothing)

@@ -25,6 +25,10 @@ The script:
 3. Prints per-solver median time, allocation count and bytes (Chairmarks
    `Sample.allocs`/`Sample.bytes`), plus ODE stats aggregated over the 7
    experiments: `nf`, `naccept`, `nreject`, `nsolve`, `nsave`.
+   It also prints a separate seeded compact-solver comparison for
+   `QMOM(nquadrature=3)` and `DQMOM(nquadrature=3)` using the same
+   `LogNormalInitialCrystals` workload. DQMOM is kept out of the unseeded
+   table because the v1 implementation requires a nonempty seed population.
 4. Runs **AllocCheck** (`check_allocs`) on a representative warm MoM call and
    lists every flagged allocation/dispatch site with its frame.
 5. Prints the benchmarked package's git hash (`git rev-parse --short HEAD`) for
@@ -43,6 +47,13 @@ Expected wall time ≈ 1–2 minutes (mostly precompile + the 5 s sampling windo
 | `nacc` / `nrej` | Accepted / rejected solver steps |
 | `nsave` | Sum of `length(sol.time)` (saved points) |
 | `nsteps` | Always `missing`: SciMLBase's current `DEStats` no longer has an `nsteps` field (it was removed); the old benchmark script read `stats.nsteps` and would silently get `missing` too |
+
+The seeded comparison uses `LogNormalInitialCrystals(mass_concentration =
+0.25, d43 = 12e-6, geometric_std = 1.25)` and each experiment's original
+temperature, initial concentration, and observation-time grid. It is a
+performance comparison of the compact moment/quadrature backends under an
+identical seeded workload, not a claim that DQMOM can reproduce an unseeded
+nucleation transient yet.
 
 ## Tooling decisions
 
@@ -169,3 +180,21 @@ mesh   aggregation μs   aggregation bytes   breakage μs   breakage bytes
 250           266.38                2064          78.38            2064
 500          1025.44                4160         305.92            4160
 ```
+
+## Seeded DQMOM comparison (2026-09-03)
+
+The benchmark harness was extended with a seeded compact-solver lane. On
+Julia 1.12.4, Apple Silicon, with the current working-tree DQMOM changes and
+the same seven fixture experiments, the measured table was:
+
+```
+solver             med time   med allocs      med bytes       nf     nacc   nrej   nsave
+QMOM3-seeded        0.732 ms         6755       515456.0     2517      416      0      57
+DQMOM3              4.478 ms         4853       614784.0     7581     1245     15      57
+```
+
+Both rows use `LogNormalInitialCrystals(mass_concentration = 0.25,
+d43 = 12e-6, geometric_std = 1.25)`, `nucl_CNT`, scalar empirical growth,
+and no aggregation or breakage. The DQMOM implementation uses an exact
+three-node static projection path for this workload; binary-source and other
+node-count paths remain on the generic dense projection implementation.

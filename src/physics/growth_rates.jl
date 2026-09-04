@@ -359,6 +359,20 @@ _validate_growth_parameters(model::growth_dissolution_length,
                             problem::CrystallisationProblem) =
     _validate_dissolution_parameters(model, parameters, problem)
 
+function _validate_growth_parameters(model::growth_empirical_length,
+                                     parameters,
+                                     problem::CrystallisationProblem)
+    _validate_dissolution_scalar_parameters(model, parameters)
+    isfinite(model.Lref) && model.Lref > 0.0 ||
+        throw(ArgumentError("growth_empirical_length Lref must be finite and strictly positive."))
+    p = _named_params(model, parameters)
+    p.growth_coefficient >= 0.0 ||
+        throw(ArgumentError("growth_coefficient must be nonnegative."))
+    p.growth_order > 0.0 ||
+        throw(ArgumentError("growth_order must be strictly positive."))
+    return nothing
+end
+
 """
     growthrate(::growth_empirical, parameters::AbstractVector, S::Real,
                system, temperature, numberdensity)
@@ -382,6 +396,75 @@ function growthrate(gf::growth_empirical, parameters::T, prob::CrystallisationPr
     temp = temperature(prob.temp_profile, t)
     return S > 1.001 ? p.growth_coefficient * (S - 1)^p.growth_order : 0.0
 end
+
+"""
+    growthrate_at_length(gf::growth_empirical_length, parameters,
+                         problem, state, time, crystal_length)
+
+Evaluate the empirical growth law with the length-dependent multiplier
+
+`(1 + size_dependence_coefficient * crystal_length / Lref)^size_dependence_exponent`.
+The returned rate is in metres per second.  The multiplier base must remain
+positive so non-integer exponents remain real-valued.
+"""
+@inline function growthrate_at_length(gf::growth_empirical_length,
+                                      parameters,
+                                      prob::CrystallisationProblem,
+                                      state,
+                                      time,
+                                      crystal_length::Real)
+    named_parameters = _named_params(gf, parameters)
+    supersaturation_ratio = supersaturation(prob, state, time)
+    zero_type = promote_type(typeof(supersaturation_ratio),
+                              eltype(parameters),
+                              typeof(crystal_length))
+    growth_threshold = one(supersaturation_ratio) +
+                       CRISTOOL_DISSOLUTION_EQUILIBRIUM_TOLERANCE
+    supersaturation_ratio > growth_threshold || return zero(zero_type)
+
+    size_factor_base = one(crystal_length) +
+                       named_parameters.size_dependence_coefficient *
+                       (crystal_length / gf.Lref)
+    size_factor_base > zero(size_factor_base) ||
+        throw(DomainError(size_factor_base,
+                          "growth_empirical_length size factor must be positive."))
+    return named_parameters.growth_coefficient *
+           (supersaturation_ratio - one(supersaturation_ratio)) ^
+           named_parameters.growth_order *
+           size_factor_base ^ named_parameters.size_dependence_exponent
+end
+
+"""Fill a mesh-sized destination with length-dependent empirical growth."""
+function growthrate!(destination::AbstractVector,
+                     gf::growth_empirical_length,
+                     parameters,
+                     prob::CrystallisationProblem,
+                     state,
+                     time,
+                     mesh::AbstractVector)
+    length(destination) == length(mesh) ||
+        throw(ArgumentError("growthrate! destination and mesh must have the same length."))
+    @inbounds for mesh_index in eachindex(destination, mesh)
+        destination[mesh_index] = growthrate_at_length(
+            gf, parameters, prob, state, time, mesh[mesh_index])
+    end
+    return destination
+end
+
+"""Allocate a mesh-sized length-dependent empirical growth field."""
+function growthrate(gf::growth_empirical_length,
+                    parameters::T,
+                    prob::CrystallisationProblem,
+                    state,
+                    time) where {T <: AbstractVector}
+    mesh = hasproperty(prob.solver, :cell_centre) ? prob.solver.cell_centre :
+           throw(ArgumentError("growth_empirical_length requires a discretised solver mesh " *
+                               "for the allocating growthrate method."))
+    rate_type = promote_type(eltype(parameters), eltype(state), eltype(mesh))
+    destination = Vector{rate_type}(undef, length(mesh))
+    return growthrate!(destination, gf, parameters, prob, state, time, mesh)
+end
+
 """
     growthrate(gf::growth_energy, parameters::AbstractVector, S::Real,
                system, temperature, numberdensity) -> Real

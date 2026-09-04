@@ -259,20 +259,25 @@ end
 ## QMOM population-balance integration
 
 """
-    aggregation_moment_source(aggregationfunction, parameters,
-                              quadrature, maximum_order; shape_factor=1)
+    _aggregation_moment_source(aggregationfunction, parameters,
+                               nodes, weights, maximum_order;
+                               shape_factor=1, pair_weight_scale=1)
 
-Evaluate the selected binary aggregation kernels directly on a QMOM rule.
-The returned vector contains sources for `M₀:M_max`.  Only the kernels whose
+Evaluate the selected binary aggregation kernels directly on a quadrature
+rule. The returned vector contains sources for `M₀:M_max`. Only the kernels whose
 volume-additive closure is implemented here are accepted; silently applying a
 discretised mesh operator to moments would violate the QMOM contract.
 """
-function aggregation_moment_source(aggregationfunction::AbstractAggregationFunction,
-                                   parameters,
-                                   quadrature::QMOMQuadrature,
-                                   maximum_order::Integer;
-                                   shape_factor = 1.0)
+function _aggregation_moment_source(aggregationfunction::AbstractAggregationFunction,
+                                    parameters,
+                                    nodes::AbstractVector,
+                                    weights::AbstractVector,
+                                    maximum_order::Integer;
+                                    shape_factor = 1.0,
+                                    pair_weight_scale = 1.0)
     maximum_order >= 0 || throw(ArgumentError("maximum_order must be nonnegative."))
+    length(nodes) == length(weights) ||
+        throw(ArgumentError("Aggregation nodes and weights must have the same length."))
     supported = aggregationfunction isa noaggregation ||
                 aggregationfunction isa aggr_scalar ||
                 aggregationfunction isa aggr_linear ||
@@ -282,35 +287,31 @@ function aggregation_moment_source(aggregationfunction::AbstractAggregationFunct
                                     "has no validated QMOM moment closure."))
 
     aggregationfunction isa noaggregation &&
-        return zeros(promote_type(eltype(quadrature.nodes),
-                                  eltype(quadrature.weights),
-                                  typeof(shape_factor)), maximum_order + 1)
-    isempty(quadrature) &&
-        return zeros(promote_type(eltype(quadrature.nodes),
-                                  eltype(quadrature.weights),
-                                  typeof(shape_factor)), maximum_order + 1)
+        return zeros(promote_type(eltype(nodes), eltype(weights), typeof(shape_factor),
+                                  typeof(pair_weight_scale)), maximum_order + 1)
+    isempty(nodes) &&
+        return zeros(promote_type(eltype(nodes), eltype(weights), typeof(shape_factor),
+                                  typeof(pair_weight_scale)), maximum_order + 1)
 
     named_parameters = _named_params(aggregationfunction, parameters)
     kernel_scale = exp10(named_parameters.log10_aggregation_coefficient)
-    source_type = promote_type(eltype(quadrature.nodes),
-                               eltype(quadrature.weights),
+    source_type = promote_type(eltype(nodes),
+                               eltype(weights),
                                typeof(shape_factor),
+                               typeof(pair_weight_scale),
                                typeof(kernel_scale))
     source = zeros(source_type, maximum_order + 1)
-    active_nodes = quadrature.active_nodes
-    nodes = quadrature.nodes
-    weights = quadrature.weights
 
     # The factor 1/2 accounts for the ordered (i,j) double sum.  The
     # volume-additive product is evaluated in volume coordinates so that
     # M₃ is preserved to roundoff for every supported kernel.
-    @inbounds for first_node in 1:active_nodes
+    @inbounds for first_node in eachindex(nodes, weights)
         first_length = nodes[first_node]
         first_weight = weights[first_node]
-        for second_node in 1:active_nodes
+        for second_node in eachindex(nodes, weights)
             second_length = nodes[second_node]
             second_weight = weights[second_node]
-            event_rate = 0.5 * first_weight * second_weight *
+            event_rate = 0.5 * pair_weight_scale * first_weight * second_weight *
                          _aggregation_kernel(aggregationfunction,
                                              kernel_scale,
                                              shape_factor,
@@ -328,6 +329,23 @@ function aggregation_moment_source(aggregationfunction::AbstractAggregationFunct
     return source
 end
 
+"""
+    aggregation_moment_source(aggregationfunction, parameters,
+                              quadrature, maximum_order; shape_factor=1)
+
+Evaluate a validated binary aggregation closure on a QMOM quadrature rule.
+The returned vector contains sources for the physical moments `M₀:M_max`.
+"""
+function aggregation_moment_source(aggregationfunction::AbstractAggregationFunction,
+                                   parameters,
+                                   quadrature::QMOMQuadrature,
+                                   maximum_order::Integer;
+                                   shape_factor = 1.0)
+    return _aggregation_moment_source(aggregationfunction, parameters,
+                                      quadrature.nodes, quadrature.weights,
+                                      maximum_order; shape_factor = shape_factor)
+end
+
 aggregation_moment_source(aggregationfunction::AbstractAggregationFunction,
                           parameters,
                           quadrature::QMOMQuadrature,
@@ -337,19 +355,23 @@ aggregation_moment_source(aggregationfunction::AbstractAggregationFunction,
                               maximum_order; shape_factor = problem.volume_shape_factor)
 
 """
-    breakage_moment_source(breakagefunction, parameters, quadrature,
-                           maximum_order)
+    _breakage_moment_source(breakagefunction, parameters,
+                            nodes, weights, maximum_order; weight_scale=1)
 
 Evaluate the exact raw-moment source of the existing uniform-in-volume
 binary daughter law on a QMOM rule.  A parent of length `L` contributes
 `β(L) [6/(k+3)-1] L^k` to moment `k`; consequently the source preserves
 `M₃` and adds one net particle to `M₀` per breakage event.
 """
-function breakage_moment_source(breakagefunction::AbstractBreakageFunction,
-                                parameters,
-                                quadrature::QMOMQuadrature,
-                                maximum_order::Integer)
+function _breakage_moment_source(breakagefunction::AbstractBreakageFunction,
+                                 parameters,
+                                 nodes::AbstractVector,
+                                 weights::AbstractVector,
+                                 maximum_order::Integer;
+                                 weight_scale = 1.0)
     maximum_order >= 0 || throw(ArgumentError("maximum_order must be nonnegative."))
+    length(nodes) == length(weights) ||
+        throw(ArgumentError("Breakage nodes and weights must have the same length."))
     supported = breakagefunction isa nobreakage ||
                 breakagefunction isa breakage_empirical ||
                 breakagefunction isa breakage_uniform
@@ -357,23 +379,19 @@ function breakage_moment_source(breakagefunction::AbstractBreakageFunction,
                                     "has no validated QMOM moment closure."))
 
     breakagefunction isa nobreakage &&
-        return zeros(promote_type(eltype(quadrature.nodes),
-                                  eltype(quadrature.weights),
-                                  eltype(parameters)), maximum_order + 1)
-    isempty(quadrature) &&
-        return zeros(promote_type(eltype(quadrature.nodes),
-                                  eltype(quadrature.weights),
-                                  eltype(parameters)), maximum_order + 1)
+        return zeros(promote_type(eltype(nodes), eltype(weights), eltype(parameters),
+                                  typeof(weight_scale)), maximum_order + 1)
+    isempty(nodes) &&
+        return zeros(promote_type(eltype(nodes), eltype(weights), eltype(parameters),
+                                  typeof(weight_scale)), maximum_order + 1)
 
     named_parameters = _named_params(breakagefunction, parameters)
-    source_type = promote_type(eltype(quadrature.nodes),
-                               eltype(quadrature.weights),
-                               eltype(parameters))
+    source_type = promote_type(eltype(nodes), eltype(weights), eltype(parameters),
+                               typeof(weight_scale))
     source = zeros(source_type, maximum_order + 1)
-    active_nodes = quadrature.active_nodes
-    @inbounds for node_index in 1:active_nodes
-        crystal_length = quadrature.nodes[node_index]
-        event_rate = quadrature.weights[node_index] *
+    @inbounds for node_index in eachindex(nodes, weights)
+        crystal_length = nodes[node_index]
+        event_rate = weight_scale * weights[node_index] *
                      _breakage_frequency(breakagefunction,
                                          named_parameters,
                                          crystal_length)
@@ -384,6 +402,22 @@ function breakage_moment_source(breakagefunction::AbstractBreakageFunction,
         end
     end
     return source
+end
+
+"""
+    breakage_moment_source(breakagefunction, parameters, quadrature,
+                           maximum_order)
+
+Evaluate the validated uniform-in-volume daughter closure on a QMOM
+quadrature rule. The returned vector contains physical moment sources.
+"""
+function breakage_moment_source(breakagefunction::AbstractBreakageFunction,
+                                parameters,
+                                quadrature::QMOMQuadrature,
+                                maximum_order::Integer)
+    return _breakage_moment_source(breakagefunction, parameters,
+                                   quadrature.nodes, quadrature.weights,
+                                   maximum_order)
 end
 
 """Return the growth contribution to `M₀:M_max` for a QMOM rule."""

@@ -27,6 +27,7 @@ Key ideas:
 nucl     = nucl_CNT()        # nparams = 2, axis Axis(ln_nucleation_prefactor=1, surface_energy=2)
 nucl_emp = nucl_empirical()  # nparams = 2, axis Axis(log10_nucleation_prefactor=1, nucleation_order=2)
 growth   = growth_empirical()# nparams = 2, axis Axis(growth_coefficient=1, growth_order=2)
+growth_L = growth_empirical_length() # adds a length multiplier; nparams = 4
 growth_E = growth_energy()   # log10_growth_coefficient, growth_order
 ```
 
@@ -38,6 +39,7 @@ Common parameter blocks are:
 | Nucleation | `nucl_empirical()` | `log10_nucleation_prefactor`, `nucleation_order` |
 | Nucleation | `nucl_empirical_energy()` | `ln_nucleation_prefactor`, `activation_energy`, `nucleation_order` |
 | Growth | `growth_empirical()` | `growth_coefficient` (m/s), `growth_order` |
+| Growth | `growth_empirical_length()` | `growth_coefficient` (m/s), `growth_order`, `size_dependence_coefficient`, `size_dependence_exponent` |
 | Growth | `growth_energy()` | `log10_growth_coefficient`, `growth_order`; activation energy is stored on the model |
 | Growth | `growth_energy_est()` | `log10_growth_coefficient`, `activation_energy`, `growth_order` |
 | Growth | `growth_BCF()` | `growth_coefficient`, `activation_temperature` |
@@ -59,15 +61,25 @@ negative values dissolve them. The default equilibrium deadband is
 dissolution = growth_dissolution()          # coefficient, activation energy, order
 combined    = growth_energy_dissolution()   # growth block + dissolution block
 length_dissolution = growth_dissolution_length() # adds size-dependence terms
+length_growth = growth_empirical_length()        # empirical growth with size factor
 ```
 
 `growth_dissolution` uses the dimensionless undersaturation driving force
 `(1 - S)^d` and returns a scalar rate. `growth_energy_dissolution` uses the
 growth law above the deadband and the dissolution law below it. The
-length-dependent model evaluates
-`(1 + κ * L / Lref)^p` at each mesh length, with `Lref = 1e-6` m by default;
-it is supported by `FiniteVol` and `WENO`, while QMOM accepts scalar signed
-kinetics only.
+length-dependent dissolution model evaluates `(1 + κ * L / Lref)^p` at each
+mesh length, with `Lref = 1e-6` m by default; it is supported by `FiniteVol`
+and `WENO`. The analogous `growth_empirical_length()` model uses
+
+```math
+G(L,S) = k_g(S-1)^{g}\left[1+\kappa_g\frac{L}{L_{ref}}\right]^{p_g},
+\qquad S > 1.001,
+```
+
+and returns zero in the equilibrium deadband. Its `Lref` is a fixed model
+field (1 µm by default), not a fifth fit parameter. It is available to
+discretised solvers and to seeded DQMOM, which evaluates the rate at each
+quadrature node. QMOM and MoM retain scalar-rate restrictions.
 
 The scalar models can be used by all moment and discretised solvers. For a
 length-dependent model, call `growthrate!` from a solver-owned scratch buffer

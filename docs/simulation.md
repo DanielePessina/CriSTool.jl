@@ -16,11 +16,14 @@ Choose the solver from the output you need:
 | --- | --- | --- |
 | moment-derived size metrics with a compact state | `MoM()` | `concentration`, `d10`, `d32`, `d43`, `moment2` |
 | moments plus a reconstructed Gaussian rule | `QMOM(nquadrature = N)` | the MoM fields, `moments`, `quadrature_nodes`, `quadrature_weights` |
+| seeded direct quadrature variables | `DQMOM(nquadrature = N)` | the MoM fields, `moments`, `nodes`, `weights`, and projection diagnostics |
 | a resolved particle-size distribution | `FiniteVol(meshsize = ..., lmax = ...)` | `numberdensity`, `voldensity`, `d10q`, `d50q`, `d90q`, and moment-derived sizes |
 | a higher-order finite-volume discretisation | `WENO(meshsize = ..., lmax = ...)` | the finite-volume fields and quantiles |
 
-`MoM` and `QMOM` do not store a full size-distribution mesh. Use `FiniteVol`
-or `WENO` when you need length-dependent rates or distribution quantiles.
+`MoM`, `QMOM`, and `DQMOM` do not store a full size-distribution mesh. Use
+`FiniteVol` or `WENO` when you need distribution quantiles. DQMOM can evaluate
+length-dependent growth at its nodes, but it currently requires seeded
+crystals and does not support length-dependent dissolution.
 Use `QMOM` when a compact moment state and a small set of reconstructed nodes
 are sufficient. See [Solvers](solvers.md) for the solver-specific details.
 
@@ -134,6 +137,44 @@ QMOM accepts scalar signed growth/dissolution kinetics and the validated
 volume-additive aggregation and uniform-in-volume breakage closures. Use
 `FiniteVol` or `WENO` for `growth_dissolution_length`; QMOM rejects arbitrary
 length-dependent kinetics until a corresponding moment closure is defined.
+
+## DQMOM simulation
+
+DQMOM is a seeded direct-quadrature solver. It evolves `N` weights and `N`
+physical crystal lengths, then reconstructs the first `2N` raw moments for
+observables. Supply either `initial_crystals` or a complete direct initial
+state; an empty unseeded population is rejected in v1.
+
+```julia
+initial_crystals = LogNormalInitialCrystals(
+    mass_concentration = 0.25,
+    d43 = 12e-6,
+    geometric_std = 1.25)
+
+problem, solution = runsimulation(
+    [3e-9, 1.2];
+    nucl = nucl_empirical_fixed(log10_nucleation_prefactor = -Inf,
+                                nucleation_order = 1.0),
+    gr = growth_empirical(),
+    agg = noaggregation(),
+    br = nobreakage(),
+    solver = DQMOM(nquadrature = 3),
+    initial_crystals = initial_crystals,
+    initial_concentration = 20.0,
+    saturation_model = ConstantSolubility(10.0),
+    save_idx = 0.0:3600.0:14400.0)
+
+@show solution.nodes[:, end]
+@show solution.weights[:, end]
+@show solution.d43[end]
+```
+
+The public DQMOM population state is `[weights; nodes; solvent_state...]`.
+Weights are particle numbers per volume and nodes are metres. Nodes must remain
+distinct and above `solver.minimum_size`. Scalar dissolution is supported only
+until a node reaches that lower boundary; DQMOM then fails explicitly rather
+than deleting a node or changing the active set. See [Solvers](solvers.md) for
+the projection equation and the supported-kinetics matrix.
 
 ## Finite-volume simulation with mesh and time-stepper
 

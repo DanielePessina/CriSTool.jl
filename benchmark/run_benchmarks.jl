@@ -18,6 +18,10 @@ const ROOT      = dirname(@__DIR__)            # repo root
 const FIXTURE   = joinpath(ROOT, "test", "fixtures", "real-experimental-dataset.csv")
 const FIXED_GRID = 0:1800:16200                # 0:30:270 min, expressed in seconds
 const CANONICAL_θ = Float64[38.0, 0.0006, 1e-9 / 60, 3.0]  # SI gold params
+const SEEDED_INITIAL_CRYSTALS = LogNormalInitialCrystals(
+    mass_concentration = 0.25,
+    d43 = 12e-6,
+    geometric_std = 1.25)
 const SECONDS = 5                              # Chairmarks sampling budget per benchmark
 
 git_hash() = strip(read(`git -C $ROOT rev-parse --short HEAD`, String))
@@ -30,7 +34,7 @@ end
 
 # Aggregate ODE stats over the 7 experiments of a fit run. NOTE: SciMLBase's
 # current DEStats has no `nsteps` field (it was removed) — reported as missing.
-function fit_ode_stats(exps, θ, solver; grid=nothing)
+function fit_ode_stats(exps, θ, solver; grid=nothing, initial_crystals=nothing)
     nf = naccept = nreject = nsave = 0
     nsolve = 0
     for e in exps
@@ -42,6 +46,7 @@ function fit_ode_stats(exps, θ, solver; grid=nothing)
                                         br = br_f,
                                         solver = solver,
                                         initial_concentration = CriSTool.initial_concentration(e),
+                                        initial_crystals = initial_crystals,
                                         save_idx = save_idx,
                                         temp_profile = CriSTool.ConstantTemperature(e.temperature))
         st = sol.ode_stats
@@ -53,6 +58,29 @@ function fit_ode_stats(exps, θ, solver; grid=nothing)
     end
     return (nf = nf, nsteps = missing, naccept = naccept,
             nreject = nreject, nsave = nsave, nsolve = nsolve)
+end
+
+"""Run the compact solvers on the same seeded workload.
+
+DQMOM is intentionally seeded-only in this first implementation.  Keeping
+this workload separate from the unseeded gold-fixture table makes that
+contract visible and gives QMOM a like-for-like comparison using the same
+kinetics, seed characteristics, temperatures, and observation grids.
+"""
+function run_seeded_compact_fit(exps, θ, solver)
+    for e in exps
+        CriSTool.runsimulation(θ;
+                               nucl = nucl_f,
+                               gr = gr_f,
+                               agg = agg_f,
+                               br = br_f,
+                               solver = solver,
+                               initial_crystals = SEEDED_INITIAL_CRYSTALS,
+                               initial_concentration = CriSTool.initial_concentration(e),
+                               save_idx = e.observables.concentration.time,
+                               temp_profile = CriSTool.ConstantTemperature(e.temperature))
+    end
+    return nothing
 end
 
 # --- oracle fit: gold MoM fit over all 7 experiments -----------------------
@@ -143,12 +171,15 @@ function main()
     fv200  = CriSTool.FiniteVol(meshsize = 200)
     weno200 = CriSTool.WENO(meshsize = 200)
     qmom3 = CriSTool.QMOM(nquadrature = 3)
+    dqmom3 = CriSTool.DQMOM(nquadrature = 3)
 
     # warm-up / compile (excluded from timing)
     run_mom_fit(exps, CANONICAL_θ)
     run_fixed_grid_fit(exps, CANONICAL_θ, fv200)
     run_fixed_grid_fit(exps, CANONICAL_θ, weno200)
     run_fixed_grid_fit(exps, CANONICAL_θ, qmom3)
+    run_seeded_compact_fit(exps, CANONICAL_θ, qmom3)
+    run_seeded_compact_fit(exps, CANONICAL_θ, dqmom3)
 
     # ---- benchmarks (Chairmarks, evals=1 like the original script) --------
     println("Benchmarking (Chairmarks, evals=1, seconds=$SECONDS)...")
@@ -156,12 +187,18 @@ function main()
     bm_fv    = @be run_fixed_grid_fit($exps, $CANONICAL_θ, $fv200) evals=1 seconds=SECONDS
     bm_weno  = @be run_fixed_grid_fit($exps, $CANONICAL_θ, $weno200) evals=1 seconds=SECONDS
     bm_qmom  = @be run_fixed_grid_fit($exps, $CANONICAL_θ, $qmom3) evals=1 seconds=SECONDS
+    bm_qmom_seeded = @be run_seeded_compact_fit($exps, $CANONICAL_θ, $qmom3) evals=1 seconds=SECONDS
+    bm_dqmom = @be run_seeded_compact_fit($exps, $CANONICAL_θ, $dqmom3) evals=1 seconds=SECONDS
 
     # ---- ODE stats (single warm run each) ---------------------------------
     stats_mom  = fit_ode_stats(exps, CANONICAL_θ, mom_solver)
     stats_fv   = fit_ode_stats(exps, CANONICAL_θ, fv200; grid = FIXED_GRID)
     stats_weno = fit_ode_stats(exps, CANONICAL_θ, weno200; grid = FIXED_GRID)
     stats_qmom = fit_ode_stats(exps, CANONICAL_θ, qmom3; grid = FIXED_GRID)
+    stats_qmom_seeded = fit_ode_stats(exps, CANONICAL_θ, qmom3;
+                                      initial_crystals = SEEDED_INITIAL_CRYSTALS)
+    stats_dqmom = fit_ode_stats(exps, CANONICAL_θ, dqmom3;
+                                initial_crystals = SEEDED_INITIAL_CRYSTALS)
 
     # ---- AllocCheck on a representative warm MoM call ----------------------
     println("Running AllocCheck on the warm MoM call (flat-vector path)...")
@@ -198,6 +235,23 @@ function main()
     println(io, "(stats aggregated over the 7 experiments; MoM on per-experiment time ")
     println(io, " grids, FV200/WENO200 on fixed grid 0:1800:16200 seconds; nsteps removed from")
     println(io, " SciMLBase.DEStats, so nsave = length(sol.time) is reported instead)")
+
+    println(io, "\nSeeded compact-solver comparison (same LogNormalInitialCrystals workload):")
+    @printf(io, "%-14s %12s %12s %14s %8s %8s %8s %8s %10s %10s\n",
+            "solver", "med time", "med allocs", "med bytes", "nf", "nacc",
+            "nrej", "nsolve", "nsave", "nsteps")
+    println(io, "-"^108)
+    for (name, bm, st) in (("QMOM3-seeded", bm_qmom_seeded, stats_qmom_seeded),
+                           ("DQMOM3", bm_dqmom, stats_dqmom))
+        ms = median_sample(bm)
+        @printf(io, "%-14s %10.3f ms %12d %14.1f %8d %8d %8d %8d %10d %10s\n",
+                name, ms.time * 1e3, ms.allocs, ms.bytes,
+                st.nf, st.naccept, st.nreject, st.nsolve, st.nsave,
+                string(st.nsteps))
+    end
+    println(io, "-"^108)
+    println(io, "DQMOM is seeded-only in v1; this table is intentionally separate")
+    println(io, "from the unseeded gold-fixture comparisons above.")
 
     # ---- AllocCheck verdict -------------------------------------------------
     println(io, "\n==== AllocCheck verdict (Julia ", VERSION, ", AllocCheck ", pkgversion(AllocCheck), ") ====")

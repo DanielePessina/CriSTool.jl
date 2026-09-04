@@ -120,20 +120,48 @@ function _validate_initial_crystal_domain(problem::CrystallisationProblem, d43_m
         solver.lmin <= d43_metres <= solver.lmax ||
             throw(ArgumentError("initial crystal d43 must lie within the solver size domain " *
                                 "[$(solver.lmin), $(solver.lmax)] m."))
-    elseif solver isa QMOM
+    elseif solver isa QMOM || solver isa DQMOM
         d43_metres >= solver.minimum_size ||
-            throw(ArgumentError("initial crystal d43 is below QMOM.minimum_size."))
+            throw(ArgumentError("initial crystal d43 is below the solver minimum_size."))
     end
     return nothing
 end
 
 function _initial_moment_population(problem::CrystallisationProblem, initial_crystals)
+    return _initial_moment_population(problem, initial_crystals,
+                                      moment_count(problem.solver))
+end
+
+function _initial_moment_population(problem::CrystallisationProblem,
+                                    initial_crystals,
+                                    population_count::Integer)
     model = _initial_crystal_distribution_model(initial_crystals)
     target_mu3 = initial_crystals.mass_concentration / (problem.crystal_density * problem.volume_shape_factor)
-    population_count = moment_count(problem.solver)
     number_scale = target_mu3 / model.raw_moment(3)
     return [number_scale * model.raw_moment(moment_order_value)
             for moment_order_value in 0:(population_count - 1)]
+end
+
+function _initial_dqmom_population(problem::CrystallisationProblem,
+                                    initial_crystals)
+    solver = problem.solver
+    nquadrature = solver.nquadrature
+    raw_moments = _initial_moment_population(problem, initial_crystals,
+                                             2 * nquadrature)
+    inversion_solver = QMOM(
+        nquadrature = nquadrature,
+        coordinate_scale = solver.coordinate_scale,
+        realizability_tolerance = solver.realizability_tolerance,
+        empty_population_tolerance = 0.0,
+        node_coalescence_tolerance = solver.node_coalescence_tolerance,
+        minimum_size = solver.minimum_size)
+    rule = invert_moments(raw_moments, inversion_solver)
+    rule.active_nodes == nquadrature ||
+        throw(ArgumentError("DQMOM requires an initial quadrature with " *
+                            "$nquadrature distinct active nodes."))
+    all(weight -> weight > 0.0, rule.weights) ||
+        throw(ArgumentError("DQMOM requires strictly positive initial quadrature weights."))
+    return vcat(collect(rule.weights), collect(rule.nodes))
 end
 
 function _initial_mesh_population(problem::CrystallisationProblem, initial_crystals)
@@ -184,9 +212,13 @@ function initial_state_from_characteristics(problem::CrystallisationProblem,
         throw(ArgumentError("The initial d43 characteristic requires a moment solver " *
                             "that tracks through the fourth raw moment."))
     _validate_initial_crystal_domain(problem, characteristics.d43)
-    population = problem.solver isa AbstractMomentSolver ?
-                 _initial_moment_population(problem, characteristics) :
-                 _initial_mesh_population(problem, characteristics)
+    population = if problem.solver isa DQMOM
+        _initial_dqmom_population(problem, characteristics)
+    elseif problem.solver isa AbstractMomentSolver
+        _initial_moment_population(problem, characteristics)
+    else
+        _initial_mesh_population(problem, characteristics)
+    end
     return vcat(population, solvent_values)
 end
 

@@ -384,6 +384,36 @@ Base.@kwdef @concrete struct growth_empirical <: AbstractFPScalarGrowthFunction
 end
 
 paramaxis(::growth_empirical) = ComponentArrays.Axis(growth_coefficient = 1, growth_order = 2)
+
+"""
+    growth_empirical_length <: AbstractFPLengthGrowthFunction
+
+Empirical length-dependent crystal growth rate function.
+
+The scalar empirical supersaturation law is multiplied by a dimensionless
+length factor. `Lref` is a fixed reference length, not a fitted parameter.
+
+Fields:
+- `nparams::Int64`: Number of parameters (4)
+- `string::String`: String identifier ("Emp. Gr Length")
+- `symbols::Vector{Symbol}`: Parameter symbols
+- `Lref::Float64`: Reference length in metres (default: 1 µm)
+"""
+Base.@kwdef @concrete struct growth_empirical_length <: AbstractFPLengthGrowthFunction
+    nparams::Int64 = 4
+    string::String = "Emp. Gr Length"
+    symbols::Vector{Symbol} = [:growth_coefficient, :growth_order,
+                               :size_dependence_coefficient,
+                               :size_dependence_exponent]
+    Lref::Float64 = CRISTOOL_DISSOLUTION_LREF
+end
+
+paramaxis(::growth_empirical_length) = ComponentArrays.Axis(
+    growth_coefficient = 1,
+    growth_order = 2,
+    size_dependence_coefficient = 3,
+    size_dependence_exponent = 4)
+
 """
     growth_energy <: AbstractFPScalarGrowthFunction
 

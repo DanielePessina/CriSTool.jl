@@ -48,8 +48,11 @@ For reversible systems, use a signed scalar growth rate in the existing growth
 slot: `G > 0` grows crystals, `G < 0` dissolves them, and the built-in
 `growth_dissolution()` / `growth_energy_dissolution()` models apply the
 equilibrium deadband. Scalar signed rates work with MoM, QMOM, FiniteVol, and
-WENO. Length-dependent `growth_dissolution_length()` is a discretised-solver
-model; its `growthrate!` method fills a caller-owned mesh buffer.
+WENO. Seeded DQMOM also supports scalar signed rates. The
+`growth_empirical_length()` model evaluates length-dependent growth at DQMOM
+nodes when the initial population is seeded. Length-dependent
+`growth_dissolution_length()` remains a discretised-solver model; its
+`growthrate!` method fills a caller-owned mesh buffer.
 
 ## 2. Custom kinetics (Tutorial-4 pattern)
 

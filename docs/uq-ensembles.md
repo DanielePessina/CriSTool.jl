@@ -39,6 +39,9 @@ Set `solver = QMOM(nquadrature = 3)` to run the same ensemble workflow with a
 moment/quadrature solver. QMOM ensemble results use the moment-based
 `EnsembleMoMSolution` container, so `d43`, `d32`, and concentration summaries
 are available in the same fields. QMOM does not produce a `d50q` quantile.
+`DQMOM(nquadrature = 3)` can be used when every measurement supplies a
+nonempty `initial_crystals` population; its seeded-only contract is enforced
+by the underlying simulation.
 
 ## Example: ensemble from an explicit sample matrix
 
@@ -63,5 +66,5 @@ ensemble = run_ensemble(samples, measurements,
   fields when running simulations.
 - Pass `diss = growth_dissolution()` (and include its SI parameter block in the
   samples) to propagate an independent dissolution model.
-- The returned objects are `EnsembleMoMSolution` for MoM/QMOM and
+- The returned objects are `EnsembleMoMSolution` for MoM/QMOM/DQMOM and
   `EnsembleFVSolution` for FiniteVol/WENO.

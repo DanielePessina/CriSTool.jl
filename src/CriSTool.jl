@@ -72,7 +72,8 @@ const CRISTOOL_PRIOR_PLOT_SAMPLES = 2^18
 
 ## Export stuff
 export CrystallisationFVSolution, CrystallisationMoMSolution,
-       CrystallisationQMOMSolution, EnsembleFVSolution, EnsembleMoMSolution,
+       CrystallisationQMOMSolution, CrystallisationDQMOMSolution,
+       EnsembleFVSolution, EnsembleMoMSolution,
        CrystallisationProblem
 export Observable, ObservableColumns, CrystallisationExperiment, AbstractExperiment,
        initial_concentration
@@ -84,7 +85,8 @@ export AbstractTemperature, ConstantTemperature, LinearTemperature, RampTemperat
        CallableTemperature, temperature
 export AbstractSolution, state_vars, size_metrics, observable_values, solvent_state,
        default_solvent_dynamics
-export AbstractNucleationFunction, AbstractGrowthFunction, nucl_CNT,
+export AbstractNucleationFunction, AbstractGrowthFunction, AbstractFPGrowthFunction,
+       AbstractFPScalarGrowthFunction, AbstractFPLengthGrowthFunction, nucl_CNT,
        nucl_empirical, nucl_empirical_energy, nucl_CNTnoS, nucl_secondary,
        nucl_prim_plus_second, nucl_CNT_plus_second, nucl_CNT_fixed,
        nucl_empirical_fixed, AbstractDissolutionFunction,
@@ -93,7 +95,7 @@ export AbstractNucleationFunction, AbstractGrowthFunction, nucl_CNT,
        nodissolution, nondissolution, dissolutionrate, dissolutionrate!, dissolutionrate_at_length,
        net_growth_rate, net_growth_rate!, net_growth_rate_at_length,
        growth_empirical, growth_empirical_fixed, growth_energy, growth_energy_est,
-       growth_BpS, growth_BCF,
+       growth_empirical_length, growth_BpS, growth_BCF,
        growth_dissolution, growth_dissolution_length, growth_energy_dissolution,
        nucleationrate, growthrate, aggregationrate, breakagerate,
        growthrate!, growthrate_at_length, net_growthrate
@@ -108,9 +110,11 @@ export AbstractPELossFunction, AbstractVarianceModel, MeasuredVariance, Relative
 export experiments_from_table, load_measurements,
        bootstrap_repeatmeasurements, balance_variances, repeatmeasurementbalancer,
        psd_measurementbalancer, bootstrap_measurements
-export AbstractSolver, AbstractMomentSolver, FiniteVol, MoM, QMOM, WENO,
-       QMOMQuadrature, QMOMInversionDiagnostics, invert_moments,
+export AbstractSolver, AbstractMomentSolver, FiniteVol, MoM, QMOM, DQMOM, WENO,
+       QMOMQuadrature, QMOMInversionDiagnostics, DQMOMProjectionDiagnostics,
+       invert_moments,
        moment_order, moment_count, nmoments, quadrature, qmom_quadrature,
+       dqmom_quadrature,
        aggregation_moment_source, breakage_moment_source
 export run_abc, AbstractABCSampler, ABCDESampler, ABCDETurnerSampler
 export run_ensemble, run_ensemble_fixed
@@ -153,6 +157,7 @@ include("physics/aggregation_breakage_rates.jl")
 include("solvers/solver_helpers.jl")
 include("solvers/qmom.jl")
 include("solvers/mom.jl")
+include("solvers/dqmom.jl")
 include("solvers/finite_volume.jl")
 include("solvers/weno.jl")
 include("solvers/runsimulation.jl")

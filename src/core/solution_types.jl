@@ -123,6 +123,32 @@ struct CrystallisationQMOMSolution{Tt, TCo, TM, TN, TW, TD1, TD3, TD4, TMu2,
 end
 
 """
+    CrystallisationDQMOMSolution
+
+Stores a seeded direct-quadrature trajectory. `weights` and `nodes` have
+shape `(N, nt)` and are physical particle-number weights and crystal lengths
+in metres. `moments` are derived from those arrays and have shape
+`(2N, nt)`; they are not the ODE state.
+"""
+struct CrystallisationDQMOMSolution{Tt, TCo, TW, TN, TM, TD1, TD3, TD4, TMu2,
+                                    TL, TF, TS, TDiag} <: AbstractSolution
+    time::Tt
+    concentration::TCo
+    weights::TW
+    nodes::TN
+    moments::TM
+    d10::TD1
+    d32::TD3
+    d43::TD4
+    moment2::TMu2
+    solvent_state::TL
+    final_state::TF
+    ode_stats::TS
+    success::Bool
+    projection_diagnostics::TDiag
+end
+
+"""
     EnsembleFVSolution{T<:AbstractFloat} <: AbstractSolution
 
     Stores ensemble simulation results and statistics from finite volume solver.

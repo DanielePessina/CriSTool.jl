@@ -6,7 +6,8 @@ workflow usually combines four pieces:
 1. kinetic models for nucleation, growth, aggregation, and breakage;
 2. a parameter vector, either flat or named with `ComponentArrays`;
 3. process conditions such as the temperature and saturation profiles; and
-4. a numerical solver, such as `MoM()`, `QMOM(...)`, `FiniteVol(...)`, or `WENO(...)`.
+4. a numerical solver, such as `MoM()`, `QMOM(...)`, `DQMOM(...)`,
+   `FiniteVol(...)`, or `WENO(...)`.
 
 `runsimulation` combines those pieces and returns a problem plus a solution.
 The same model/data objects are then reused by parameter estimation, ABCDE,

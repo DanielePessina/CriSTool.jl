@@ -16,8 +16,10 @@ abstract type AbstractDiscretisedSolver <: AbstractSolver end
 """
     AbstractMomentSolver <: AbstractSolver
 
-Abstract supertype for solvers that evolve raw moments of the crystal-size
-distribution rather than values on a fixed length mesh.
+Abstract supertype for compact population solvers that work with moment or
+quadrature representations of the crystal-size distribution rather than values
+on a fixed length mesh. `MoM` and `QMOM` evolve raw moments; `DQMOM` evolves
+the corresponding direct quadrature variables.
 """
 abstract type AbstractMomentSolver <: AbstractSolver end
 
@@ -156,9 +158,49 @@ Base.@kwdef @concrete struct QMOM <: AbstractMomentSolver
     abstol::Float64 = 1e-8
 end
 
+"""
+    DQMOM <: AbstractMomentSolver
+
+Direct Quadrature Method of Moments solver for a one-dimensional crystal-size
+population balance.  Unlike `QMOM`, the ODE state contains the quadrature
+weights and physical crystal nodes rather than raw moments; the solver
+converts the public state to weighted, scaled nodes internally.
+
+The first implementation requires a nonempty seeded population with positive,
+pairwise-distinct nodes.  Empty populations and node-deactivation events are
+rejected explicitly because they require a separate birth or boundary-flux
+model.
+
+Fields:
+- `nquadrature::Int64`: Number of direct quadrature nodes (default: 3).
+- `coordinate_scale::Float64`: Physical length represented by one scaled node
+  coordinate (default: `1e-6` m).
+- `weight_scale::Float64`: Number-density scale used for the internal ODE
+  state (default: `1e12`).
+- `realizability_tolerance::Float64`: Tolerance for seeded-state checks.
+- `node_coalescence_tolerance::Float64`: Minimum node separation in scaled
+  coordinates.
+- `minimum_size::Float64`: Lower physical support bound for active nodes.
+- `timestepping_algorithm::Symbol`: Time-stepping algorithm selector.
+- `reltol::Float64`, `abstol::Float64`: ODE tolerances.
+"""
+Base.@kwdef @concrete struct DQMOM <: AbstractMomentSolver
+    nquadrature::Int64 = 3
+    coordinate_scale::Float64 = 1e-6
+    weight_scale::Float64 = 1e12
+    realizability_tolerance::Float64 = 1e-10
+    node_coalescence_tolerance::Float64 = 1e-10
+    minimum_size::Float64 = 0.0
+    string::String = "DQMOM"
+    timestepping_algorithm::Symbol = :auto
+    reltol::Float64 = 1e-7
+    abstol::Float64 = 1e-8
+end
+
 """Highest tracked raw-moment order for a moment solver."""
 moment_order(solver::MoM) = solver.nmoments
 moment_order(solver::QMOM) = 2 * solver.nquadrature - 1
+moment_order(solver::DQMOM) = 2 * solver.nquadrature - 1
 
 """Number of raw moments represented by a moment solver state."""
 moment_count(solver::MoM) = solver.nmoments + 1
@@ -169,6 +211,7 @@ _population_state_count(solver::FiniteVol) = solver.meshsize
 _population_state_count(solver::WENO) = solver.meshsize
 _population_state_count(solver::MoM) = moment_count(solver)
 _population_state_count(solver::QMOM) = moment_count(solver)
+_population_state_count(solver::DQMOM) = 2 * solver.nquadrature
 _population_state_count(solver::AbstractSolver) =
     throw(ArgumentError("No population-state size is defined for $(typeof(solver))."))
 
@@ -189,6 +232,21 @@ struct QMOMInversionDiagnostics{T}
     minimum_weight::T
     minimum_recurrence::T
     reconstruction_error::T
+end
+
+"""
+    DQMOMProjectionDiagnostics
+
+Diagnostics for one saved DQMOM state.  The condition estimate is computed
+during ordinary post-processing and intentionally kept out of the
+ForwardDiff-valued RHS.
+"""
+struct DQMOMProjectionDiagnostics{T}
+    status::Symbol
+    minimum_weight::T
+    minimum_node::T
+    minimum_node_gap::T
+    condition_estimate::T
 end
 
 """
