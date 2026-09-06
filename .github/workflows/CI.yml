@@ -40,7 +40,8 @@ jobs:
       - uses: julia-actions/cache@v2
       - uses: julia-actions/julia-buildpkg@v1
       - name: JET analysis of the MoM solve core
-        run: julia --project=. -e '
+        run: |
+          julia --project=. -e '
             using Pkg; Pkg.add("JET")
             using JET, CriSTool, ComponentArrays
             res = JET.report_call(() -> CriSTool.runsimulation(
@@ -58,4 +59,5 @@ jobs:
                 foreach(println, reports)
                 error("JET found $(length(reports)) report(s) in the CriSTool frames of the MoM solve path")
             end
-            println("JET: 0 reports on the MoM solve core")'
+            println("JET: 0 reports on the MoM solve core")
+          '
