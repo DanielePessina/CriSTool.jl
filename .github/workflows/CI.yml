@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Julia ${{ matrix.version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The julia = "^1.10" floor in Project.toml is validated by this
+        # matrix; a fresh resolution per version picks deps compatible with
+        # that Julia (Manifest.toml is gitignored).
+        version: ['1.10', '1.11', '1.12']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: ${{ matrix.version }}
+      - uses: julia-actions/cache@v2
+      - uses: julia-actions/julia-buildpkg@v1
+      - uses: julia-actions/julia-runtest@v1
+
+  jet:
+    name: JET static analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1.12'
+      - uses: julia-actions/cache@v2
+      - uses: julia-actions/julia-buildpkg@v1
+      - name: JET analysis of the MoM solve core
+        run: julia --project=. -e '
+            using Pkg; Pkg.add("JET")
+            using JET, CriSTool, ComponentArrays
+            res = JET.report_call(() -> CriSTool.runsimulation(
+                    ComponentArrays.ComponentVector(
+                        Float64[38.0, 6e-4, 1e-9/60, 3.0],
+                        ComponentArrays.Axis((nucl = (ln_nucleation_prefactor = 1, surface_energy = 2),
+                                              gr = (growth_coefficient = 1, growth_order = 2))));
+                    nucl = CriSTool.nucl_CNT(), gr = CriSTool.growth_empirical(),
+                    agg = CriSTool.noaggregation(), br = CriSTool.nobreakage(),
+                    solver = CriSTool.MoM(), save_idx = [0.0, 1.0],
+                    temp_profile = CriSTool.ConstantTemperature(293.15)),
+                target_modules = (CriSTool,))
+            reports = JET.get_reports(res)
+            if !isempty(reports)
+                foreach(println, reports)
+                error("JET found $(length(reports)) report(s) in the CriSTool frames of the MoM solve path")
+            end
+            println("JET: 0 reports on the MoM solve core")'

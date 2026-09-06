@@ -31,4 +31,5 @@ import StaticArrays
     include("test_measurements.jl")
     include("test_gold_fixture.jl")
     include("test_plotting.jl")
+    include("test_aqua.jl")
 end

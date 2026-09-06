@@ -17,6 +17,8 @@ module KissABC
 
 import AbstractMCMC
 import AbstractMCMC: sample, step, MCMCThreads, MCMCDistributed
+import FlexiChains
+import Turing
 using Random
 using Distributions
 using MonteCarloMeasurements
@@ -1122,11 +1124,10 @@ struct AISState{S, L}
     AISState(s::S, l::L, i = 1) where {S, L} = new{S, L}(s, l, i)
 end
 
-function AbstractMCMC.step(rng::Random.AbstractRNG,
-                           model::AbstractMCMC.AbstractModel,
-                           spl::AIS;
-                           retry_sampling::Int = 100,
-                           kwargs...,)
+function _ais_step_impl(rng::Random.AbstractRNG,
+                        model::AbstractMCMC.AbstractModel,
+                        spl::AIS,
+                        retry_sampling::Int)
     nparticles = spl.nparticles
     nparticles < length(model) + 5 && error("nparticles = ",
           nparticles,
@@ -1151,6 +1152,28 @@ end
 
 function AbstractMCMC.step(rng::Random.AbstractRNG,
                            model::AbstractMCMC.AbstractModel,
+                           spl::AIS;
+                           retry_sampling::Int = 100,
+                           kwargs...,)
+    return _ais_step_impl(rng, model, spl, retry_sampling)
+end
+
+# Resolve the method ambiguity between this vendored AIS step and Turing's
+# `step(::AbstractRNG, ::DynamicPPL.Model, ::AbstractMCMC.AbstractSampler)`
+# (Aqua ambiguities check). The vendored ABC machinery only supports
+# `AbstractDensity` models, so a DynamicPPL/Turing model is a hard misuse:
+# fail loudly instead of dispatching ambiguously into Turing's sampler path.
+function AbstractMCMC.step(rng::Random.AbstractRNG,
+                           model::Turing.DynamicPPL.Model,
+                           spl::AIS;
+                           kwargs...)
+    error("AIS sampling requires a KissABC density (ApproxPosterior / " *
+          "CommonLogDensity), not a DynamicPPL/Turing model. Use Turing's own " *
+          "MCMC samplers for DynamicPPL models.")
+end
+
+function AbstractMCMC.step(rng::Random.AbstractRNG,
+                           model::AbstractMCMC.AbstractModel,
                            spl::AIS,
                            state::AISState;
                            ntransitions::Int = 1,
@@ -1163,16 +1186,33 @@ function AbstractMCMC.step(rng::Random.AbstractRNG,
     AISState(state.sample, state.loglikelihood, 1 + (i % spl.nparticles))
 end
 
+function _ais_bundle_samples(samples::Vector{T}) where {T <: Particle}
+    l = length(samples[1].x)
+    P = map(x -> Particles(x), getindex.(getfield.(samples, :x), i) for i in 1:l)
+    length(P) == 1 && return P[1]
+    return P
+end
+
 function AbstractMCMC.bundle_samples(samples::Vector{T},
                                      ::AbstractMCMC.AbstractModel,
                                      ::AIS,
                                      ::Any,
                                      ::Type;
                                      kwargs...,) where {T <: Particle}
-    l = length(samples[1].x)
-    P = map(x -> Particles(x), getindex.(getfield.(samples, :x), i) for i in 1:l)
-    length(P) == 1 && return P[1]
-    return P
+    return _ais_bundle_samples(samples)
+end
+
+# Resolve the method ambiguity between this vendored AIS bundle_samples and
+# FlexiChains' `bundle_samples(::AbstractVector, ..., ::Type{VNChain})`
+# (Aqua ambiguities check). The chain type is ignored by the AIS method, so
+# dispatch to the shared body.
+function AbstractMCMC.bundle_samples(samples::Vector{T},
+                                     m::AbstractMCMC.AbstractModel,
+                                     s::AIS,
+                                     lss,
+                                     ::Type{FlexiChains.VNChain};
+                                     kwargs...,) where {T <: Particle}
+    return _ais_bundle_samples(samples)
 end
 
 function AbstractMCMC.chainsstack(c::Vector{Vector{T}}) where {T <: Particles}
