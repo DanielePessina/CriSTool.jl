@@ -399,30 +399,38 @@ function nuts_model(experiments::Vector{<:AbstractExperiment},
     # one private LossSetup from a task-local memo, avoiding a deep copy for
     # every NUTS transition.  Each loss evaluation still remakes its
     # ODEProblem from that chain-local template.
-    setup_per_task = _cristool_once_per_task() do
+    setup_per_task = _cristool_once_per_task(LossSetup) do
         deepcopy(setup)
     end
     return _cristool_nuts_loss_model(prior, lossfunction, setup_per_task)
 end
 
-"""Task-local memoized initializer.
+"""Build a task-local memoized initializer of element type `T`.
 
-Faithful port of `Base.OncePerTask` (Julia 1.12+): each calling task computes
-`f()` once, on first call, and every later call from that task returns the
-same value.  It is exactly Base's own implementation - `get!(f,
-task_local_storage(), self)` keyed by the object, with a typed `::T` result
-assert so the NUTS model's `loss_setup_per_task()` call site stays type
-stable (it runs once per log-probability evaluation).  `task_local_storage`
-is Base since Julia 1.0, so this keeps working on the 1.10/1.11 floor that
-lacks `Base.OncePerTask`.
+Julia >= 1.12 ships `Base.OncePerTask`, so this returns the native object
+directly (zero custom code, explicit `T`).  On the 1.10/1.11 LTS floor that
+type is absent (no Compat backport either), so it falls back to an
+identical port: Base's own implementation of `OncePerTask` is exactly
+`get!(f, task_local_storage(), self)::T` keyed by the object.
+
+`T` is passed explicitly (never inferred) so the model's
+`loss_setup_per_task()` call site - which runs once per NUTS
+log-probability evaluation - stays type stable on every supported Julia.
 """
+function _cristool_once_per_task(initializer, ::Type{T}) where {T}
+    if isdefined(Base, :OncePerTask)
+        return Base.OncePerTask{T}(initializer)
+    end
+    return _CristoolOncePerTask{T, typeof(initializer)}(initializer)
+end
+
+"""Task-local memoized initializer, ported from `Base.OncePerTask` (1.12+)."""
 struct _CristoolOncePerTask{T, F}
     initializer::F
 end
 @inline function (_opt::_CristoolOncePerTask{T, F})() where {T, F}
     get!(_opt.initializer, task_local_storage(), _opt)::T
 end
-_cristool_once_per_task(f) = _CristoolOncePerTask{Base.promote_op(f), typeof(f)}(f)
 
 # Module-scope Turing model (DynamicPPL requirement). Generic over the
 # number of parameters; the per-task loss setup is hoisted out of the model.
