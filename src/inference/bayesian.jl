@@ -407,24 +407,22 @@ end
 
 """Task-local memoized initializer.
 
-Faithful stand-in for `Base.OncePerTask` (Julia 1.11+): builds one value per
-calling task on first use and returns the same value for subsequent calls
-from that task.  Implemented with `task_local_storage` (Base since Julia
-1.0), so the NUTS model path keeps working on the Julia 1.10 floor.  The
-`gensym` key keeps concurrent `nuts_model` calls independent.
+Faithful port of `Base.OncePerTask` (Julia 1.12+): each calling task computes
+`f()` once, on first call, and every later call from that task returns the
+same value.  It is exactly Base's own implementation - `get!(f,
+task_local_storage(), self)` keyed by the object, with a typed `::T` result
+assert so the NUTS model's `loss_setup_per_task()` call site stays type
+stable (it runs once per log-probability evaluation).  `task_local_storage`
+is Base since Julia 1.0, so this keeps working on the 1.10/1.11 floor that
+lacks `Base.OncePerTask`.
 """
-function _cristool_once_per_task(f)
-    key = gensym()
-    return function ()
-        storage = task_local_storage()
-        val = get(storage, key, nothing)
-        if val === nothing
-            val = f()
-            storage[key] = val
-        end
-        return val
-    end
+struct _CristoolOncePerTask{T, F}
+    initializer::F
 end
+@inline function (_opt::_CristoolOncePerTask{T, F})() where {T, F}
+    get!(_opt.initializer, task_local_storage(), _opt)::T
+end
+_cristool_once_per_task(f) = _CristoolOncePerTask{Base.promote_op(f), typeof(f)}(f)
 
 # Module-scope Turing model (DynamicPPL requirement). Generic over the
 # number of parameters; the per-task loss setup is hoisted out of the model.
