@@ -1,4 +1,33 @@
-function _weno_apply_sources!(dstdt, st, p, t, CryProblem, growth_rate)
+"""Fused divergence sweep + aggregation/breakage sources + solvent tail.
+
+When the default single-concentration solvent coupling is active, the
+concentration depletion is accumulated inside the divergence pass (one array
+sweep instead of two).  Otherwise the sweep and the `_solvent_derivatives`
+pass run exactly as before.
+"""
+@inline function _weno_divergence_sweep!(dstdt, st, p, t, flux_cache, CryProblem,
+                                         growth_rate)
+    dstdt_nd_view = crystal_state(CryProblem, dstdt)
+    numberdensity = crystal_state(CryProblem, st)
+    if _fused_solvent_coupling_enabled(CryProblem)
+        fused_depletion = _fused_depletion_divergence!(dstdt_nd_view, flux_cache,
+                                                       numberdensity,
+                                                       CryProblem.solver.cell_centre,
+                                                       CryProblem.solver.cell_dL,
+                                                       growth_rate)
+    else
+        for i in eachindex(dstdt_nd_view)
+            dstdt_nd_view[i] = -(flux_cache[i + 1] - flux_cache[i]) /
+                               CryProblem.solver.cell_dL
+        end
+        fused_depletion = nothing
+    end
+    _weno_apply_sources!(dstdt, st, p, t, CryProblem)
+    _weno_solvent_tail!(dstdt, st, p, t, CryProblem, growth_rate, fused_depletion)
+    return nothing
+end
+
+function _weno_apply_sources!(dstdt, st, p, t, CryProblem)
     dstdt_nd_view = crystal_state(CryProblem, dstdt)
     agg_rate = aggregationrate(CryProblem.kinetics_aggregationfunction, p.agg,
                                CryProblem, st, t)
@@ -11,9 +40,26 @@ function _weno_apply_sources!(dstdt, st, p, t, CryProblem, growth_rate)
     if !(typeof(br_rate) <: Real && br_rate == 0.0)
         dstdt_nd_view .+= br_rate
     end
+    return nothing
+end
 
-    solvent_rates = _solvent_derivatives(CryProblem, st, t, growth_rate)
-    _write_solvent_derivatives!(dstdt, CryProblem, solvent_rates)
+"""Fused default-solvent RHS tail for the WENO sweeps.
+
+The depletion came from the fused divergence sweep; the solvent slot receives
+`-(3 * kv * rho * depletion)` with the same operation order as
+`DefaultSolventDynamics` (bit-identical).  Non-default solvent couplings keep
+the separate `_solvent_derivatives` pass.
+"""
+@inline function _weno_solvent_tail!(dstdt, st, p, t, CryProblem, growth_rate,
+                                     fused_depletion)
+    if fused_depletion === nothing
+        solvent_rates = _solvent_derivatives(CryProblem, st, t, growth_rate)
+        _write_solvent_derivatives!(dstdt, CryProblem, solvent_rates)
+    else
+        depletion_coupled = 3 * CryProblem.volume_shape_factor *
+                            CryProblem.crystal_density * fused_depletion
+        dstdt[end] = -depletion_coupled
+    end
     return nothing
 end
 
@@ -280,12 +326,7 @@ function _weno_rhs!(dstdt, st, p, t, CryProblem,
                                 net_growth_rates,
                                 inflowbc,
                                 ndens_pad_cache)
-        dstdt_nd_view = crystal_state(CryProblem, dstdt)
-        for i in 1:length(dstdt_nd_view)
-            dstdt_nd_view[i] = -(flux_cache[i + 1] - flux_cache[i]) /
-                               CryProblem.solver.cell_dL
-        end
-        _weno_apply_sources!(dstdt, st, p, t, CryProblem, net_growth_rates)
+        _weno_divergence_sweep!(dstdt, st, p, t, flux_cache, CryProblem, net_growth_rates)
         return nothing
     end
 
@@ -311,7 +352,7 @@ function _weno_rhs!(dstdt, st, p, t, CryProblem,
         flux_cache[1] = inflowbc
         flux_cache[2] = scalar_growth_rate *
                         0.5 * (numberdensity[1] + numberdensity[2])
-        for i in 3:length(numberdensity)
+        @inbounds for i in 3:length(numberdensity)
             flux_cache[i] = scalar_growth_rate * weno_flux(ndens_pad_cache, i + 1)
         end
         high_order_state = numberdensity[end] +
@@ -331,12 +372,7 @@ function _weno_rhs!(dstdt, st, p, t, CryProblem,
         fill!(flux_cache, zero(scalar_growth_rate))
     end
 
-    dstdt_nd_view = crystal_state(CryProblem, dstdt)
-    for i in 1:length(dstdt_nd_view)
-        dstdt_nd_view[i] = -(flux_cache[i + 1] - flux_cache[i]) /
-                           CryProblem.solver.cell_dL
-    end
-    _weno_apply_sources!(dstdt, st, p, t, CryProblem, scalar_growth_rate)
+    _weno_divergence_sweep!(dstdt, st, p, t, flux_cache, CryProblem, scalar_growth_rate)
     return nothing
 end
 
@@ -368,12 +404,7 @@ function _weno_rhs!(dstdt, st, p, t, CryProblem,
                             inflowbc,
                             ndens_pad_cache)
 
-    dstdt_nd_view = crystal_state(CryProblem, dstdt)
-    for i in 1:length(dstdt_nd_view)
-        dstdt_nd_view[i] = -(flux_cache[i + 1] - flux_cache[i]) /
-                           CryProblem.solver.cell_dL
-    end
-    _weno_apply_sources!(dstdt, st, p, t, CryProblem, net_growth_rates)
+    _weno_divergence_sweep!(dstdt, st, p, t, flux_cache, CryProblem, net_growth_rates)
     return nothing
 end
 

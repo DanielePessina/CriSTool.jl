@@ -219,6 +219,55 @@ end
 @inline _rate_zero(growth_rate::Number) = zero(growth_rate)
 @inline _rate_zero(net_growth_rates::AbstractVector) = zero(eltype(net_growth_rates))
 
+"""
+    _fused_solvent_coupling_enabled(problem)
+
+True when the solvent block is exactly one `:concentration` variable driven by
+`DefaultSolventDynamics`.  In that case the discretised RHS can compute the
+concentration depletion inside the divergence sweep (`_fused_depletion_divergence!`)
+instead of a separate pass, and write the solvent slot directly.
+
+The gate is a compile-time constant for a concrete problem type, so the
+`if` in the solver closures folds to the fused path with zero runtime cost.
+"""
+@inline _fused_solvent_coupling_enabled(problem) =
+    problem.solvent_dynamics isa DefaultSolventDynamics &&
+    propertynames(problem.initial_solvent_state) == (:concentration,)
+
+"""Scalar-growth fused divergence + concentration-depletion sweep.
+
+The depletion sum is bit-identical to `_concentration_depletion(cell_dL,
+numberdensity, scalar_growth_rate, cell_centre)` (same expression, same
+accumulation order), so the produced concentration rate matches
+`DefaultSolventDynamics` exactly.
+"""
+@inline function _fused_depletion_divergence!(dstdt_nd_view, flux, numberdensity,
+                                              cell_centre, cell_dL,
+                                              scalar_growth_rate)
+    acc = zero(promote_type(eltype(numberdensity), typeof(scalar_growth_rate)))
+    @inbounds for i in eachindex(dstdt_nd_view)
+        dstdt_nd_view[i] = -(flux[i + 1] - flux[i]) / cell_dL
+        acc += cell_dL * numberdensity[i] * scalar_growth_rate *
+               (cell_centre[i] * cell_centre[i])
+    end
+    return acc
+end
+
+"""Mesh-aligned-growth fused divergence + concentration-depletion sweep."""
+@inline function _fused_depletion_divergence!(dstdt_nd_view, flux, numberdensity,
+                                              cell_centre, cell_dL,
+                                              net_growth_rates::AbstractVector)
+    length(numberdensity) == length(net_growth_rates) == length(cell_centre) ||
+        throw(ArgumentError("numberdensity, net_growth_rates, and cell_centre must have the same length."))
+    acc = zero(promote_type(eltype(numberdensity), eltype(net_growth_rates)))
+    @inbounds for i in eachindex(dstdt_nd_view)
+        dstdt_nd_view[i] = -(flux[i + 1] - flux[i]) / cell_dL
+        acc += cell_dL * numberdensity[i] * net_growth_rates[i] *
+               (cell_centre[i] * cell_centre[i])
+    end
+    return acc
+end
+
 @inline function _signed_upwind_flux(growth_rate, left_density, right_density)
     if growth_rate > zero(growth_rate)
         return growth_rate * left_density

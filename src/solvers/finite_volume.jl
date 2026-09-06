@@ -123,7 +123,7 @@ finite volume method with flux limiters.
                                             CryProblem, st, t)
             _flux_cache[2] = scalar_growth_rate * 0.5 * (numberdensity[1] + numberdensity[2])
 
-            for idx_cell in 3:length(numberdensity)
+            @inbounds for idx_cell in 3:length(numberdensity)
                 grad_up = numberdensity[idx_cell - 1] - numberdensity[idx_cell - 2]
                 grad_down = numberdensity[idx_cell] - numberdensity[idx_cell - 1]
                 r = grad_up / max(eps(eltype(st)), grad_down)
@@ -154,9 +154,17 @@ finite volume method with flux limiters.
         # Calculate dstdt for numberdensity part
         dstdt_nd_view = crystal_state(CryProblem, dstdt)
 
-        for i in 1:length(dstdt_nd_view) # i is cell index
-            dstdt_nd_view[i] = -(_flux_cache[i + 1] - _flux_cache[i]) /
-                               CryProblem.solver.cell_dL
+        if _fused_solvent_coupling_enabled(CryProblem)
+            depletion = _fused_depletion_divergence!(dstdt_nd_view, _flux_cache,
+                                                     numberdensity,
+                                                     CryProblem.solver.cell_centre,
+                                                     CryProblem.solver.cell_dL,
+                                                     scalar_growth_rate)
+        else
+            for i in 1:length(dstdt_nd_view) # i is cell index
+                dstdt_nd_view[i] = -(_flux_cache[i + 1] - _flux_cache[i]) /
+                                   CryProblem.solver.cell_dL
+            end
         end
 
         # Add aggregation and breakage terms
@@ -174,8 +182,14 @@ finite volume method with flux limiters.
             dstdt_nd_view .+= br_rate
         end
 
-        solvent_rates = _solvent_derivatives(CryProblem, st, t, scalar_growth_rate)
-        _write_solvent_derivatives!(dstdt, CryProblem, solvent_rates)
+        if _fused_solvent_coupling_enabled(CryProblem)
+            depletion_coupled = 3 * CryProblem.volume_shape_factor *
+                                CryProblem.crystal_density * depletion
+            dstdt[end] = -depletion_coupled
+        else
+            solvent_rates = _solvent_derivatives(CryProblem, st, t, scalar_growth_rate)
+            _write_solvent_derivatives!(dstdt, CryProblem, solvent_rates)
+        end
 
         return nothing
     end
@@ -393,9 +407,17 @@ finite volume method with size-dependent growth rates.
         # Calculate dstdt for numberdensity part
         dstdt_nd_view = crystal_state(CryProblem, dstdt)
 
-        for i in 1:length(dstdt_nd_view) # i is cell index
-            dstdt_nd_view[i] = -(_flux_cache[i + 1] - _flux_cache[i]) /
-                               CryProblem.solver.cell_dL
+        if _fused_solvent_coupling_enabled(CryProblem)
+            depletion = _fused_depletion_divergence!(dstdt_nd_view, _flux_cache,
+                                                     numberdensity,
+                                                     CryProblem.solver.cell_centre,
+                                                     CryProblem.solver.cell_dL,
+                                                     net_growth_rates)
+        else
+            for i in 1:length(dstdt_nd_view) # i is cell index
+                dstdt_nd_view[i] = -(_flux_cache[i + 1] - _flux_cache[i]) /
+                                   CryProblem.solver.cell_dL
+            end
         end
 
         # Add aggregation and breakage terms
@@ -413,8 +435,14 @@ finite volume method with size-dependent growth rates.
             dstdt_nd_view .+= br_rate
         end
 
-        solvent_rates = _solvent_derivatives(CryProblem, st, t, net_growth_rates)
-        _write_solvent_derivatives!(dstdt, CryProblem, solvent_rates)
+        if _fused_solvent_coupling_enabled(CryProblem)
+            depletion_coupled = 3 * CryProblem.volume_shape_factor *
+                                CryProblem.crystal_density * depletion
+            dstdt[end] = -depletion_coupled
+        else
+            solvent_rates = _solvent_derivatives(CryProblem, st, t, net_growth_rates)
+            _write_solvent_derivatives!(dstdt, CryProblem, solvent_rates)
+        end
 
         return nothing
     end

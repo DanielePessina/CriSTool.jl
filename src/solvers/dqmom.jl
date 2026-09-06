@@ -100,6 +100,98 @@ function _validate_dqmom_problem(problem::CrystallisationProblem)
     return problem
 end
 
+"""Allocation-free scalar DQMOM3 RHS for the default concentration path.
+
+When there are no binary sources, growth is evaluated on the three physical
+nodes and the 6x6 projection is solved statically; the solvent slot receives
+the exact volume-rate coupling.  The default-solvent contract is enforced by
+the caller's gate, so no custom solvent-dynamics branch or aggregation /
+breakage sources appear here.
+"""
+@inline function _dqmom_scalar_model_3(problem::CrystallisationProblem,
+                                       state, parameters, time)
+    solver = problem.solver
+    coordinate_scale = solver.coordinate_scale
+    weight_scale = solver.weight_scale
+    scaled_weights = SVector(state[1], state[2], state[3])
+    scaled_nodes = SVector(state[4] / state[1],
+                           state[5] / state[2],
+                           state[6] / state[3])
+    physical_nodes = coordinate_scale .* scaled_nodes
+    growth_rates = SVector(
+        net_growth_rate_at_length(problem.kinetics_growthfunction,
+                                  parameters.gr,
+                                  problem.kinetics_dissolutionfunction,
+                                  parameters.diss,
+                                  problem,
+                                  state,
+                                  time,
+                                  physical_nodes[1]),
+        net_growth_rate_at_length(problem.kinetics_growthfunction,
+                                  parameters.gr,
+                                  problem.kinetics_dissolutionfunction,
+                                  parameters.diss,
+                                  problem,
+                                  state,
+                                  time,
+                                  physical_nodes[2]),
+        net_growth_rate_at_length(problem.kinetics_growthfunction,
+                                  parameters.gr,
+                                  problem.kinetics_dissolutionfunction,
+                                  parameters.diss,
+                                  problem,
+                                  state,
+                                  time,
+                                  physical_nodes[3]))
+    nucleation_rate_value = nucleationrate(problem.kinetics_nucleationfunction,
+                                           parameters.nucl,
+                                           problem,
+                                           state,
+                                           time)
+    source = _dqmom_source_n3(scaled_weights,
+                              scaled_nodes,
+                              growth_rates,
+                              nucleation_rate_value,
+                              coordinate_scale,
+                              weight_scale)
+    direct_rates = _dqmom_projection_matrix_n3(scaled_nodes) \ source
+
+    scaled_volume_rate = -2 * scaled_nodes[1]^3 * direct_rates[1] +
+                         3 * scaled_nodes[1]^2 * direct_rates[4] -
+                         2 * scaled_nodes[2]^3 * direct_rates[2] +
+                         3 * scaled_nodes[2]^2 * direct_rates[5] -
+                         2 * scaled_nodes[3]^3 * direct_rates[3] +
+                         3 * scaled_nodes[3]^2 * direct_rates[6]
+    physical_volume_rate = weight_scale * coordinate_scale^3 * scaled_volume_rate
+    concentration_rate = -problem.crystal_density *
+                         problem.volume_shape_factor * physical_volume_rate
+    return SVector(direct_rates[1], direct_rates[2], direct_rates[3],
+                   direct_rates[4], direct_rates[5], direct_rates[6],
+                   concentration_rate)
+end
+
+"""Static three-node DQMOM model exposing both ODE calling conventions.
+
+The solver runs the out-of-place form on an `SVector` state (fully static
+Tsit5 stages); the in-place form exists so callers that treat the RHS as a
+mutating function (e.g. tests probing `ode_problem.f(du, u, p, t)`) keep
+working.  Both methods compute exactly the same derivative vector.
+"""
+struct DQMOMFastModel{P <: CrystallisationProblem}
+    problem::P
+end
+
+@inline (model::DQMOMFastModel)(state, parameters, time) =
+    _dqmom_scalar_model_3(model.problem, state, parameters, time)
+
+@inline function (model::DQMOMFastModel)(destination, state, parameters, time)
+    rates = _dqmom_scalar_model_3(model.problem, state, parameters, time)
+    @inbounds for index in eachindex(destination)
+        destination[index] = rates[index]
+    end
+    return nothing
+end
+
 """Build the scaled DQMOM projection matrix for dimensionless nodes."""
 function _dqmom_projection_matrix(scaled_nodes::AbstractVector)
     nquadrature = length(scaled_nodes)
@@ -118,6 +210,33 @@ function _dqmom_projection_matrix(scaled_nodes::AbstractVector)
         end
     end
     return matrix
+end
+
+"""Scaled node coordinates at a saved time index, static for the default 3-node path."""
+@inline function _dqmom_scaled_nodes_at(node_matrix, solver::DQMOM, time_index)
+    if solver.nquadrature == 3
+        coordinate_scale = solver.coordinate_scale
+        return SVector(node_matrix[1, time_index] / coordinate_scale,
+                       node_matrix[2, time_index] / coordinate_scale,
+                       node_matrix[3, time_index] / coordinate_scale)
+    end
+    return node_matrix[:, time_index] ./ solver.coordinate_scale
+end
+
+"""Projection-matrix condition estimate without a full SVD.
+
+For the default 3-node path the 6x6 matrix is inverted statically (zero
+heap allocations); the generic dense fallback uses the LU-based 1-norm
+condition number.
+"""
+@inline function _dqmom_projection_condition_estimate(scaled_nodes::SVector{3})
+    static_matrix = _dqmom_projection_matrix_n3(scaled_nodes)
+    return opnorm(static_matrix, 1) * opnorm(inv(static_matrix), 1)
+end
+
+@inline function _dqmom_projection_condition_estimate(scaled_nodes::AbstractVector)
+    matrix = _dqmom_projection_matrix(scaled_nodes)
+    return cond(matrix, 1)
 end
 
 """Static projection matrix for the default three-node DQMOM path."""
@@ -513,13 +632,41 @@ function crystallisation_odeproblem(problem::CrystallisationProblem{NuclF, GrF, 
                                 eltype(problem.parameterset_aggregation),
                                 eltype(problem.parameterset_breakage),
                                 Float64)
-    initial_state = element_type.(internal_values)
-    DQMOM_model! = (destination, state, p, time) ->
-        _dqmom_rhs!(destination, state, p, time, problem)
-    ode_problem = ODEProblem(DQMOM_model!,
-                             initial_state,
-                             (saveat[1], saveat[end]),
-                             parameters)
+    initial_values = element_type.(internal_values)
+
+    n_solvent = length(propertynames(problem.initial_solvent_state))
+    no_binary_sources = problem.kinetics_aggregationfunction isa noaggregation &&
+                        problem.kinetics_breakagefunction isa nobreakage
+    # Static three-node path: SVector state + out-of-place RHS (like the QMOM
+    # fast path), so Tsit5 runs fully unrolled static stages instead of
+    # heap-backed Vector stages.  Restricted to the default concentration-only
+    # solvent coupling, which the RHS writes directly.
+    fast_scalar_path = no_binary_sources && problem.solver.nquadrature == 3 &&
+                       n_solvent == 1 &&
+                       propertynames(problem.initial_solvent_state) == (:concentration,) &&
+                       problem.solvent_dynamics isa DefaultSolventDynamics
+
+    # Static three-node path: run the ODE on an SVector state so
+    # OrdinaryDiffEq uses fully static Tsit5 stages instead of heap-backed
+    # Vector stages (the QMOM fast-path trick).  The fast model supports both
+    # calling conventions; the solver uses the out-of-place form because an
+    # immutable SVector state cannot be mutated by an in-place integrator.
+    # The gate is a compile-time constant for a concrete problem type.
+    if fast_scalar_path
+        model = DQMOMFastModel(problem)
+        initial_state = SVector(ntuple(index -> initial_values[index], Val(7)))
+        ode_problem = ODEProblem{false}(model,
+                                        initial_state,
+                                        (saveat[1], saveat[end]),
+                                        parameters)
+    else
+        DQMOM_model! = (destination, state, p, time) ->
+            _dqmom_rhs!(destination, state, p, time, problem)
+        ode_problem = ODEProblem(DQMOM_model!,
+                                 initial_values,
+                                 (saveat[1], saveat[end]),
+                                 parameters)
+    end
     time_step_solver = _resolve_timestepping_algorithm(problem.solver, :tsit5)
     return ode_problem, time_step_solver
 end
@@ -570,8 +717,7 @@ function _wrap_solution(problem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
         projection_diagnostics = Vector{DQMOMProjectionDiagnostics{element_type}}(
             undef, n_time_points)
         @inbounds for time_index in 1:n_time_points
-            scaled_nodes = node_matrix[:, time_index] ./ solver.coordinate_scale
-            projection_matrix = _dqmom_projection_matrix(scaled_nodes)
+            scaled_nodes = _dqmom_scaled_nodes_at(node_matrix, solver, time_index)
             minimum_gap = typemax(element_type)
             for first_index in 1:(nquadrature - 1)
                 for second_index in (first_index + 1):nquadrature
@@ -582,10 +728,16 @@ function _wrap_solution(problem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
             end
             projection_diagnostics[time_index] = DQMOMProjectionDiagnostics(
                 :ok,
-                minimum(weight_matrix[:, time_index]),
-                minimum(node_matrix[:, time_index]),
+                minimum(@view weight_matrix[:, time_index]),
+                minimum(@view node_matrix[:, time_index]),
                 solver.coordinate_scale * minimum_gap,
-                cond(projection_matrix))
+                # The 3-node default uses a static 6x6 inverse (zero heap
+                # allocations).  The dense fallback uses `cond(A, 1)`: one LU
+                # + norms instead of a full SVD (gesdd), which dominated the
+                # wrap-solution allocations (~65% of a DQMOM solve).  Both
+                # return a legitimate condition estimate for the projection
+                # matrix diagnostics.
+                _dqmom_projection_condition_estimate(scaled_nodes))
         end
     else
         # SVD-based diagnostics are intentionally omitted for Dual-valued
