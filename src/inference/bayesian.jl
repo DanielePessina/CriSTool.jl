@@ -395,14 +395,35 @@ function nuts_model(experiments::Vector{<:AbstractExperiment},
                                   aggregationfunction, breakagefunction, solver;
                                   diss = diss)
     setup = prepare_loss(problem, experiments)
-    # MCMCThreads may evaluate chains in independent tasks.  Julia's
-    # task-local cache gives each chain one private LossSetup, while avoiding
-    # a deep copy for every NUTS transition.  Each loss evaluation still
-    # remakes its ODEProblem from that chain-local template.
-    setup_per_task = Base.OncePerTask{LossSetup}() do
+    # MCMCThreads may evaluate chains in independent tasks.  Each chain gets
+    # one private LossSetup from a task-local memo, avoiding a deep copy for
+    # every NUTS transition.  Each loss evaluation still remakes its
+    # ODEProblem from that chain-local template.
+    setup_per_task = _cristool_once_per_task() do
         deepcopy(setup)
     end
     return _cristool_nuts_loss_model(prior, lossfunction, setup_per_task)
+end
+
+"""Task-local memoized initializer.
+
+Faithful stand-in for `Base.OncePerTask` (Julia 1.11+): builds one value per
+calling task on first use and returns the same value for subsequent calls
+from that task.  Implemented with `task_local_storage` (Base since Julia
+1.0), so the NUTS model path keeps working on the Julia 1.10 floor.  The
+`gensym` key keeps concurrent `nuts_model` calls independent.
+"""
+function _cristool_once_per_task(f)
+    key = gensym()
+    return function ()
+        storage = task_local_storage()
+        val = get(storage, key, nothing)
+        if val === nothing
+            val = f()
+            storage[key] = val
+        end
+        return val
+    end
 end
 
 # Module-scope Turing model (DynamicPPL requirement). Generic over the
