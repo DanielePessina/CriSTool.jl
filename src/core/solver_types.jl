@@ -39,6 +39,9 @@ Fields:
 - `timestepping_algorithm::Symbol`: Time-stepping algorithm selector (e.g. `:tsit5`, `:ssprk43`, `:auto`).
 - `reltol::Float64`: Scalar relative tolerance for ODE solver.
 - `abstol::Float64`: Scalar absolute tolerance for ODE solver.
+- `tolerance_mode::Symbol`: `:scalar` uses the fixed `abstol`/`reltol` pair; `:auto` attaches
+the DiffEqCallbacks `AutoAbstol` callback (per-component running absolute tolerance
+`abstol[i] = max(|u[i]| so far) * reltol`) for disparate-scale states.
 """
 Base.@kwdef @concrete struct FiniteVol <: AbstractDiscretisedSolver
     meshsize::Int64 = 200
@@ -56,6 +59,7 @@ Base.@kwdef @concrete struct FiniteVol <: AbstractDiscretisedSolver
     # and allowed negative-density overshoot under the faster nm/s dynamics.
     reltol::Float64 = 1e-4
     abstol::Float64 = 1e-10
+    tolerance_mode::Symbol = :scalar
 end
 
 """
@@ -74,6 +78,9 @@ Fields:
 - `timestepping_algorithm::Symbol`: Time-stepping algorithm selector (e.g. `:tsit5`, `:ssprk43`, `:auto`).
 - `reltol::Float64`: Scalar relative tolerance for ODE solver.
 - `abstol::Float64`: Scalar absolute tolerance for ODE solver.
+- `tolerance_mode::Symbol`: `:scalar` uses the fixed `abstol`/`reltol` pair; `:auto` attaches
+the DiffEqCallbacks `AutoAbstol` callback (per-component running absolute tolerance
+`abstol[i] = max(|u[i]| so far) * reltol`) for disparate-scale states.
 """
 Base.@kwdef @concrete struct WENO <: AbstractDiscretisedSolver
     meshsize::Int64 = 200
@@ -89,6 +96,7 @@ Base.@kwdef @concrete struct WENO <: AbstractDiscretisedSolver
     # Tolerances re-derived for the SI seconds kernel (Step 3); see FiniteVol.
     reltol::Float64 = 1e-4
     abstol::Float64 = 1e-10
+    tolerance_mode::Symbol = :scalar
 end
 
 """
@@ -105,6 +113,9 @@ Fields:
 - `timestepping_algorithm::Symbol`: Time-stepping algorithm selector (e.g. `:tsit5`, `:ssprk43`, `:auto`).
 - `reltol::Float64`: Scalar relative tolerance for ODE solver.
 - `abstol::Float64`: Scalar absolute tolerance for ODE solver.
+- `tolerance_mode::Symbol`: `:scalar` uses the fixed `abstol`/`reltol` pair; `:auto` attaches
+the DiffEqCallbacks `AutoAbstol` callback (per-component running absolute tolerance
+`abstol[i] = max(|u[i]| so far) * reltol`) for disparate-scale states.
 """
 Base.@kwdef @concrete struct MoM <: AbstractMomentSolver
     string::String = "MoM"
@@ -112,6 +123,7 @@ Base.@kwdef @concrete struct MoM <: AbstractMomentSolver
     timestepping_algorithm::Symbol = :auto
     reltol::Float64 = 1e-10
     abstol::Float64 = 1e-8
+    tolerance_mode::Symbol = :scalar
 end
 
 """
@@ -141,6 +153,9 @@ Fields:
 - `minimum_size::Float64`: Lower support bound in physical metres.
 - `timestepping_algorithm::Symbol`: Time-stepping algorithm selector.
 - `reltol::Float64`, `abstol::Float64`: ODE tolerances.
+- `tolerance_mode::Symbol`: `:scalar` uses the fixed `abstol`/`reltol` pair; `:auto` attaches
+the DiffEqCallbacks `AutoAbstol` callback (per-component running absolute tolerance
+`abstol[i] = max(|u[i]| so far) * reltol`) for disparate-scale states.
 """
 Base.@kwdef @concrete struct QMOM <: AbstractMomentSolver
     nquadrature::Int64 = 3
@@ -156,6 +171,7 @@ Base.@kwdef @concrete struct QMOM <: AbstractMomentSolver
     # the default materially cheaper while preserving the benchmark outputs.
     reltol::Float64 = 1e-7
     abstol::Float64 = 1e-8
+    tolerance_mode::Symbol = :scalar
 end
 
 """
@@ -183,6 +199,9 @@ Fields:
 - `minimum_size::Float64`: Lower physical support bound for active nodes.
 - `timestepping_algorithm::Symbol`: Time-stepping algorithm selector.
 - `reltol::Float64`, `abstol::Float64`: ODE tolerances.
+- `tolerance_mode::Symbol`: `:scalar` uses the fixed `abstol`/`reltol` pair; `:auto` attaches
+the DiffEqCallbacks `AutoAbstol` callback (per-component running absolute tolerance
+`abstol[i] = max(|u[i]| so far) * reltol`) for disparate-scale states.
 """
 Base.@kwdef @concrete struct DQMOM <: AbstractMomentSolver
     nquadrature::Int64 = 3
@@ -195,6 +214,7 @@ Base.@kwdef @concrete struct DQMOM <: AbstractMomentSolver
     timestepping_algorithm::Symbol = :auto
     reltol::Float64 = 1e-7
     abstol::Float64 = 1e-8
+    tolerance_mode::Symbol = :scalar
 end
 
 """Highest tracked raw-moment order for a moment solver."""

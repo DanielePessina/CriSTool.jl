@@ -577,10 +577,13 @@ function _simulatecrystallisation(CryProblem::CrystallisationProblem{NuclF, GrF,
     _ndens_pad_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 4))
 
     ODEprob, tstep_solver = crystallisation_odeproblem(CryProblem, saveat)
+    abstol_tol, auto_tol_cb = _auto_abstol_opts(CryProblem.solver, ODEprob.u0,
+                                                CryProblem.solver.abstol)
     ODEsol = solve(ODEprob,
                    tstep_solver;
+                   callback = auto_tol_cb,
                    reltol = CryProblem.solver.reltol,
-                   abstol = CryProblem.solver.abstol,
+                   abstol = abstol_tol,
                    dense = false,
                    alg_hints = [:stiff],
                    saveat = saveat,

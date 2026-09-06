@@ -907,11 +907,15 @@ function _simulatecrystallisation(problem::CrystallisationProblem{NuclF, GrF, Br
                          for index in 0:(n_moments - 1)]
     solvent_tolerances = fill(problem.solver.abstol,
                               length(propertynames(problem.initial_solvent_state)))
+    abstol_tol, auto_tol_cb = _auto_abstol_opts(problem.solver, ode_problem.u0,
+                                                vcat(moment_tolerances,
+                                                     solvent_tolerances))
     ode_solution = solve(ode_problem,
                          time_step_solver;
+                         callback = auto_tol_cb,
                          saveat = saveat,
                          reltol = problem.solver.reltol,
-                         abstol = vcat(moment_tolerances, solvent_tolerances),
+                         abstol = abstol_tol,
                          dense = false,
                          alg_hints = [:stiff],
                          maxiters = CRISTOOL_MAX_SOLVER_ITERS)

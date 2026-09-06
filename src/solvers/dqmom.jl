@@ -812,11 +812,14 @@ function _simulatecrystallisation(problem::CrystallisationProblem{NuclF, GrF, Br
                                       AggP <: AbstractVector{<:Real},
                                       TP <: AbstractTemperature}
     ode_problem, time_step_solver = crystallisation_odeproblem(problem, saveat)
+    abstol_tol, auto_tol_cb = _auto_abstol_opts(problem.solver, ode_problem.u0,
+                                                problem.solver.abstol)
     ode_solution = solve(ode_problem,
                          time_step_solver;
+                         callback = auto_tol_cb,
                          saveat = saveat,
                          reltol = problem.solver.reltol,
-                         abstol = problem.solver.abstol,
+                         abstol = abstol_tol,
                          dense = false,
                          alg_hints = [:stiff],
                          maxiters = CRISTOOL_MAX_SOLVER_ITERS)

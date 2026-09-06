@@ -264,10 +264,13 @@ function _simulatecrystallisation(CryProblem::CrystallisationProblem{NuclF, GrF,
                                                                              TP <:
                                                                              AbstractTemperature}
     ODEprob, tstep_solver = crystallisation_odeproblem(CryProblem, saveat)
+    abstol_tol, auto_tol_cb = _auto_abstol_opts(CryProblem.solver, ODEprob.u0,
+                                                CryProblem.solver.abstol)
     sol = solve(ODEprob,
                 tstep_solver;
+                callback = auto_tol_cb,
                 saveat = saveat,
                 reltol = CryProblem.solver.reltol,
-                abstol = CryProblem.solver.abstol,)
+                abstol = abstol_tol,)
     return _wrap_solution(CryProblem, sol)
 end

@@ -13,6 +13,7 @@ using Turing
 
 # Scientific Computing & Differential Equations
 using OrdinaryDiffEq
+import DiffEqCallbacks: AutoAbstol
 using SciMLSensitivity
 using OptimizationBase
 using PreallocationTools: DiffCache, get_tmp

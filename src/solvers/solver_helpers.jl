@@ -326,3 +326,27 @@ function _fill_signed_first_order_flux!(flux::AbstractVector,
     end
     return flux
 end
+
+"""
+    _auto_abstol_opts(solver, u0, scalar_tol) -> (abstol, callback)
+
+`tolerance_mode = :auto` returns a per-component absolute-tolerance floor
+(`fill(abstol, length(u0))`, so `AutoAbstol` runs in array mode and each state
+component tracks its own running max) plus the solve-level `AutoAbstol`
+callback (`save=false`: never injects extra save points; `u_modified!` is
+forced false inside the callback, so it cannot re-trigger FSAL or interfere
+with problem-level callbacks such as the extinction callbacks, which
+`merge_problem_kwargs` combines into a `CallbackSet`).
+
+`:scalar` (the default) returns `(scalar_tol, nothing)` — passing
+`callback = nothing` leaves the problem-level callback untouched, so the
+`:scalar` solve path is byte-identical to the pre-`tolerance_mode` code.
+"""
+@inline function _auto_abstol_opts(solver::AbstractSolver, u0::AbstractVector,
+                                   scalar_tol)
+    if solver.tolerance_mode === :auto
+        floor = fill(float(solver.abstol), length(u0))
+        return floor, AutoAbstol(false; init_curmax = floor)
+    end
+    return scalar_tol, nothing
+end
