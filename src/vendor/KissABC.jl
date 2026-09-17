@@ -5,10 +5,11 @@ Provides SMC and ABCDE samplers for likelihood-free inference.
 Support code for ABC sampling and related distributions. Defines mixed priors,
 kernels and implementation details used by the ABCDE algorithm.
 
-This is a vendored, locally maintained fork retained by CriSTool. Its source
-was imported into the project history in commit `cf84575`; no registry package
-version is assumed. The repository's GPL-3.0 license applies to this vendored
-copy; see the root `LICENSE` file.
+This is a vendored, locally maintained fork of KissABC.jl 3.0.1, originally
+developed by Francesco Alemanno and distributed under the MIT License. Its
+source was imported into the project history in commit `cf84575`; no registry
+package version is assumed. See `THIRD_PARTY_NOTICES.md` at the repository root
+for the upstream copyright and license notice.
 
 !!! warning "Deprecation Notice"
 
