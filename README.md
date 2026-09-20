@@ -4,6 +4,10 @@ CriSTool is a Julia package for simulating batch crystallisation, fitting
 kinetic parameters to measurements, and propagating parameter uncertainty
 through population-balance models.
 
+Read the [hosted development documentation](https://danielepessina.github.io/CriSTool.jl/dev/),
+including the [API reference](https://danielepessina.github.io/CriSTool.jl/dev/api/)
+and [tutorials](https://danielepessina.github.io/CriSTool.jl/dev/tutorials/).
+
 The package provides:
 
 - population-balance solvers based on the Method of Moments (MoM), the
@@ -80,29 +84,28 @@ trajectory. Moment solutions expose `concentration`, `d10`, `d32`, `d43`, and
 `moment2`; finite-volume and WENO solutions also expose the resolved size
 distribution and `d10q`, `d50q`, and `d90q` quantiles. QMOM and DQMOM expose
 raw moments and quadrature data; DQMOM currently requires seeded initial
-crystals. See [Solvers](docs/src/solvers.md).
+crystals. See the hosted [Solvers guide](https://danielepessina.github.io/CriSTool.jl/dev/solvers/).
 
 ## Choose a starting point
 
 | If you want to… | Read | Run |
 | --- | --- | --- |
-| run a simulation or choose a solver | [Running simulations](docs/src/simulation.md), [Solvers](docs/src/solvers.md) | [Tutorial 1](<examples/Tutorial 1 Running Simulations.jl>) |
-| load measurements from CSV | [Measurements and data loading](docs/src/measurements.md) | [Tutorial 2](<examples/Tutorial 2 Parameter Estimation.jl>) |
-| fit kinetic parameters | [Parameter estimation](docs/src/parameter-estimation.md) | [Tutorial 2](<examples/Tutorial 2 Parameter Estimation.jl>) |
-| compare ABCDE and NUTS | [ABCDE routine](docs/src/abcde.md), [Parameter estimation](docs/src/parameter-estimation.md) | [Tutorial 5](<examples/Tutorial 5 ABCDE and MCMC.jl>) |
-| define a temperature or saturation model | [Temperature profiles](docs/src/temperature-profiles.md), [Saturation models](docs/src/saturation-models.md) | [Tutorial 1](<examples/Tutorial 1 Running Simulations.jl>) |
-| add a kinetic family or other system component | [Kinetics](docs/src/kinetics.md), [Bringing your own system](docs/src/bring-your-own-system.md) | [Tutorial 4](<examples/Tutorial 4 Defining a Custom Kinetic.jl>) |
-| model dissolution | [Kinetics](docs/src/kinetics.md), [Solvers](docs/src/solvers.md) | [Tutorial 6](<examples/Tutorial 6 Dissolution.jl>) |
-| inspect QMOM nodes and weights | [Solvers](docs/src/solvers.md) | [Tutorial 7](<examples/Tutorial 7 QMOM.jl>) |
-| run seeded DQMOM | [Solvers](docs/src/solvers.md), [Running simulations](docs/src/simulation.md) | — |
-| compare real-data MoM and FiniteVol fits | [Parameter estimation](docs/src/parameter-estimation.md), [Solvers](docs/src/solvers.md) | [Tutorial 8](<examples/Tutorial 8 Real-data MoM versus QMOM.jl>) |
-| run sensitivity studies | [Sensitivity analysis](docs/src/sensitivity.md) | [Tutorial 3](<examples/Tutorial 3 Sensitivity Analysis.jl>) |
-| run ensemble uncertainty studies | [Ensembles and uncertainty](docs/src/uq-ensembles.md) | — |
+| run a simulation or choose a solver | [Running simulations](https://danielepessina.github.io/CriSTool.jl/dev/simulation/), [Solvers](https://danielepessina.github.io/CriSTool.jl/dev/solvers/) | [Tutorial 1](<examples/Tutorial 1 Running Simulations.jl>) |
+| load measurements from CSV | [Measurements and data loading](https://danielepessina.github.io/CriSTool.jl/dev/measurements/) | [Tutorial 2](<examples/Tutorial 2 Parameter Estimation.jl>) |
+| fit kinetic parameters | [Parameter estimation](https://danielepessina.github.io/CriSTool.jl/dev/parameter-estimation/) | [Tutorial 2](<examples/Tutorial 2 Parameter Estimation.jl>) |
+| compare ABCDE and NUTS | [ABCDE routine](https://danielepessina.github.io/CriSTool.jl/dev/abcde/), [Parameter estimation](https://danielepessina.github.io/CriSTool.jl/dev/parameter-estimation/) | [Tutorial 5](<examples/Tutorial 5 ABCDE and MCMC.jl>) |
+| define a temperature or saturation model | [Temperature profiles](https://danielepessina.github.io/CriSTool.jl/dev/temperature-profiles/), [Saturation models](https://danielepessina.github.io/CriSTool.jl/dev/saturation-models/) | [Tutorial 1](<examples/Tutorial 1 Running Simulations.jl>) |
+| add a kinetic family or other system component | [Kinetics](https://danielepessina.github.io/CriSTool.jl/dev/kinetics/), [Bringing your own system](https://danielepessina.github.io/CriSTool.jl/dev/bring-your-own-system/) | [Tutorial 4](<examples/Tutorial 4 Defining a Custom Kinetic.jl>) |
+| model dissolution | [Kinetics](https://danielepessina.github.io/CriSTool.jl/dev/kinetics/), [Solvers](https://danielepessina.github.io/CriSTool.jl/dev/solvers/) | [Tutorial 6](<examples/Tutorial 6 Dissolution.jl>) |
+| inspect QMOM nodes and weights | [Solvers](https://danielepessina.github.io/CriSTool.jl/dev/solvers/) | [Tutorial 7](<examples/Tutorial 7 QMOM.jl>) |
+| run seeded DQMOM | [Solvers](https://danielepessina.github.io/CriSTool.jl/dev/solvers/), [Running simulations](https://danielepessina.github.io/CriSTool.jl/dev/simulation/) | — |
+| compare real-data MoM and FiniteVol fits | [Parameter estimation](https://danielepessina.github.io/CriSTool.jl/dev/parameter-estimation/), [Solvers](https://danielepessina.github.io/CriSTool.jl/dev/solvers/) | [Tutorial 8](<examples/Tutorial 8 Real-data MoM versus QMOM.jl>) |
+| run sensitivity studies | [Sensitivity analysis](https://danielepessina.github.io/CriSTool.jl/dev/sensitivity/) | [Tutorial 3](<examples/Tutorial 3 Sensitivity Analysis.jl>) |
+| run ensemble uncertainty studies | [Ensembles and uncertainty](https://danielepessina.github.io/CriSTool.jl/dev/uq-ensembles/) | — |
 
 The complete tutorial catalogue, dependencies, and run commands are in
-[Tutorials](docs/src/tutorials.md). The guides in `docs/src/` are short explanations
-of the same workflows; the scripts in `examples/` are the full runnable
-versions.
+the hosted [Tutorials](https://danielepessina.github.io/CriSTool.jl/dev/tutorials/).
+The scripts in `examples/` are the full runnable versions.
 
 ## A structured parameter vector
 
@@ -120,14 +123,15 @@ parameters_named.nucl.ln_nucleation_prefactor
 parameters_named.gr.growth_order
 ```
 
-See [Running simulations](docs/src/simulation.md) and [Kinetics](docs/src/kinetics.md)
+See the hosted [Running simulations](https://danielepessina.github.io/CriSTool.jl/dev/simulation/)
+and [Kinetics](https://danielepessina.github.io/CriSTool.jl/dev/kinetics/)
 for parameter axes and custom model definitions.
 
 ## Documentation and development
 
-- [Documentation home](docs/src/index.md)
-- [API reference](docs/src/api.md)
-- [Tutorial catalogue](docs/src/tutorials.md)
+- [Hosted documentation](https://danielepessina.github.io/CriSTool.jl/dev/)
+- [Hosted API reference](https://danielepessina.github.io/CriSTool.jl/dev/api/)
+- [Hosted tutorial catalogue](https://danielepessina.github.io/CriSTool.jl/dev/tutorials/)
 
 Run the package test suite with:
 
