@@ -13,6 +13,7 @@ using Turing
 using ComponentArrays
 using MCMCChains
 using Metaheuristics
+import OptimizationOptimJL
 import Makie
 using JLD2
 
@@ -91,6 +92,44 @@ using JLD2
         @test length(minimizer) == length(lower_bounds)
         @test all(lower_bounds .<= minimizer .<= upper_bounds)
         @test Metaheuristics.minimum(result) ≈ loss(lf, loss_problem, minimizer, meas)
+    end
+
+    @testset "PE_Routine_Optimisation direct entry point" begin
+        lower_bounds = [37.0, 0.5, 0.9, 2.5]
+        upper_bounds = [39.0, 0.9, 1.1, 3.5]
+        initial_parameters = [38.0, 0.6, 1.0, 3.0]
+        result = CriSTool.PE_Routine_Optimisation(
+            lf, meas, lower_bounds, upper_bounds, nucl, gr, agg, br;
+            solver = solver,
+            searchalgo = OptimizationOptimJL.Optim.Fminbox(
+                OptimizationOptimJL.Optim.NelderMead()),
+            x0 = initial_parameters,
+            searchoptions = Dict(:f_reltol => 1.0),
+            savetxt = false, verbosity = 0, HPC = true)
+        @test length(result.u) == length(initial_parameters)
+        @test all(isfinite, result.u)
+        @test isfinite(result.objective)
+    end
+
+    @testset "ABCDE_Routine direct entry point" begin
+        lower_bounds = [37.0, 0.5, 0.9, 2.5]
+        upper_bounds = [39.0, 0.9, 1.1, 3.5]
+        optimal_parameters = [38.0, 0.6, 1.0, 3.0]
+        abc_prior = Distributions.product_distribution([
+            Uniform(lower_bounds[1], upper_bounds[1]),
+            Uniform(lower_bounds[2], upper_bounds[2]),
+            Uniform(lower_bounds[3], upper_bounds[3]),
+            Uniform(lower_bounds[4], upper_bounds[4]),
+        ])
+        result, metadata = CriSTool.ABCDE_Routine(
+            lf, meas, optimal_parameters, abc_prior, nucl, gr, agg, br;
+            solver = solver, nparticles = 8, generations = 1,
+            confidenceinterval = 0.5, saveplot = false,
+            verbosity = 0, HPC = true, test = :wilks)
+        @test hasproperty(result, :P)
+        @test metadata["res"] === result
+        @test metadata["optimalparameters"] == optimal_parameters
+        @test isfinite(metadata["target"])
     end
 
     @testset "MCMC_Routine" begin

@@ -9,7 +9,7 @@ no `Dict{Symbol,Any}` anywhere; adding a new observable (pH, mass, PSD, ...)
 means adding a field to the `NamedTuple`, not a new container type.
 
 Tutorial 2 shows the complete path from the bundled dataset to parameter
-estimation: [Tutorial 2 — Parameter Estimation](<../examples/Tutorial 2 Parameter Estimation.jl>).
+estimation: [Tutorial 2 — Parameter Estimation](https://github.com/DanielePessina/CriSTool.jl/blob/main/examples/Tutorial%202%20Parameter%20Estimation.jl).
 
 ## Loading from the standard CSV format
 

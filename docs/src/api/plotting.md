@@ -1,0 +1,13 @@
+# Plotting and diagnostics
+
+```@docs
+plot_posterior_pairplot
+plot_measurements_vs_simulation
+plot_ps_measurements_vs_simulation
+plot_measurements_vs_ensemble
+plot_ps_measurements_vs_ensemble
+ChainPairPlots
+ChainStatsPlots
+ChainMeasurementPlots
+CRISTOOL_PALETTE
+```

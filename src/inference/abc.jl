@@ -46,6 +46,13 @@ _abc_has_particles(particles) = !isnothing(_abc_particles_matrix(particles))
 # _runsampler method, and add label/metadata helpers.
 # ============================================================================
 
+"""
+    AbstractABCSampler
+
+Abstract supertype for sampler configuration objects accepted by `run_abc`.
+Implementations provide the algorithm-specific parameters and dispatch through
+the internal sampler runner.
+"""
 abstract type AbstractABCSampler end
 
 """
@@ -113,6 +120,7 @@ _sampler_metadata(s::ABCDETurnerSampler) = (K = s.K, kernel = s.kernel)
     run_abc(lossfunction, measurement, optimalpara, prior,
             nucleationfunction, growthfunction,
             aggregationfunction, breakagefunction;
+            diss = nodissolution(),
             solver, sampler::AbstractABCSampler = ABCDESampler(),
             validation = nothing, extrastring = "Empty",
             nparticles = 1024, generations = 128, saveplot = true,
@@ -125,7 +133,9 @@ choice of sampler (ABCDE, Turner ABCDE, …) is selected via `sampler`.
 
 # Arguments
 - `measurement`: experimental datasets used to compute the discrepancy.
-- `optimalpara`: reference parameter vector of length nν+ng+na+nb.
+- `optimalpara`: reference parameter vector in the compatibility order
+  `[p_ν; p_g; p_agg; p_br]`, or in the canonical order
+  `[p_ν; p_g; p_diss; p_agg; p_br]` when `diss` is supplied.
 - `prior`: prior distribution (e.g. `Distributions.product_distribution([...])`).
 - `solver`: numerical solver used by the loss function.
 - `diss`: optional independent dissolution model; its parameter block follows
@@ -369,6 +379,15 @@ function _append_symbols!(names::Vector{Symbol}, fn, prefix::String)
     end
 end
 
+"""
+    kinetic_parameter_symbols(nucleationfunction, growthfunction,
+                              aggregationfunction, breakagefunction;
+                              diss=nodissolution()) -> Vector{Symbol}
+
+Return parameter symbols for the supplied kinetic models in composite
+`paramaxis` order. Model-declared `symbols` are used when available; otherwise
+the result contains `:nu1`, `:gr1`, `:diss1`, `:agg1`, or `:br1` placeholders.
+"""
 function kinetic_parameter_symbols(nucleationfunction, growthfunction,
                                    aggregationfunction, breakagefunction;
                                    diss = nodissolution())

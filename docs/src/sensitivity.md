@@ -5,21 +5,25 @@ chosen simulation output. The package supplies the forward model through
 `runsimulation`; the sampling and sensitivity estimators come from
 GlobalSensitivity.jl and QuasiMonteCarlo.jl.
 
-The lower-level `forwardsensitivity` helper currently covers scalar growth and
-independent scalar dissolution with MoM or FiniteVol, using the same numeric SI
-parameters as `runsimulation`. It rejects length-dependent kinetics and binary
-aggregation/breakage explicitly because those source terms need a separate
-sensitivity implementation.
+The lower-level `CriSTool.forwardsensitivity` helper currently covers scalar
+growth and independent scalar dissolution with MoM or FiniteVol, using the same
+numeric SI parameters as `runsimulation`. It is qualified because it is not
+exported. It rejects length-dependent kinetics and binary aggregation/breakage
+explicitly because those source terms need a separate sensitivity
+implementation.
 
-[Tutorial 3 — Sensitivity Analysis](<../examples/Tutorial 3 Sensitivity Analysis.jl>)
+[Tutorial 3 — Sensitivity Analysis](https://github.com/DanielePessina/CriSTool.jl/blob/main/examples/Tutorial%203%20Sensitivity%20Analysis.jl)
 is the full runnable example. It uses the terminal concentration as its
 scalar output and computes Sobol and DGSM measures over parameter bounds.
 
 ## Build a parameter-to-output map
 
-Keep the parameter order identical to the order used by `runsimulation`:
-`[nucleation; growth; aggregation; breakage]`. A sensitivity tool can then
-call the forward map with each sampled parameter vector.
+Keep the parameter order identical to the order used by `runsimulation`. This
+example uses the compatibility order `[nucleation; growth; aggregation;
+breakage]` because it has no independent dissolution model. If `diss` is
+provided, use `[nucleation; growth; dissolution; aggregation; breakage]`.
+A sensitivity tool can then call the forward map with each sampled parameter
+vector.
 
 ```julia
 using CriSTool

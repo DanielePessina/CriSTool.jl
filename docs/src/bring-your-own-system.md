@@ -11,14 +11,14 @@ using the same pattern as `test/test_generalization.jl`.
 Define a `AbstractSolubilityModel` and a `saturation_concentration` method:
 
 ```julia
-using ComponentArrays
+using CriSTool
 
-struct LinearSolubility <: CriSTool.AbstractSolubilityModel
+struct LinearSolubility <: AbstractSolubilityModel
     slope::Float64   # kg/m³ per °C
     intercept::Float64
 end
-function CriSTool.saturation_concentration(sm::LinearSolubility, temp_profile, t)
-    return sm.slope * (CriSTool.temperature(temp_profile, t) - 273.15) + sm.intercept
+function saturation_concentration(sm::LinearSolubility, temp_profile, t)
+    return sm.slope * (temperature(temp_profile, t) - 273.15) + sm.intercept
 end
 
 problem = CrystallisationProblem(; saturation_model = LinearSolubility(0.25, 2.0), ...)
@@ -76,7 +76,7 @@ paramaxis(::growth_custom) = ComponentArrays.Axis(growth_coefficient = 1, growth
 function growthrate(gf::growth_custom, parameters,
                     prob::CrystallisationProblem, state, t)
     p = _named_params(gf, parameters)
-    S = supersaturation(prob, state, t)   # state[end] / saturation_concentration(prob, t)
+    S = supersaturation(prob, state, t)   # named concentration / solubility
     return S > 1.001 ? p.growth_coefficient * (S - 1)^p.growth_order : 0.0
 end
 ```

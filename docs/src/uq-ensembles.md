@@ -65,6 +65,10 @@ ensemble = run_ensemble(samples, measurements,
 - The ensemble uses each measurement's `temperature` and `initial_crystals`
   fields when running simulations.
 - Pass `diss = growth_dissolution()` (and include its SI parameter block in the
-  samples) to propagate an independent dissolution model.
+  samples) to propagate an independent dissolution model. Its block follows
+  the growth block, before aggregation and breakage.
+- `use_measurement_time = true` (the default) spans each experiment's observed
+  time range with `length(time_idx)` saved points. Set it to `false` to use
+  `time_idx` exactly.
 - The returned objects are `EnsembleMoMSolution` for MoM/QMOM/DQMOM and
   `EnsembleFVSolution` for FiniteVol/WENO.

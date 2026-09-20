@@ -374,18 +374,17 @@ function _validate_growth_parameters(model::growth_empirical_length,
 end
 
 """
-    growthrate(::growth_empirical, parameters::AbstractVector, S::Real,
-               system, temperature, numberdensity)
+    growthrate(::growth_empirical, parameters::AbstractVector,
+               problem::CrystallisationProblem, state, t) -> Real
 
 Calculate crystal growth rate using an empirical power law model.
 
 # Arguments
 - `parameters`: Vector containing [growth_coefficient, growth_order], where
   the coefficient is in m/s.
-- `S`: Supersaturation ratio
-- `system`: System parameters
-- `temperature`: Instantaneous temperature in Kelvin
-- `numberdensity`: Current crystal size distribution
+- `problem`: Crystallisation problem providing the saturation model.
+- `state`: Current solver state, including the named solvent-state values.
+- `t`: Time in seconds.
 
 # Returns
 - Growth rate (m/s) if S > 1.001, otherwise 0
@@ -466,18 +465,18 @@ function growthrate(gf::growth_empirical_length,
 end
 
 """
-    growthrate(gf::growth_energy, parameters::AbstractVector, S::Real,
-               system, temperature, numberdensity) -> Real
+    growthrate(gf::growth_energy, parameters::AbstractVector,
+               problem::CrystallisationProblem, state, t) -> Real
 
 Calculate growth rate with Arrhenius temperature dependence using fixed activation energy.
 
 # Arguments
 - `gf`: Growth function with embedded activation energy
 - `parameters`: Vector [log10_growth_coefficient, growth_order]
-- `S`: Supersaturation ratio
-- `system`: System parameters
-- `temperature`: Temperature in Kelvin
-- `numberdensity`: Current crystal size distribution
+- `problem`: Crystallisation problem providing the saturation model and gas
+  constant.
+- `state`: Current solver state, including the named solvent-state values.
+- `t`: Time in seconds.
 
 # Returns
 - Growth rate (m/s) if S > 1.001, otherwise 0
@@ -492,8 +491,8 @@ function growthrate(gf::growth_energy, parameters::T, prob::CrystallisationProbl
 end
 
 """
-    growthrate(gf::growth_energy_est, parameters::AbstractVector, S::Real,
-               system, temperature, numberdensity) -> Real
+    growthrate(gf::growth_energy_est, parameters::AbstractVector,
+               problem::CrystallisationProblem, state, t) -> Real
 
 Calculate growth rate with Arrhenius temperature dependence and estimated activation energy.
 
@@ -501,10 +500,10 @@ Calculate growth rate with Arrhenius temperature dependence and estimated activa
 - `gf`: Growth function struct
 - `parameters`: Vector [log10_growth_coefficient, activation_energy, growth_order],
   with activation energy in J/mol.
-- `S`: Supersaturation ratio
-- `system`: System parameters
-- `temperature`: Temperature in Kelvin
-- `numberdensity`: Current crystal size distribution
+- `problem`: Crystallisation problem providing the saturation model and gas
+  constant.
+- `state`: Current solver state, including the named solvent-state values.
+- `t`: Time in seconds.
 
 # Returns
 - Growth rate (m/s) if S > 1.001, otherwise 0
@@ -519,18 +518,17 @@ function growthrate(gf::growth_energy_est, parameters::T, prob::CrystallisationP
 end
 
 """
-    growthrate(::growth_BCF, parameters::AbstractVector, S::Real,
-               system::CrystallisationProblem, temperature, numberdensity)
+    growthrate(::growth_BCF, parameters::AbstractVector,
+               problem::CrystallisationProblem, state, t) -> Real
 
 Calculate crystal growth rate using Burton-Cabrera-Frank (BCF) surface diffusion model.
 
 # Arguments
 - `parameters`: Vector containing [growth_coefficient, activation_temperature]
   where the first entry is in m/s and the second is in K.
-- `S`: Supersaturation ratio
-- `system`: System parameters
-- `temperature`: Instantaneous temperature in Kelvin
-- `numberdensity`: Current crystal size distribution
+- `problem`: Crystallisation problem providing the saturation model.
+- `state`: Current solver state, including the named solvent-state values.
+- `t`: Time in seconds.
 
 # Returns
 - Growth rate (m/s) if S > 1.001, otherwise 0
@@ -554,8 +552,8 @@ function growthrate(gf::growth_BCF, parameters::T, prob::CrystallisationProblem,
 end
 
 """
-    growthrate(::growth_BpS, parameters::AbstractVector, S::Real,
-               system::CrystallisationProblem, temperature, numberdensity)
+    growthrate(::growth_BpS, parameters::AbstractVector,
+               problem::CrystallisationProblem, state, t) -> Real
 
 Calculate crystal growth rate using Birth and Spread (B+S) model based on nucleation theory.
 
@@ -563,10 +561,9 @@ Calculate crystal growth rate using Birth and Spread (B+S) model based on nuclea
 - `parameters`: Vector containing [growth_coefficient,
   energy_barrier_temperature_squared], with the first entry in m/s and the
   second in K².
-- `S`: Supersaturation ratio
-- `system`: System parameters
-- `temperature`: Instantaneous temperature in Kelvin
-- `numberdensity`: Current crystal size distribution
+- `problem`: Crystallisation problem providing the saturation model.
+- `state`: Current solver state, including the named solvent-state values.
+- `t`: Time in seconds.
 
 # Returns
 - Growth rate (m/s) if S > 1.001, otherwise 0
@@ -594,8 +591,8 @@ end
 ### Dissolution
 
 """
-    growthrate(gf::growth_dissolution_length, parameters::AbstractVector, S::Real,
-               mesh::AbstractVector, temperature, numberdensity) -> Vector
+    dissolutionrate(gf::growth_dissolution_length, parameters::AbstractVector,
+                    problem::CrystallisationProblem, state, t) -> Vector
 
 Calculate length-dependent dissolution rate (negative growth).
 
@@ -605,10 +602,10 @@ Calculate length-dependent dissolution rate (negative growth).
   dissolution_order, size_dependence_coefficient, size_dependence_exponent]
   for dissolution kinetics; the coefficient is in m/s and activation energy
   in J/mol.
-- `S`: Supersaturation ratio
-- `mesh`: Cell-centre coordinates (length-dependence is evaluated on each mesh cell)
-- `temperature`: Temperature in Kelvin
-- `numberdensity`: Current crystal size distribution
+- `problem`: Crystallisation problem with a discretised solver mesh.
+- `state`: Current solver state, including the named solvent-state values and
+  crystal population.
+- `t`: Time in seconds.
 
 # Returns
 - Vector of dissolution rates (m/s) at each mesh point, zero vector if supersaturated
@@ -731,8 +728,8 @@ growthrate_at_length(gf::growth_dissolution_length,
     dissolutionrate_at_length(gf, parameters, prob, state, t, crystal_length)
 
 """
-    growthrate(gf::growth_dissolution, parameters::AbstractVector, S::Real,
-               system, temperature, numberdensity) -> Real
+    growthrate(gf::growth_dissolution, parameters::AbstractVector,
+               problem::CrystallisationProblem, state, t) -> Real
 
 Calculate scalar dissolution rate (negative growth) with Arrhenius temperature dependence.
 
@@ -741,10 +738,10 @@ Calculate scalar dissolution rate (negative growth) with Arrhenius temperature d
 - `parameters`: Vector [dissolution_coefficient, activation_energy,
   dissolution_order] for dissolution kinetics; the coefficient is in m/s and
   activation energy in J/mol.
-- `S`: Supersaturation ratio
-- `system`: System parameters
-- `temperature`: Temperature in Kelvin
-- `numberdensity`: Current crystal size distribution
+- `problem`: Crystallisation problem providing the saturation model, gas
+  constant, and temperature profile.
+- `state`: Current solver state, including the named solvent-state values.
+- `t`: Time in seconds.
 
 # Returns
 - Dissolution rate (negative m/s) if undersaturated, 0 otherwise
@@ -763,8 +760,8 @@ dissolutionrate(gf::growth_dissolution, parameters::T,
     growthrate(gf, parameters, prob, state, t)
 
 """
-    growthrate(gf::growth_energy_dissolution, parameters::AbstractVector, S::Real,
-               system, temperature, numberdensity) -> Real
+    growthrate(gf::growth_energy_dissolution, parameters::AbstractVector,
+               problem::CrystallisationProblem, state, t) -> Real
 
 Calculate growth or dissolution rate depending on supersaturation.
 
@@ -776,10 +773,10 @@ Uses `growth_energy` for supersaturated conditions (S > 1.001) and
 - `parameters`: Vector [log10_growth_coefficient, growth_order,
   dissolution_coefficient, activation_energy, dissolution_order] for the
   combined kinetics.
-- `S`: Supersaturation ratio
-- `system`: System parameters
-- `temperature`: Temperature in Kelvin
-- `numberdensity`: Current crystal size distribution
+- `problem`: Crystallisation problem providing the saturation model, gas
+  constant, and temperature profile.
+- `state`: Current solver state, including the named solvent-state values.
+- `t`: Time in seconds.
 
 # Returns
 - Growth rate (m/s) if supersaturated, dissolution rate if undersaturated
@@ -813,18 +810,17 @@ end
 ###
 
 """
-    growthrate(grf::growth_empirical_fixed, parameters, S::Real,
-               system::CrystallisationProblem, temperature, numberdensity) -> Real
+    growthrate(grf::growth_empirical_fixed, parameters,
+               problem::CrystallisationProblem, state, t) -> Real
 
 Calculate empirical growth rate using pre-fixed parameters embedded in the struct.
 
 # Arguments
 - `grf`: Fixed empirical growth function with embedded growth coefficient and order
 - `parameters`: Ignored (parameters taken from grf)
-- `S`: Supersaturation ratio
-- `system`: Crystallisation problem
-- `temperature`: Temperature in Kelvin
-- `numberdensity`: Current crystal size distribution
+- `problem`: Crystallisation problem providing the saturation model.
+- `state`: Current solver state, including the named solvent-state values.
+- `t`: Time in seconds.
 
 # Returns
 - Growth rate (m/s) if S > 1.001, otherwise 0

@@ -4,7 +4,7 @@ CriSTool's main entry point is `runsimulation`, which builds a
 `CrystallisationProblem` and returns a `(problem, solution)` tuple.
 
 For a complete comparison of temperature profiles, start with
-[Tutorial 1](<../examples/Tutorial 1 Running Simulations.jl>). The tutorial
+[Tutorial 1](https://github.com/DanielePessina/CriSTool.jl/blob/main/examples/Tutorial%201%20Running%20Simulations.jl). The tutorial
 uses the same kinetics and initial condition for three different temperature
 profiles, which makes it a useful template for a first simulation script.
 
@@ -38,6 +38,11 @@ The parameter vector is concatenated as:
 The dissolution block is empty for the default `nodissolution()`. The lengths
 of each block come from the `nparams` field on the kinetic structs you pass in.
 `runsimulation` validates this length.
+
+For a flat vector, omitting `diss` selects the compatibility four-block layout
+`[nucleation; growth; aggregation; breakage]`; the empty dissolution block is
+not represented by a placeholder value. Pass an independent dissolution model
+with `diss = ...` to select the five-block layout shown above.
 
 `runsimulation` has two entry points sharing the same kwargs:
 
@@ -117,6 +122,8 @@ the saved times. The default `QMOM(nquadrature = 3)` tracks `M₀:M₅`, which
 provides the same d32 and d43 observables used by the moment-based losses.
 
 ```julia
+using CriSTool
+
 problem, solution = runsimulation(
     [38.0, 0.0007, 1e-9 / 60, 3.0];
     nucl = nucl_CNT(),
@@ -146,6 +153,8 @@ observables. Supply either `initial_crystals` or a complete direct initial
 state; an empty unseeded population is rejected in v1.
 
 ```julia
+using CriSTool
+
 initial_crystals = LogNormalInitialCrystals(
     mass_concentration = 0.25,
     d43 = 12e-6,
@@ -180,7 +189,6 @@ the projection equation and the supported-kinetics matrix.
 
 ```julia
 using CriSTool
-import OrdinaryDiffEqTsit5
 
 params = [38.0, 0.0007, 1e-9 / 60, 3.0]
 
@@ -190,8 +198,8 @@ problem, solution = runsimulation(
     gr = growth_empirical(),
     agg = noaggregation(),
     br = nobreakage(),
-    solver = FiniteVol(meshsize = 200, lmax = 50e-6),
-    timestepping_solver = OrdinaryDiffEqTsit5.Tsit5(),
+    solver = FiniteVol(meshsize = 200, lmax = 50e-6,
+                       timestepping_algorithm = :tsit5),
     initial_concentration = 18.0,
     save_idx = 0.0:3600.0:28800.0,
 )

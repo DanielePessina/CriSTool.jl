@@ -11,5 +11,32 @@ R - DS Data/
 Generated Datasets/
 Saved Plots/
 examples/results/
+benchmark/results/
+.docs-build/
+docs/build/
+coverage/
+lcov.info
+*.cov
+*.profraw
 *.jld2
 !test/test_chain.jld2
+
+# Local Python/tooling files
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.env.*
+!.env.example
+
+# Agent-only and local research scratch
+AGENTS.md
+AUDIT_v1.0.md
+skills-lock.json
+skill/
+research/
+
+# Local institutional disclosure copy
+Invention-Disclosure-Form_v1.6_cristool_completed.docx
+tools/fill_cristool_idf.py
+RobotoSlab-VariableFont_wght.ttf

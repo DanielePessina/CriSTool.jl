@@ -14,7 +14,7 @@ CriSTool = {path = ".."}
 [compat]
 CairoMakie = "0.15"
 ComponentArrays = "0.15"
-CriSTool = "1"
+CriSTool = "0.1"
 Distributions = "0.25"
 GlobalSensitivity = "2"
 Metaheuristics = "3"

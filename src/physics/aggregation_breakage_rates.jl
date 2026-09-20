@@ -117,8 +117,8 @@ function _aggregation_rate_discrete(aggregationfunction,
 end
 
 """
-    aggregationrate(::noaggregation, parameters::AbstractVector, mesh::AbstractVector,
-                    numberdensity::AbstractVector) -> Real
+    aggregationrate(::noaggregation, parameters::AbstractVector,
+                    problem::CrystallisationProblem, state, t) -> Real
 
 Return zero aggregation rate (placeholder for no aggregation).
 
@@ -130,8 +130,8 @@ function aggregationrate(::noaggregation, parameters::T, prob::CrystallisationPr
 end
 
 """
-    aggregationrate(::aggr_scalar, parameters::AbstractVector, fullmesh::AbstractVector,
-                    fullnumberdensity::AbstractVector) -> Vector
+    aggregationrate(::aggr_scalar, parameters::AbstractVector,
+                    problem::CrystallisationProblem, state, t) -> Vector
 
 Calculate size-independent (scalar) aggregation rate.
 
@@ -139,8 +139,9 @@ Calculate size-independent (scalar) aggregation rate.
 - `parameters`: Vector [log10_aggregation_coefficient], the base-10 logarithm
   of the SI aggregation coefficient. Its dimensional unit depends on the
   selected kernel family.
-- `fullmesh`: Cell center positions
-- `fullnumberdensity`: Number density at each cell
+- `problem`: Crystallisation problem with the discretised solver mesh.
+- `state`: Current solver state, including the mesh number-density population.
+- `t`: Time in seconds.
 
 # Returns
 - Vector of aggregation rates at each cell
@@ -150,8 +151,8 @@ function aggregationrate(af::aggr_scalar, parameters::T, prob::CrystallisationPr
 end
 
 """
-    aggregationrate(::aggr_linear, parameters::AbstractVector, fullmesh::AbstractVector,
-                    fullnumberdensity::AbstractVector) -> Vector
+    aggregationrate(::aggr_linear, parameters::AbstractVector,
+                    problem::CrystallisationProblem, state, t) -> Vector
 
 Calculate linear size-dependent aggregation rate (kernel proportional to sum of sizes).
 
@@ -159,8 +160,9 @@ Calculate linear size-dependent aggregation rate (kernel proportional to sum of 
 - `parameters`: Vector [log10_aggregation_coefficient], the base-10 logarithm
   of the SI aggregation coefficient. Its dimensional unit depends on the
   selected kernel family.
-- `fullmesh`: Cell center positions
-- `fullnumberdensity`: Number density at each cell
+- `problem`: Crystallisation problem with the discretised solver mesh.
+- `state`: Current solver state, including the mesh number-density population.
+- `t`: Time in seconds.
 
 # Returns
 - Vector of aggregation rates at each cell
@@ -170,8 +172,8 @@ function aggregationrate(af::aggr_linear, parameters::T, prob::CrystallisationPr
 end
 
 """
-    aggregationrate(::aggr_linearvol, parameters::AbstractVector, fullmesh::AbstractVector,
-                    fullnumberdensity::AbstractVector) -> Vector
+    aggregationrate(::aggr_linearvol, parameters::AbstractVector,
+                    problem::CrystallisationProblem, state, t) -> Vector
 
 Calculate linear volume-dependent aggregation rate (kernel proportional to sum of volumes).
 
@@ -179,8 +181,9 @@ Calculate linear volume-dependent aggregation rate (kernel proportional to sum o
 - `parameters`: Vector [log10_aggregation_coefficient], the base-10 logarithm
   of the SI aggregation coefficient. Its dimensional unit depends on the
   selected kernel family.
-- `fullmesh`: Cell center positions
-- `fullnumberdensity`: Number density at each cell
+- `problem`: Crystallisation problem with the discretised solver mesh.
+- `state`: Current solver state, including the mesh number-density population.
+- `t`: Time in seconds.
 
 # Returns
 - Vector of aggregation rates at each cell
@@ -252,8 +255,8 @@ function _breakage_rate_uniform_volume(breakagefunction,
 end
 
 """
-    breakagerate(::nobreakage, parameters::AbstractVector, fullmesh::AbstractVector,
-                 fullnumberdensity::AbstractVector) -> Real
+    breakagerate(::nobreakage, parameters::AbstractVector,
+                 problem::CrystallisationProblem, state, t) -> Real
 
 Return zero breakage rate (placeholder for no breakage).
 
@@ -265,15 +268,16 @@ function breakagerate(::nobreakage, parameters::T, prob::CrystallisationProblem,
 end
 
 """
-    breakagerate(::breakage_empirical, parameters::AbstractVector, mesh::AbstractVector,
-                 numberdensity::AbstractVector) -> Real
+    breakagerate(::breakage_empirical, parameters::AbstractVector,
+                 problem::CrystallisationProblem, state, t) -> Vector
 
 Calculate empirical breakage rate.
 
 # Arguments
 - `parameters`: Vector [breakage constant, breakage exponent]
-- `mesh`: Cell center positions
-- `numberdensity`: Number density at each cell
+- `problem`: Crystallisation problem with the discretised solver mesh.
+- `state`: Current solver state, including the mesh number-density population.
+- `t`: Time in seconds.
 
 # Returns
 - Breakage rate contribution
@@ -283,15 +287,16 @@ function breakagerate(bf::breakage_empirical, parameters::T, prob::Crystallisati
 end
 
 """
-    breakagerate(::breakage_uniform, parameters::AbstractVector, fullmesh::AbstractVector,
-                 fullnumberdensity::AbstractVector) -> Vector
+    breakagerate(::breakage_uniform, parameters::AbstractVector,
+                 problem::CrystallisationProblem, state, t) -> Vector
 
 Calculate uniform breakage rate (daughter fragments uniformly distributed).
 
 # Arguments
 - `parameters`: Vector [log(breakage constant), breakage exponent]
-- `fullmesh`: Cell center positions
-- `fullnumberdensity`: Number density at each cell
+- `problem`: Crystallisation problem with the discretised solver mesh.
+- `state`: Current solver state, including the mesh number-density population.
+- `t`: Time in seconds.
 
 # Returns
 - Vector of breakage rates at each cell

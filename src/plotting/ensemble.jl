@@ -1,3 +1,10 @@
+"""
+    plot_measurements_vs_ensemble(measurements, ensemble_results,
+                                  optimal_solutions; kwargs...) -> Makie.Figure
+
+Compare experimental concentration and particle-size measurements with
+ensemble simulation results and nominal solutions.
+"""
 function plot_measurements_vs_ensemble(measurements::Vector{<:AbstractExperiment},
                                        ensemble_results::Vector{<:Union{EnsembleFVSolution,
                                                                         EnsembleMoMSolution}},
@@ -222,13 +229,16 @@ function plot_measurements_vs_ensemble(measurements::Vector{<:AbstractExperiment
         if show_thesistext && !isempty(thesis_rows)
             thesis_io = IOBuffer()
             thesis_data = permutedims(reduce(hcat, thesis_rows))
-            thesis_header = (["Exp ID", "T", "Pred. d43", "Meas. d43"],
-                             ["", "[°C]", "[μm]", "[μm]"])
+            thesis_column_labels = [
+                ["Exp ID", "T", "Pred. d43", "Meas. d43"],
+                ["", "[°C]", "[μm]", "[μm]"],
+            ]
             PrettyTables.pretty_table(thesis_io, thesis_data;
-                                      header = thesis_header,
-                                      tf = PrettyTables.tf_ascii_rounded,
+                                      column_labels = thesis_column_labels,
+                                      table_format = PrettyTables.TextTableFormat(
+                                          borders = PrettyTables.text_table_borders__ascii_rounded),
                                       alignment = :c,
-                                      linebreaks = true)
+                                      line_breaks = true)
             thesis_string = chomp(String(take!(thesis_io)))
 
             Makie.Label(figure[3, 1], thesis_string;
@@ -532,42 +542,3 @@ function plot_ps_measurements_vs_ensemble(measurements::Vector{<:AbstractExperim
         return figure
     end
 end
-
-"""
-    plot_measurements_vs_simulation(measurements, parameters, nucleationfunction,
-                                    growthfunction, aggregationfunction, breakagefunction,
-                                    solver; kwargs...)
-
-Plot experimental measurements against a single deterministic simulation using the
-given kinetic parameters. Runs [`runsimulation`](@ref) internally for each measurement
-and overlays the simulated trajectories on the experimental data.
-
-# Arguments
-- `measurements::Vector{<:AbstractExperiment}`: experimental measurement sets.
-- `parameters::AbstractVector{<:Real}`: kinetic parameter vector.
-- `nucleationfunction::AbstractNucleationFunction`: nucleation kinetic model.
-- `growthfunction::AbstractGrowthFunction`: growth kinetic model.
-- `aggregationfunction::AbstractAggregationFunction`: aggregation kinetic model.
-- `breakagefunction::AbstractBreakageFunction`: breakage kinetic model.
-- `solver::AbstractSolver`: population balance solver ([`MoM`](@ref), [`QMOM`](@ref),
-  [`FiniteVol`](@ref), or [`WENO`](@ref)).
-
-# Keyword Arguments
-- `title::String`: figure title (default `""`).
-- `savename::String`: file path (without extension) to save the figure; empty to skip.
-- `colors`: per-experiment colors (`nothing` for auto palette, `Vector`, or `Dict`).
-- `colouroffset::Int`: offset into the default colour palette (default `0`).
-- `showplot::Bool`: call `display` on the figure (default `true`).
-- `showtext::Bool`: show inline text annotations (default `true`).
-- `show_thesistext::Bool`: show the thesis-style summary table below the plot
-  (default `false`).
-- `show_title::Bool`: display the figure title (default `true`).
-- `show_parameter_table::Bool`: display a parameter summary table (default `true`).
-- `show_measurement_uncertainty::Bool`: show measurement error bars (default `true`).
-- `figure_kwargs::NamedTuple`: extra keyword arguments forwarded to `Makie.Figure`.
-- `axis_kwargs::NamedTuple`: extra keyword arguments forwarded to `Makie.Axis`.
-- `kwargs...`: additional keyword arguments forwarded to [`runsimulation`](@ref).
-
-# Returns
-A `Makie.Figure` object. If `savename` is non-empty the figure is also saved as PNG.
-"""

@@ -19,13 +19,13 @@ jobs:
         # The julia = "^1.10" floor in Project.toml is validated by this
         # matrix; a fresh resolution per version picks deps compatible with
         # that Julia (Manifest.toml is gitignored).
-        version: ['1.10', '1.11', '1.12']
+        version: ['1.10', '1.11', '1.12', '1.13']
     steps:
-      - uses: actions/checkout@v4
-      - uses: julia-actions/setup-julia@v2
+      - uses: actions/checkout@v6
+      - uses: julia-actions/setup-julia@v3
         with:
           version: ${{ matrix.version }}
-      - uses: julia-actions/cache@v2
+      - uses: julia-actions/cache@v3
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
 
@@ -33,11 +33,11 @@ jobs:
     name: JET static analysis
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: julia-actions/setup-julia@v2
+      - uses: actions/checkout@v6
+      - uses: julia-actions/setup-julia@v3
         with:
           version: '1.12'
-      - uses: julia-actions/cache@v2
+      - uses: julia-actions/cache@v3
       - uses: julia-actions/julia-buildpkg@v1
       - name: JET analysis of the MoM solve core
         run: |
@@ -61,3 +61,17 @@ jobs:
             end
             println("JET: 0 reports on the MoM solve core")
           '
+
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: '1.12'
+      - uses: julia-actions/cache@v3
+      - name: Instantiate documentation environment
+        run: julia --project=docs -e 'using Pkg; Pkg.instantiate()'
+      - name: Build documentation
+        run: julia --project=docs docs/make.jl

@@ -1,4 +1,4 @@
-# Kinetics: nucleation and growth
+# Kinetics: nucleation, growth, aggregation, and breakage
 
 CriSTool uses small structs to represent kinetic models. Each struct
 implements a rate function by multiple dispatch in the corresponding
@@ -6,8 +6,8 @@ implements a rate function by multiple dispatch in the corresponding
 declares a `paramaxis` so its parameters can be accessed by name.
 
 For the shortest working example, see
-[Tutorial 1](<../examples/Tutorial 1 Running Simulations.jl>). To add a model
-from a user script, follow [Tutorial 4](<../examples/Tutorial 4 Defining a Custom Kinetic.jl>)
+[Tutorial 1](https://github.com/DanielePessina/CriSTool.jl/blob/main/examples/Tutorial%201%20Running%20Simulations.jl). To add a model
+from a user script, follow [Tutorial 4](https://github.com/DanielePessina/CriSTool.jl/blob/main/examples/Tutorial%204%20Defining%20a%20Custom%20Kinetic.jl)
 and the custom-family section below.
 
 Key ideas:
@@ -15,15 +15,18 @@ Key ideas:
 - Each struct also declares a `paramaxis(::T)` method returning a
   ComponentArrays `Axis` — this is what powers named fields such as
   `p.ln_nucleation_prefactor` and `p.surface_energy` in rate functions.
-- `runsimulation` builds a `ComponentArray` view over the flat
-  parameter vector (`[nucl; gr; agg; br]`) so each rate function sees
-  its own named slice.
+- `runsimulation` builds a `ComponentArray` view over the flat parameter
+  vector. The compatibility form is `[nucl; gr; agg; br]` when `diss` is
+  omitted; the canonical independent-dissolution form is
+  `[nucl; gr; diss; agg; br]`.
 - To add a new model: subtype the right `Abstract*Function`, declare
   `paramaxis`, and implement the corresponding rate method.
 
 ## Built-in examples
 
 ```julia
+using CriSTool
+
 nucl     = nucl_CNT()        # nparams = 2, axis Axis(ln_nucleation_prefactor=1, surface_energy=2)
 nucl_emp = nucl_empirical()  # nparams = 2, axis Axis(log10_nucleation_prefactor=1, nucleation_order=2)
 growth   = growth_empirical()# nparams = 2, axis Axis(growth_coefficient=1, growth_order=2)
@@ -59,7 +62,7 @@ negative values dissolve them. The default equilibrium deadband is
 
 ```julia
 dissolution = growth_dissolution()          # coefficient, activation energy, order
-combined    = growth_energy_dissolution()   # growth block + dissolution block
+combined    = growth_energy_dissolution()   # one combined five-parameter law
 length_dissolution = growth_dissolution_length() # adds size-dependence terms
 length_growth = growth_empirical_length()        # empirical growth with size factor
 ```
@@ -88,19 +91,25 @@ method allocates a vector for standalone inspection.
 
 ## The `paramaxis` API
 
-`paramaxis` has three overloads (all exported):
+`paramaxis` has four public forms (all exported):
 
 ```julia
+using CriSTool, ComponentArrays
+
 paramaxis(model)              # single-family axis, e.g. Axis(ln_nucleation_prefactor=1, surface_energy=2)
 paramaxis(nucl, gr, agg, br)  # four-family axis without independent dissolution
 paramaxis(nucl, gr, diss, agg, br)  # canonical axis with dissolution
 paramaxis(prob)               # composite axis read off a CrystallisationProblem
 ```
 
+Use `growth_dissolution()` as `diss = ...` when growth and dissolution are
+independent parameter blocks. The five-parameter
+`growth_energy_dissolution()` model is a single combined signed law; it is not
+two independent blocks.
+
 Use the composite form to wrap a flat parameter vector with named slices:
 
 ```julia
-using ComponentArrays
 flat = [38.0, 0.0007, 1e-9 / 60, 3.0]
 p    = ComponentArray(flat, paramaxis(nucl_CNT(), growth_empirical(),
                                        noaggregation(), nobreakage()))
@@ -123,7 +132,7 @@ Three pieces, all in your own user script:
    `_named_params(model, parameters)`.
 
 Worked example in
-[Tutorial 4](<../examples/Tutorial 4 Defining a Custom Kinetic.jl>). Sketched
+[Tutorial 4](https://github.com/DanielePessina/CriSTool.jl/blob/main/examples/Tutorial%204%20Defining%20a%20Custom%20Kinetic.jl). Sketched
 here for nucleation and growth:
 
 ```julia

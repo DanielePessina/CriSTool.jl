@@ -221,29 +221,6 @@ function plot_posterior_pairplot(posterior_df::DataFrame,
         return figure
     end
 end
-"""
-    plot_measurements_vs_ensemble(measurements, ensemble_results,
-                                  optimal_solutions; kwargs...)
-
-Compare experimental measurements against ensemble simulation results.
-
-# Arguments
-- `measurements::Vector{<:AbstractExperiment}`: experimental datasets,
-  one per batch.
-- `ensemble_results::Vector{<:Union{EnsembleFVSolution, EnsembleMoMSolution}}`:
-  simulation outputs where each `concentration` field is a matrix of size
-  `(ensemble_size, n_tsteps)`. QMOM uses the moment-based
-  `EnsembleMoMSolution` representation.
-- `optimal_solutions`: vector of `(problem, solution)` tuples for the
-  mean or optimal parameter set.
-- Keyword arguments control plot appearance and may include the kinetic
-  functions and sampled parameters for annotation.
-
-# Returns
-A `Makie.Figure` with concentration and particle-size plots. If
-`savename` is provided and `savedir` is set the figure is saved to
-`savedir`.
-"""
 function linear_interpolate(x::AbstractVector, y::AbstractVector, t::Real)
     if t <= x[begin]
         return y[begin]
@@ -298,14 +275,15 @@ function build_parameter_summary_table(param_samples::AbstractMatrix,
              "$(round(means[i], sigdigits = sigdigits)) ± $(round(stds[i], sigdigits = sigdigits))"]
             for i in 1:n_rows]
     data = permutedims(reduce(hcat, rows))
-    header = (["Parameter", "Value"], ["", ""])
+    column_labels = [["Parameter", "Value"], ["", ""]]
 
     io = IOBuffer()
     PrettyTables.pretty_table(io, data;
-                              header = header,
-                              tf = PrettyTables.tf_ascii_rounded,
+                              column_labels = column_labels,
+                              table_format = PrettyTables.TextTableFormat(
+                                  borders = PrettyTables.text_table_borders__ascii_rounded),
                               alignment = :c,
-                              linebreaks = true)
+                              line_breaks = true)
     return chomp(String(take!(io)))
 end
 
@@ -396,14 +374,15 @@ function build_parameter_value_table(parameters::AbstractVector{<:Real},
              string(round(parameters[i], sigdigits = sigdigits))]
             for i in 1:n_rows]
     data = permutedims(reduce(hcat, rows))
-    header = (["Parameter", "Value"], ["", ""])
+    column_labels = [["Parameter", "Value"], ["", ""]]
 
     io = IOBuffer()
     PrettyTables.pretty_table(io, data;
-                              header = header,
-                              tf = PrettyTables.tf_ascii_rounded,
+                              column_labels = column_labels,
+                              table_format = PrettyTables.TextTableFormat(
+                                  borders = PrettyTables.text_table_borders__ascii_rounded),
                               alignment = :c,
-                              linebreaks = true)
+                              line_breaks = true)
     return chomp(String(take!(io)))
 end
 

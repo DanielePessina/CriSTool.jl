@@ -10,9 +10,9 @@ CriSTool provides five solvers for the population balance equation:
 - `FiniteVol(meshsize=..., lmax=...)`: full PSD, moderate cost.
 - `WENO(meshsize=..., lmax=...)`: higher-order finite volume, more accurate for sharp fronts.
 
-The full runnable examples are [Tutorial 6](<../examples/Tutorial 6 Dissolution.jl>)
+The full runnable examples are [Tutorial 6](https://github.com/DanielePessina/CriSTool.jl/blob/main/examples/Tutorial%206%20Dissolution.jl)
 for signed dissolution across the three solver families and
-[Tutorial 7](<../examples/Tutorial 7 QMOM.jl>) for moment inversion and
+[Tutorial 7](https://github.com/DanielePessina/CriSTool.jl/blob/main/examples/Tutorial%207%20QMOM.jl) for moment inversion and
 quadrature output.
 
 ## Outputs by solver
@@ -173,13 +173,13 @@ _, sol_weno = runsimulation(
 
 ## Overriding the time-stepper
 
-You can override the ODE time-stepping algorithm via the
-`timestepping_solver` keyword in `runsimulation` (or by setting the
-solver field). This is used in the benchmarking scripts.
+Override the ODE time-stepping algorithm by setting the solver's
+`timestepping_algorithm` field. Supported symbols include `:tsit5`,
+`:ssprk43`, `:kvaerno5`, and `:kencarp4`; `:auto` selects the solver-specific
+default.
 
 ```julia
 using CriSTool
-import OrdinaryDiffEqSSPRK
 
 params = [38.0, 0.0007, 1e-9 / 60, 3.0]
 
@@ -189,8 +189,8 @@ _, sol = runsimulation(
     gr = growth_empirical(),
     agg = noaggregation(),
     br = nobreakage(),
-    solver = FiniteVol(meshsize = 200, lmax = 50e-6),
-    timestepping_solver = OrdinaryDiffEqSSPRK.SSPRK43(),
+    solver = FiniteVol(meshsize = 200, lmax = 50e-6,
+                       timestepping_algorithm = :ssprk43),
     initial_concentration = 18.0,
     save_idx = 0.0:3600.0:28800.0,
 )

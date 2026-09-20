@@ -6,6 +6,7 @@ Loss functions and routines for estimating kinetic parameters via metaheuristic 
     PE_Routine(lossfunction, setofmeasurements, lb, ub,
                nucleationfunction, growthfunction,
                aggregationfunction, breakagefunction;
+               diss = nodissolution(),
                solver, extrastring = "",
                MHAlgorithm = Metaheuristics.DE(),
                nparticles = 128, generations = 128,
@@ -22,6 +23,8 @@ population-based metaheuristic search.
   kinetic functions.
 - `nucleationfunction`, `growthfunction`, `aggregationfunction`,
   `breakagefunction`: kinetic models.
+- `diss`: optional independent dissolution model; its parameter block follows
+  the growth block.
 - `solver::AbstractSolver`: numerical solver to run each simulation.
 - `nparticles`, `generations`: population size and number of iterations
   for the optimisation algorithm.
@@ -117,6 +120,7 @@ end
     PE_Routine_Optimisation(lossfunction, setofmeasurements, lb, ub,
                             nucleationfunction, growthfunction,
                             aggregationfunction, breakagefunction;
+                            diss = nodissolution(),
                             searchalgo, solver, x0=nothing, adtype=AutoForwardDiff(), ...)
 
 Estimate kinetic parameters using gradient-based optimization.
@@ -126,6 +130,8 @@ Estimate kinetic parameters using gradient-based optimization.
 - `setofmeasurements::Vector{<:AbstractExperiment}`: Experimental data sets
 - `lb`, `ub`: Lower and upper bounds for parameter vector
 - `nucleationfunction`, `growthfunction`, `aggregationfunction`, `breakagefunction`: Kinetic models
+- `diss`: Optional independent dissolution model; its parameter block follows
+  the growth block
 - `searchalgo`: Optimization algorithm from Optimization.jl
 - `solver::AbstractSolver`: Numerical solver for simulations
 - `x0`: Optional initial guess (randomly sampled if nothing)
@@ -592,9 +598,11 @@ end
 """
     _params_to_p(prob, params) -> NamedTuple
 
-Split a flat parameter vector (documented order
-`[p_nucleation; p_growth; p_aggregation; p_breakage]`) into the named-tuple
-parameter container used by the ODE right-hand sides. The field types match
+Split a flat parameter vector into the named-tuple parameter container used by
+the ODE right-hand sides. The compatibility order is
+`[p_nucleation; p_growth; p_aggregation; p_breakage]` when the dissolution
+block is empty; the canonical order with independent dissolution is
+`[p_nucleation; p_growth; p_dissolution; p_aggregation; p_breakage]`. The field types match
 the template's `p` exactly for the same parameter element type, so `remake`
 keeps the problem type stable across evaluations.
 """

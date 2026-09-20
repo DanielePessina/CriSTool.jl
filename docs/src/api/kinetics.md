@@ -1,0 +1,61 @@
+# Kinetic models and rates
+
+```@docs
+AbstractNucleationFunction
+AbstractGrowthFunction
+AbstractFPGrowthFunction
+AbstractFPScalarGrowthFunction
+AbstractFPLengthGrowthFunction
+AbstractDissolutionFunction
+AbstractFPScalarDissolutionFunction
+AbstractFPLengthDissolutionFunction
+nodissolution
+AbstractAggregationFunction
+AbstractBreakageFunction
+nucl_CNT
+nucl_empirical
+nucl_empirical_energy
+nucl_CNTnoS
+nucl_secondary
+nucl_prim_plus_second
+nucl_CNT_plus_second
+nucl_CNT_fixed
+nucl_empirical_fixed
+growth_empirical
+growth_empirical_length
+growth_energy
+growth_energy_est
+growth_BCF
+growth_BpS
+growth_empirical_fixed
+growth_dissolution
+growth_dissolution_length
+growth_energy_dissolution
+noaggregation
+nobreakage
+aggr_scalar
+aggr_linear
+aggr_linearvol
+aggr_avg
+breakage_empirical
+breakage_uniform
+paramaxis
+nucleationrate
+growthrate
+growthrate!
+growthrate_at_length
+dissolutionrate
+dissolutionrate!
+dissolutionrate_at_length
+net_growth_rate
+net_growth_rate!
+net_growth_rate_at_length
+net_growthrate
+aggregationrate
+breakagerate
+```
+
+`AbstractScalarDissolutionFunction` and `AbstractLengthDissolutionFunction`
+are short aliases for the corresponding `AbstractFP*` families.
+`nondissolution()` is an alias for `nodissolution()` and contributes an empty
+dissolution parameter block.

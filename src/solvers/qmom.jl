@@ -938,6 +938,11 @@ end
 
 quadrature(solution::CrystallisationQMOMSolution) =
     [quadrature(solution, index) for index in eachindex(solution.time)]
+"""
+    qmom_quadrature(solution::CrystallisationQMOMSolution, time_index::Integer)
+
+Compatibility alias for `quadrature(solution, time_index)`.
+"""
 qmom_quadrature(solution::CrystallisationQMOMSolution, time_index::Integer) =
     quadrature(solution, time_index)
 

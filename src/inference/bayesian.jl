@@ -445,16 +445,6 @@ Turing.@model function _cristool_nuts_loss_model(prior, lossfunction,
 end
 
 """
-    kinetic_parameter_symbols(nucleationfunction, growthfunction,
-                              aggregationfunction, breakagefunction;
-                              diss=nodissolution()) -> Vector{Symbol}
-
-Parameter symbols for the combined kinetic models, in `paramaxis` order:
-the kinetics' own `symbols` where defined, else `:nu1`, `:gr1`, `:diss1`,
-`:agg1`, `:br1`, … placeholders. Used to name MCMC chain columns.
-"""
-
-"""
     rename_chain(chain::MCMCChains.Chains, symbols::Vector{Symbol}) -> Chains
 
 Rename the parameter columns of an MCMC chain in place of a new vector of
@@ -473,6 +463,7 @@ end
 """
     MCMC_Routine(measurements, prior, nucleationfunction, growthfunction,
                  aggregationfunction, breakagefunction;
+                 diss=nodissolution(),
                  solver, lossfunction, sampler = NUTS(1000, 0.65;
                  adtype = AutoForwardDiff(chunksize = 4)), n_samples = 1000,
                  n_chains = 4, burnin = 0, extrastring = "Empty",
@@ -489,6 +480,8 @@ named chain.
 - `prior::Vector{<:Distributions.Distribution}`: one prior per parameter.
 - `nucleationfunction`, `growthfunction`, `aggregationfunction`,
   `breakagefunction`: kinetic models.
+- `diss`: optional independent dissolution model; its parameter block follows
+  the growth block.
 - `solver::AbstractSolver`, `lossfunction::AbstractPELossFunction`:
   forward model and discrepancy.
 - `sampler`: any AbstractMCMC sampler (default `NUTS(1000, 0.65;

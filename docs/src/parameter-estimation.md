@@ -8,8 +8,8 @@ CriSTool provides two main entry points:
 Both routines minimize a loss function built from experimental measurements.
 
 For a fully worked end-to-end example (PE + ABCDE + NUTS) see
-[Tutorial 2 — Parameter Estimation](<../examples/Tutorial 2 Parameter Estimation.jl>)
-and [Tutorial 5 — ABCDE and MCMC](<../examples/Tutorial 5 ABCDE and MCMC.jl>).
+[Tutorial 2 — Parameter Estimation](https://github.com/DanielePessina/CriSTool.jl/blob/main/examples/Tutorial%202%20Parameter%20Estimation.jl)
+and [Tutorial 5 — ABCDE and MCMC](https://github.com/DanielePessina/CriSTool.jl/blob/main/examples/Tutorial%205%20ABCDE%20and%20MCMC.jl).
 
 ## Basic workflow
 
