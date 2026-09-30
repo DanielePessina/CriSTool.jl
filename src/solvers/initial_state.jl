@@ -222,8 +222,5 @@ function initial_state_from_characteristics(problem::CrystallisationProblem,
     return vcat(population, solvent_values)
 end
 
-function _problem_with_initial_state(problem::CrystallisationProblem, state)
-    fields = NamedTuple{propertynames(problem)}(
-        Tuple(getfield(problem, field) for field in propertynames(problem)))
-    return CrystallisationProblem(; merge(fields, (; initial_state = state))...)
-end
+_problem_with_initial_state(problem::CrystallisationProblem, state) =
+    _copy_crystallisation_problem(problem; initial_state = state)

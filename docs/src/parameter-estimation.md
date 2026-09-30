@@ -167,3 +167,9 @@ chain = MCMC_Routine(experiments, prior, nucl_f, growth_f,
 `MCMC_Routine` returns the named chain; with `outputdir` set it persists the
 chain (`.jld2`) and writes posterior pair, trace/density and
 measurements-vs-ensemble plots.
+
+When a problem template has an explicit `initial_state`, loss preparation retains
+its initial crystal population and other solvent initial values. It applies each
+experiment's measured initial concentration and constant temperature. Explicit
+`initial_crystals` on an experiment replace the template population. Preparation
+creates a new problem and leaves the template unchanged.

@@ -561,34 +561,29 @@ end
 
 The problem with the experiment's conditions applied (temperature profile,
 initial concentration, and initial crystal characteristics). Kinetics,
-saturation model, and physical constants carry over from the base problem.
+saturation model, physical constants and explicit initial population carry over
+from the base problem. Explicit experiment crystal characteristics override that
+population. The base problem is never mutated.
 """
 function _experiment_problem(problem::CrystallisationProblem,
                              expt::CrystallisationExperiment)
-    experiment_problem = CrystallisationProblem(;
+    template_solvent = isnothing(problem.initial_state) ?
+                       problem.initial_solvent_state : solvent_state(problem, problem.initial_state)
+    experiment_solvent = merge(template_solvent,
+                               (; concentration = initial_concentration(expt)))
+    experiment_state = if isnothing(problem.initial_state)
+        nothing
+    else
+        # Preserve public population coordinates, including DQMOM weights/nodes.
+        # Solvent conditions belong to the experiment; never mutate its template.
+        vcat(problem.initial_state[_population_state_range(problem)],
+             collect(values(experiment_solvent)))
+    end
+    experiment_problem = _copy_crystallisation_problem(problem;
         temp_profile = ConstantTemperature(expt.temperature),
-        crystal_density = problem.crystal_density,
         initial_concentration = initial_concentration(expt),
-        initial_solvent_state = merge(problem.initial_solvent_state,
-                                      (; concentration = initial_concentration(expt))),
-        solvent_dynamics = problem.solvent_dynamics,
-        saturation_model = problem.saturation_model,
-        volume_shape_factor = problem.volume_shape_factor,
-        solid_mass_concentration_threshold = problem.solid_mass_concentration_threshold,
-        molecular_volume = problem.molecular_volume,
-        kinetics_nucleationfunction = problem.kinetics_nucleationfunction,
-        kinetics_growthfunction = problem.kinetics_growthfunction,
-        kinetics_dissolutionfunction = problem.kinetics_dissolutionfunction,
-        kinetics_aggregationfunction = problem.kinetics_aggregationfunction,
-        kinetics_breakagefunction = problem.kinetics_breakagefunction,
-        parameterset_nucleation = problem.parameterset_nucleation,
-        parameterset_growth = problem.parameterset_growth,
-        parameterset_dissolution = problem.parameterset_dissolution,
-        parameterset_aggregation = problem.parameterset_aggregation,
-        parameterset_breakage = problem.parameterset_breakage,
-        R_gas_constant = problem.R_gas_constant,
-        boltzmann_constant = problem.boltzmann_constant,
-        solver = problem.solver)
+        initial_solvent_state = experiment_solvent,
+        initial_state = experiment_state)
     isnothing(expt.initial_crystals) && return experiment_problem
     return _problem_with_initial_state(
         experiment_problem,

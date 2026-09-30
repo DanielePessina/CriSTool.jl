@@ -20,7 +20,7 @@ function (::DefaultSolventDynamics)(problem, state, time, growth)
     concentration_position === nothing &&
         throw(ArgumentError("initial_solvent_state must define :concentration."))
 
-    population_count = length(state) - solvent_count
+    population_count = _population_state_count(problem.solver)
     if problem.solver isa AbstractMomentSolver
         moment_order(problem.solver) >= 2 ||
             throw(ArgumentError("Moment solver must track at least the second raw moment."))
@@ -138,6 +138,40 @@ Base.@kwdef @concrete struct CrystallisationProblem{NuF <: AbstractNucleationFun
 
 end
 
+"""Copy a problem, replacing only explicitly supplied fields."""
+function _copy_crystallisation_problem(problem::CrystallisationProblem; kwargs...)
+    problem_fields = NamedTuple{propertynames(problem)}(
+        Tuple(getfield(problem, field) for field in propertynames(problem)))
+    return CrystallisationProblem(; merge(problem_fields, (; kwargs...))...)
+end
+
+"""Indices of the solver's population block (raw moments, mesh or direct quadrature)."""
+_population_state_range(problem::CrystallisationProblem) =
+    1:_population_state_count(problem.solver)
+
+"""Indices of the named solvent block following the solver population."""
+function _solvent_state_range(problem::CrystallisationProblem)
+    population_count = _population_state_count(problem.solver)
+    return (population_count + 1):(population_count + length(problem.initial_solvent_state))
+end
+
+function _solvent_state_index(problem::CrystallisationProblem, name::Symbol)
+    position = findfirst(==(name), propertynames(problem.initial_solvent_state))
+    position === nothing && throw(ArgumentError("Unknown solvent-state variable :$name."))
+    return first(_solvent_state_range(problem)) + position - 1
+end
+
+"""
+    initial_concentration(problem::CrystallisationProblem) -> Real
+
+Initial solute concentration actually supplied to the solver. An explicit
+`initial_state` takes precedence over the configured solvent initial values.
+"""
+function initial_concentration(problem::CrystallisationProblem)
+    isnothing(problem.initial_state) && return problem.initial_solvent_state.concentration
+    return problem.initial_state[_solvent_state_index(problem, :concentration)]
+end
+
 function _validate_solid_mass_concentration_threshold(problem::CrystallisationProblem)
     threshold = problem.solid_mass_concentration_threshold
     isfinite(threshold) && threshold > 0.0 ||
@@ -247,14 +281,12 @@ state. `initial_solvent_state` defines both their names and their ordering.
 function solvent_state(prob::CrystallisationProblem, state)
     names = propertynames(prob.initial_solvent_state)
     n_solvent = length(names)
-    values = ntuple(index -> state[length(state) - n_solvent + index], Val(n_solvent))
+    values = ntuple(index -> state[first(_solvent_state_range(prob)) + index - 1], Val(n_solvent))
     return NamedTuple{names}(values)
 end
 
 function _solvent_state_index(prob::CrystallisationProblem, state, name::Symbol)
-    position = findfirst(==(name), propertynames(prob.initial_solvent_state))
-    position === nothing && throw(ArgumentError("Unknown solvent-state variable :$name."))
-    return length(state) - length(propertynames(prob.initial_solvent_state)) + position
+    return _solvent_state_index(prob, name)
 end
 
 """

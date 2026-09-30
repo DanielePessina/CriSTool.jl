@@ -60,6 +60,10 @@ Both forms accept AD types (`Vector{Dual}` from ForwardDiff, etc.) and pass
 them through unchanged, so optimisers and PE routines that hand in flat
 vectors keep working without modification.
 
+`initial_concentration(problem)` returns the concentration actually used at the
+start of a simulation, including an explicit `initial_state` override. The
+simulated concentration trajectory is available as `solution.concentration`.
+
 For coupled solvent variables, provide `initial_solvent_state` and a
 `solvent_dynamics` callable. Solver states keep the population variables first
 and the named solvent variables last; `solution.solvent_state` exposes the

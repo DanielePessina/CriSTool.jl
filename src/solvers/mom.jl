@@ -13,18 +13,10 @@ without aggregation or breakage.
 # Returns
 - `CrystallisationMoMSolution` containing time, concentration, and moment-derived sizes
 """
-@inline function _mom_rhs(CryProblem, scalar_growth_rate, B, solvent_rates, u::SVector{6})
-    return SVector(B, scalar_growth_rate * u[1], 2 * scalar_growth_rate * u[2],
-                   3 * scalar_growth_rate * u[3], 4 * scalar_growth_rate * u[4],
-                   solvent_rates[1])
-end
-
 @inline function _mom_rhs(CryProblem, scalar_growth_rate, B, solvent_rates,
                           u::SVector{N}) where {N}
-    n_states = N
-    n_solvent = length(solvent_rates)
-    n_population = n_states - n_solvent
-    return SVector(ntuple(Val(n_states)) do k
+    n_population = _population_state_count(CryProblem.solver)
+    return SVector(ntuple(Val(N)) do k
         k <= n_population ?
             (k == 1 ? B : (k - 1) * scalar_growth_rate * u[k - 1]) :
             solvent_rates[k - n_population]
@@ -100,7 +92,7 @@ end
 
 function _write_solvent_derivatives!(dst, problem::CrystallisationProblem, rates)
     n_solvent = length(propertynames(problem.initial_solvent_state))
-    first_solvent = length(dst) - n_solvent + 1
+    first_solvent = first(_solvent_state_range(problem))
     @inbounds for index in 1:n_solvent
         dst[first_solvent + index - 1] = rates[index]
     end
@@ -110,16 +102,13 @@ end
 function _solvent_solution_state(problem::CrystallisationProblem, solution)
     names = propertynames(problem.initial_solvent_state)
     n_solvent = length(names)
-    first_solvent = size(solution, 1) - n_solvent + 1
+    first_solvent = first(_solvent_state_range(problem))
     values = ntuple(index -> solution[first_solvent + index - 1, :], Val(n_solvent))
     return NamedTuple{names}(values)
 end
 
-function _solvent_solution_index(problem::CrystallisationProblem, solution, name::Symbol)
-    position = findfirst(==(name), propertynames(problem.initial_solvent_state))
-    position === nothing && throw(ArgumentError("Unknown solvent-state variable :$name."))
-    return size(solution, 1) - length(propertynames(problem.initial_solvent_state)) + position
-end
+_solvent_solution_index(problem::CrystallisationProblem, solution, name::Symbol) =
+    _solvent_state_index(problem, name)
 
 function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, GrF, nobreakage,
                                                                        noaggregation, MoM,
