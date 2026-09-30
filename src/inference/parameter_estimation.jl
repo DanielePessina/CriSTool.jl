@@ -631,9 +631,13 @@ function _experiment_problem(problem::CrystallisationProblem,
         initial_solvent_state = experiment_solvent,
         initial_state = experiment_state)
     isnothing(expt.initial_crystals) && return experiment_problem
-    return _problem_with_initial_state(
-        experiment_problem,
-        initial_state_from_characteristics(experiment_problem, expt.initial_crystals))
+    experiment_seed_state = initial_state_from_characteristics(experiment_problem, expt.initial_crystals)
+    if !isnothing(experiment_state)
+        # A new seed changes the population, not an explicit reactor volume.
+        reactor_indices = _reactor_state_range(experiment_problem)
+        experiment_seed_state[reactor_indices] .= experiment_state[reactor_indices]
+    end
+    return _problem_with_initial_state(experiment_problem, experiment_seed_state)
 end
 
 """

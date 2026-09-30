@@ -1,7 +1,6 @@
 """Population, reactor and solvent ranges of the public/internal numerical state."""
 _reactor_state_range(problem::CrystallisationProblem) =
-    (_population_state_count(problem.solver) + 1):
-    (_population_state_count(problem.solver) + _operation_state_count(problem.operation))
+    (_population_state_count(problem.solver) + 1):(_population_state_count(problem.solver) + _operation_state_count(problem.operation))
 
 """
     reactor_volume(problem, state)

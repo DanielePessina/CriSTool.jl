@@ -155,8 +155,7 @@ _population_state_range(problem::CrystallisationProblem) =
 function _solvent_state_range(problem::CrystallisationProblem)
     population_count = _population_state_count(problem.solver)
     reactor_count = _operation_state_count(problem.operation)
-    return (population_count + reactor_count + 1):
-           (population_count + reactor_count + length(problem.initial_solvent_state))
+    return (population_count + reactor_count + 1):(population_count + reactor_count + length(problem.initial_solvent_state))
 end
 
 function _solvent_state_index(problem::CrystallisationProblem, name::Symbol)
