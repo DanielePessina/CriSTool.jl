@@ -11,6 +11,16 @@ For a fully worked end-to-end example (PE + ABCDE + NUTS) see
 [Tutorial 2 — Parameter Estimation](https://github.com/DanielePessina/CriSTool.jl/blob/main/examples/Tutorial%202%20Parameter%20Estimation.jl)
 and [Tutorial 5 — ABCDE and MCMC](https://github.com/DanielePessina/CriSTool.jl/blob/main/examples/Tutorial%205%20ABCDE%20and%20MCMC.jl).
 
+`MHAlgorithm` accepts a configured `DE`, `NSGA2`, `SA` or `PSO` instance.
+Its algorithm parameters (including DE strategy, `F` and `CR`), options,
+information and termination criteria carry through to the run. CriSTool copies
+this configuration and starts with fresh optimizer status, leaving the supplied
+instance unchanged. Explicit `nparticles`, `generations`, `parallel_evaluation`
+and `verbosity` keywords override the corresponding supplied settings;
+`HPC = true` suppresses optimizer output. When no algorithm is supplied, the
+default is DE `:best1` with 128 particles, 128 iterations and batch evaluation.
+For reproducible runs, supply `Metaheuristics.Options(seed = ...)` on the algorithm.
+
 ## Basic workflow
 
 ```julia

@@ -24,6 +24,7 @@ import StaticArrays
     include("test_input_validation.jl")
     include("test_chainutilities.jl")
     include("test_bayesian.jl")
+    include("test_optimizer_configuration.jl")
     include("test_generalization.jl")
     include("test_loss_accounting.jl")
     include("test_uncertainty_quantification.jl")

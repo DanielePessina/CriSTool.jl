@@ -8,8 +8,8 @@ Loss functions and routines for estimating kinetic parameters via metaheuristic 
                aggregationfunction, breakagefunction;
                diss = nodissolution(),
                solver, extrastring = "",
-               MHAlgorithm = Metaheuristics.DE(),
-               nparticles = 128, generations = 128,
+               MHAlgorithm = nothing,
+               nparticles = nothing, generations = nothing,
                savetxt = true, HPC = false)
 
 Estimate kinetic parameters by minimising `lossfunction` using a
@@ -26,8 +26,14 @@ population-based metaheuristic search.
 - `diss`: optional independent dissolution model; its parameter block follows
   the growth block.
 - `solver::AbstractSolver`: numerical solver to run each simulation.
-- `nparticles`, `generations`: population size and number of iterations
-  for the optimisation algorithm.
+- `MHAlgorithm`: configured DE, NSGA2, SA or PSO algorithm. Its parameters,
+  options, information and termination criteria are preserved; each run uses
+  private copies and fresh status.
+- `nparticles`, `generations`, `parallel_evaluation`, `verbosity`: explicit
+  overrides of population size, iterations, batch evaluation and optimizer
+  verbosity. Omitted keywords preserve supplied algorithm settings. Without
+  `MHAlgorithm`, defaults are DE `:best1`, 128 particles/iterations and batch
+  evaluation. `HPC = true` suppresses optimizer output.
 - `extrastring`, `HPC`, `savetxt`: options for logging and reproducible
   runs.
 - `parallel_evaluation`: evaluate Metaheuristics populations concurrently.
@@ -48,44 +54,45 @@ function PE_Routine(lossfunction::AbstractPELossFunction,
                     diss::AbstractDissolutionFunction = nodissolution(),
                     solver::AbstractSolver,
                     extrastring::String = "",
-                    MHAlgorithm::Metaheuristics.AbstractAlgorithm = Metaheuristics.DE(),
-                    nparticles::Int64 = 128,
-                    generations::Int64 = 128,
+                    MHAlgorithm::Union{Nothing, Metaheuristics.AbstractAlgorithm} = nothing,
+                    nparticles::Union{Nothing, Int} = nothing,
+                    generations::Union{Nothing, Int} = nothing,
                     savetxt::Bool = true,
-                    verbosity::Int64 = 1,
+                    verbosity::Union{Nothing, Int} = nothing,
                     HPC::Bool = false,
                     outputdir::Union{Nothing, AbstractString} = nothing,
-                    parallel_evaluation::Bool = true)
+                    parallel_evaluation::Union{Nothing, Bool} = nothing)
 
     parameter_bounds = boxconstraints(lb, ub)
 
-    MHOptions = Metaheuristics.Options(iterations = generations, store_convergence = false,
-                                       verbose = (verbosity > 1 && !HPC),
-                                       parallel_evaluation = parallel_evaluation,
-                                       f_calls_limit = CRISTOOL_MAX_OPTIMISER_CALLS)
+    run_algorithm = _configured_mh_algorithm(MHAlgorithm;
+        nparticles, generations, parallel_evaluation, verbosity, HPC)
+    run_verbosity = something(verbosity, 1)
+    run_population = run_algorithm.parameters.N
+    run_generations = run_algorithm.options.iterations
 
     start_content = build_pe_start_content(lb, ub, lossfunction, solver,
                                            nucleationfunction, growthfunction,
                                            aggregationfunction, breakagefunction;
-                                           nparticles = nparticles,
-                                           generations = generations,
+                                           nparticles = run_population,
+                                           generations = run_generations,
                                            extrastring = extrastring)
 
     print_start_panel("Parameter Estimation (Metaheuristics)", start_content;
-                      verbosity = verbosity)
+                      verbosity = run_verbosity)
 
     loss_problem = _build_loss_problem(nucleationfunction, growthfunction,
                                        aggregationfunction, breakagefunction, solver;
                                        diss = diss)
 
-    results = _MHoptimise(MHAlgorithm, lossfunction, loss_problem, setofmeasurements,
-                          parameter_bounds, nparticles, MHOptions)
+    results = _MHoptimise(run_algorithm, lossfunction, loss_problem, setofmeasurements,
+                          parameter_bounds)
     #
 
     now_str::String = Dates.format(now(), "yy-m-d HH-MM")
 
     end_content = build_pe_end_content(minimizer(results), minimum(results))
-    print_end_panel("Parameter Estimation", end_content; verbosity = verbosity)
+    print_end_panel("Parameter Estimation", end_content; verbosity = run_verbosity)
 
     if savetxt && outputdir !== nothing
         outdir = String(outputdir)
@@ -93,7 +100,7 @@ function PE_Routine(lossfunction::AbstractPELossFunction,
         startstring = ("Starting the parameter search at $(Dates.format(now(), "HH-MM"))
             \nOptimisation search settings:
             \nLB: $(lb) \nUB: $(ub)
-            \nN: $(nparticles)
+            \nN: $(run_population)
             \nLoss function: $(lossfunction.string)
             \nSolver: $(solver.string)
             \nNucleation function: $(nucleationfunction.string)
@@ -536,69 +543,62 @@ function batchLF_procMO(lossfunction::AbstractPELossFunction,
                               reshape(parameters, 1, length(parameters))))
 end
 
-"""
-    _MHoptimise(algo::Algorithm{DE}, ...) -> OptimizationResult
-
-Run Differential Evolution optimization for parameter estimation.
-"""
-function _MHoptimise(algo::Metaheuristics.Algorithm{Metaheuristics.DE}, lossfunction,
-                     problem::CrystallisationProblem, experiments, parameter_bounds,
-                     nparticles, options)
-    setup = prepare_loss(problem, experiments)
-    return optimize((x) -> batchLF_procSO(lossfunction, setup, x),
-                    parameter_bounds,
-                    DE(;
-                       N = nparticles,
-                       strategy = :best1,
-                       options = options))
+# Preserve caller configuration while isolating mutable status, parameters and RNG.
+function _configured_mh_algorithm(supplied_algorithm;
+                                  nparticles = nothing, generations = nothing,
+                                  parallel_evaluation = nothing, verbosity = nothing,
+                                  HPC = false)
+    run_algorithm = if supplied_algorithm === nothing
+        Metaheuristics.DE(; N = 128, strategy = :best1,
+            options = Metaheuristics.Options(; iterations = 128,
+                parallel_evaluation = true,
+                f_calls_limit = CRISTOOL_MAX_OPTIMISER_CALLS))
+    else
+        deepcopy(supplied_algorithm)
+    end
+    run_algorithm.status = Metaheuristics.State(nothing, [])
+    if nparticles !== nothing
+        nparticles > 0 || throw(ArgumentError("nparticles must be positive"))
+        run_algorithm.parameters.N = nparticles
+    end
+    if generations !== nothing
+        generations > 0 || throw(ArgumentError("generations must be positive"))
+        run_algorithm.options.iterations = generations
+    end
+    if parallel_evaluation !== nothing
+        run_algorithm.options.parallel_evaluation = parallel_evaluation
+    end
+    if verbosity !== nothing
+        run_algorithm.options.verbose = verbosity > 1
+    end
+    HPC && (run_algorithm.options.verbose = false)
+    return run_algorithm
 end
 
-"""
-    _MHoptimise(algo::Algorithm{NSGA2}, ...) -> OptimizationResult
+function _MHoptimise(algo::Metaheuristics.Algorithm{<:Union{Metaheuristics.DE,
+                     Metaheuristics.SA, Metaheuristics.PSO}}, lossfunction,
+                     problem::CrystallisationProblem, experiments, parameter_bounds)
+    setup = prepare_loss(problem, experiments)
+    return _MHoptimise(algo, lossfunction, setup, parameter_bounds)
+end
 
-Run NSGA-II multi-objective optimization for parameter estimation.
-"""
 function _MHoptimise(algo::Metaheuristics.Algorithm{Metaheuristics.NSGA2}, lossfunction,
-                     problem::CrystallisationProblem, experiments, parameter_bounds,
-                     nparticles, options)
+                     problem::CrystallisationProblem, experiments, parameter_bounds)
     setup = prepare_loss(problem, experiments)
-    return optimize((x) -> batchLF_procMO(lossfunction, setup, x),
-                    parameter_bounds,
-                    NSGA2(;
-                          N = nparticles,
-                          options = options))
+    return _MHoptimise(algo, lossfunction, setup, parameter_bounds)
 end
 
-"""
-    _MHoptimise(algo::Algorithm{SA}, ...) -> OptimizationResult
-
-Run Simulated Annealing optimization for parameter estimation.
-"""
-function _MHoptimise(algo::Metaheuristics.Algorithm{Metaheuristics.SA}, lossfunction,
-                     problem::CrystallisationProblem, experiments, parameter_bounds,
-                     nparticles, options)
-    setup = prepare_loss(problem, experiments)
-    return optimize((x) -> batchLF_procSO(lossfunction, setup, x),
-                    parameter_bounds,
-                    SA(;
-                       N = nparticles,
-                       options = options))
+function _MHoptimise(algo::Metaheuristics.Algorithm{<:Union{Metaheuristics.DE,
+                     Metaheuristics.SA, Metaheuristics.PSO}}, lossfunction,
+                     setup::LossSetup, parameter_bounds)
+    return optimize(parameters -> batchLF_procSO(lossfunction, setup, parameters),
+                    parameter_bounds, algo)
 end
 
-"""
-    _MHoptimise(algo::Algorithm{PSO}, ...) -> OptimizationResult
-
-Run Particle Swarm Optimization for parameter estimation.
-"""
-function _MHoptimise(algo::Metaheuristics.Algorithm{Metaheuristics.PSO}, lossfunction,
-                     problem::CrystallisationProblem, experiments, parameter_bounds,
-                     nparticles, options)
-    setup = prepare_loss(problem, experiments)
-    return optimize((x) -> batchLF_procSO(lossfunction, setup, x),
-                    parameter_bounds,
-                    PSO(;
-                        N = nparticles,
-                        options = options))
+function _MHoptimise(algo::Metaheuristics.Algorithm{Metaheuristics.NSGA2}, lossfunction,
+                     setup::LossSetup, parameter_bounds)
+    return optimize(parameters -> batchLF_procMO(lossfunction, setup, parameters),
+                    parameter_bounds, algo)
 end
 
 """
