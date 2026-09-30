@@ -65,20 +65,36 @@ problem = CrystallisationProblem(; kinetics_nucleationfunction = nucl_f,
 L = loss(lossfn, problem, optimal_params, experiments)
 ```
 
-Weights follow the observable field order. The default `[1.0, 1.0]` weights
-the first two observable fields; additional observables receive weight 1.0
-unless explicit weights are supplied. Each named observable is compared at all
-of its measured time points. `logMLE` uses measured variances by
-default, with `RelativeVariance(percent)` available for relative-error data:
+Named weights associate each factor with its observable even when experiments
+use different observable subsets or field orders:
 
 ```julia
-lossfn = logMLE(weighting = [1.0, 0.5, 1.0],
-                variance_model = RelativeVariance(5.0))
+lossfn = mae(weighting = (; concentration = 1.0, d43 = 0.5))
+setup = prepare_loss(problem, experiments)
+objectives = batchLF_procMO(lossfn, setup, optimal_params)
+setup.observable_names # labels of the multiobjective result
 ```
 
-The `problem` carries kinetics and solver; per-experiment conditions
-(temperature, initial concentration, and initial crystals) are read from each
-`CrystallisationExperiment` inside the loss.
+For homogeneous schemas, vector weights retain the first experiment's field
+order; unspecified factors default to 1.0. With heterogeneous schemas the global
+names are sorted. Nonuniform vector weights then require an explicit
+`observable_order` in `prepare_loss`; named weights are simpler. Scalar MAE sums
+per-observable mean errors pooled over included points across all experiments.
+Its multiobjective result contains those same terms. `logMLE` sums Gaussian NLL
+terms and uses measured variances by default; `RelativeVariance(percent)` selects
+a relative-error model.
+
+`prepare_loss(problem, experiments)` applies measured experiment temperature,
+initial concentration and declared initial crystals. Only the concentration point
+at the integration start is excluded from scoring because it supplies C0. A late
+first concentration sample cannot supply C0 when another observable begins earlier.
+`prepare_loss(configured_problems, experiments)` instead preserves each configured
+problem and scores all targets, including the first concentration sample. Use
+`exclude_initial_concentration` to record an intentional selection policy.
+
+Unsuccessful numerical solves receive a failure penalty. Invalid parameter sizes,
+unknown observables and exceptions in user kinetics or custom observables propagate;
+they cannot silently become a plausible objective value.
 
 ## Adding a new loss function
 

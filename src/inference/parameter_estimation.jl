@@ -304,6 +304,10 @@ struct LossSetup
     problem::CrystallisationProblem
     experiments::Vector{CrystallisationExperiment}
     prepared::Vector{PreparedExperiment}
+    observable_names::Vector{Symbol}
+    included_observations::Vector{Dict{Symbol,Vector{Int}}}
+    heterogeneous_schema::Bool
+    explicit_observable_order::Bool
 end
 
 """
@@ -316,7 +320,10 @@ constant temperature profile). Each loss evaluation then only remakes the parame
 vector — no ODEProblem construction in the optimisation loop.
 """
 function prepare_loss(problem::CrystallisationProblem,
-                      experiments::Vector{<:AbstractExperiment})
+                      experiments::Vector{<:AbstractExperiment};
+                      observable_order = nothing,
+                      exclude_initial_concentration::Bool = true)
+    isempty(experiments) && throw(ArgumentError("At least one experiment is required."))
     prepared = map(experiments) do expt
         per_exp_problem = _experiment_problem(problem, expt)
         saveat = _loss_saveat(expt, problem.solver)
@@ -325,8 +332,59 @@ function prepare_loss(problem::CrystallisationProblem,
         PreparedExperiment(per_exp_problem, odeprob, algorithm,
                            saveat)
     end
-    return LossSetup(problem, experiments, prepared)
+    return _build_loss_setup(problem, experiments, prepared;
+                             observable_order, exclude_initial_concentration)
 end
+
+function _build_loss_setup(problem, experiments, prepared;
+                           observable_order = nothing,
+                           exclude_initial_concentration::Bool = true)
+    isempty(experiments) && throw(ArgumentError("At least one experiment is required."))
+    schemas = [collect(propertynames(expt.observables)) for expt in experiments]
+    heterogeneous = any(Set(schema) != Set(first(schemas)) for schema in schemas)
+    all_names = union(schemas...)
+    names = isnothing(observable_order) ?
+        (heterogeneous ? sort(all_names) : first(schemas)) : collect(Symbol, observable_order)
+    length(unique(names)) == length(names) && Set(names) == Set(all_names) ||
+        throw(ArgumentError("observable_order must list every measured observable exactly once."))
+    included = [Dict(name => _included_observation_indices(expt, name, prep.saveat[1];
+                        exclude_initial_concentration) for name in propertynames(expt.observables))
+                for (prep, expt) in zip(prepared, experiments)]
+    return LossSetup(problem, experiments, prepared, names, included, heterogeneous,
+                     !isnothing(observable_order))
+end
+
+"""
+    prepare_loss(configured_problems, experiments; observable_order=nothing)
+
+Prepare one explicitly configured problem per experiment. Initial conditions,
+seeds, temperature and physical properties come from those problems; observations
+supply targets and times. All concentration points are scored by default.
+The problems must share the estimated kinetic parameter names and ordering.
+"""
+function prepare_loss(configured_problems::AbstractVector{<:CrystallisationProblem},
+                      experiments::Vector{<:AbstractExperiment};
+                      observable_order = nothing,
+                      exclude_initial_concentration::Bool = false)
+    length(configured_problems) == length(experiments) && !isempty(experiments) ||
+        throw(ArgumentError("Supply one configured problem per experiment."))
+    parameter_axis = paramaxis(first(configured_problems))
+    all(paramaxis(configured) == parameter_axis for configured in configured_problems) ||
+        throw(ArgumentError("Configured problems must share the same kinetic parameter axis."))
+    prepared = map(zip(configured_problems, experiments)) do (configured, expt)
+        if !isnothing(expt.initial_crystals)
+            declared = initial_state_from_characteristics(configured, expt.initial_crystals)
+            declared == _get_initial_state(configured) || throw(ArgumentError(
+                "Experiment $(expt.exp_id) declares seeds conflicting with its configured problem."))
+        end
+        saveat = _loss_saveat(expt, configured.solver)
+        odeproblem, algorithm = crystallisation_odeproblem(configured, saveat)
+        PreparedExperiment(configured, odeproblem, algorithm, saveat)
+    end
+    return _build_loss_setup(first(configured_problems), experiments, prepared;
+                             observable_order, exclude_initial_concentration)
+end
+
 
 
 """
@@ -338,7 +396,7 @@ using the prepared `ODEProblem` templates via `remake`.
 """
 function batchLF_procSO(lossfunction::AbstractPELossFunction,
                         setup::LossSetup,
-                        parameter_mat::AbstractArray{Float64})
+                        parameter_mat::AbstractMatrix{Float64})
 
     fx = zeros(Float64, size(parameter_mat, 1))
     _evaluate_loss_batch!(fx, lossfunction, setup, parameter_mat)
@@ -350,7 +408,7 @@ end
 function _evaluate_loss_batch!(loss_values::AbstractVector{Float64},
                               lossfunction::AbstractPELossFunction,
                               setup::LossSetup,
-                              parameter_mat::AbstractArray{Float64})
+                              parameter_mat::AbstractMatrix{Float64})
     parameter_indices = axes(parameter_mat, 1)
 
     # Each spawned task owns its prepared ODE templates.  The loss itself
@@ -359,14 +417,7 @@ function _evaluate_loss_batch!(loss_values::AbstractVector{Float64},
     if Threads.nthreads() == 1 || length(parameter_indices) <= 1
         local_setup = setup
         for i in parameter_indices
-            try
-                loss_values[i] = loss(lossfunction, local_setup,
-                                      @view parameter_mat[i, :])
-            catch exception
-                @debug "Candidate simulation failed during parameter estimation" exception =
-                    (exception, catch_backtrace())
-                loss_values[i] = CRISTOOL_FAILED_SIMULATION_PENALTY
-            end
+            loss_values[i] = loss(lossfunction, local_setup, @view parameter_mat[i, :])
         end
         return loss_values
     end
@@ -385,14 +436,7 @@ function _evaluate_loss_batch!(loss_values::AbstractVector{Float64},
             push!(tasks, Threads.@spawn begin
                 local_setup = deepcopy(setup)
                 for i in chunk_start:chunk_stop
-                    try
-                        loss_values[i] = loss(lossfunction, local_setup,
-                                              @view parameter_mat[i, :])
-                    catch exception
-                        @debug "Candidate simulation failed during parameter estimation" exception =
-                            (exception, catch_backtrace())
-                        loss_values[i] = CRISTOOL_FAILED_SIMULATION_PENALTY
-                    end
+                    loss_values[i] = loss(lossfunction, local_setup, @view parameter_mat[i, :])
                 end
             end)
         end
@@ -405,13 +449,7 @@ end
 function batchLF_procSO(lossfunction::AbstractPELossFunction,
                         setup::LossSetup,
                         parameters::AbstractVector{<:Real})
-    try
-        return loss(lossfunction, setup, parameters)
-    catch exception
-        @debug "Candidate simulation failed during parameter estimation" exception =
-            (exception, catch_backtrace())
-        return CRISTOOL_FAILED_SIMULATION_PENALTY
-    end
+    return loss(lossfunction, setup, parameters)
 end
 
 """
@@ -423,10 +461,10 @@ concentration and particle-size objectives).
 """
 function batchLF_procMO(lossfunction::AbstractPELossFunction,
                         setup::LossSetup,
-                        parameter_mat::AbstractArray{Float64})
+                        parameter_mat::AbstractMatrix{Float64})
 
     Nt = size(parameter_mat, 1)
-    objective_names = _loss_observable_names(first(setup.experiments), setup.problem.solver)
+    objective_names = setup.observable_names
     fx = zeros(Nt, length(objective_names))
     _evaluate_multiobjective_batch!(fx, lossfunction, setup, parameter_mat)
 
@@ -437,25 +475,13 @@ end
 function _evaluate_multiobjective_batch!(objective_values::AbstractMatrix{Float64},
                                          lossfunction::AbstractPELossFunction,
                                          setup::LossSetup,
-                                         parameter_mat::AbstractArray{Float64})
+                                         parameter_mat::AbstractMatrix{Float64})
     parameter_indices = axes(parameter_mat, 1)
 
     function evaluate_range!(local_setup, range)
         for i in range
-            try
-                for (prep, expt) in zip(local_setup.prepared, local_setup.experiments)
-                    objectives = _experiment_objectives(lossfunction, expt,
-                                                        _solve_prepared(prep,
-                                                                        parameter_mat[i, :]))
-                    for j in eachindex(objectives)
-                        objective_values[i, j] += objectives[j]
-                    end
-                end
-            catch exception
-                @debug "Candidate simulation failed during multi-objective parameter estimation" exception =
-                    (exception, catch_backtrace())
-                objective_values[i, :] .= CRISTOOL_FAILED_SIMULATION_PENALTY
-            end
+            objective_values[i, :] .= _loss_objectives(lossfunction, local_setup,
+                                                       @view parameter_mat[i, :])
         end
     end
 
@@ -732,8 +758,49 @@ function _simulated_at(solution::AbstractSolution, name::Symbol,
     return [_linear_interpolate(solution.time, simulated, t) for t in target_time]
 end
 
-function _observable_weight(lossfunction::AbstractPELossFunction, index::Int)
-    return index <= length(lossfunction.weighting) ? lossfunction.weighting[index] : 1.0
+function _included_observation_indices(expt::CrystallisationExperiment, name::Symbol,
+                                       start_time; exclude_initial_concentration::Bool = true)
+    measured = getproperty(expt.observables, name)
+    if name === :concentration && exclude_initial_concentration
+        measured.time[1] == start_time || throw(ArgumentError(
+            "Concentration observations must begin at the simulation start when used as C0. " *
+            "Supply independently configured initial conditions otherwise."))
+        return collect(2:length(measured.time))
+    end
+    return collect(eachindex(measured.time))
+end
+
+_included_observation_indices(setup::LossSetup, experiment_index::Int, name::Symbol) =
+    setup.included_observations[experiment_index][name]
+
+function _observable_weight(lossfunction::AbstractPELossFunction, index::Int,
+                            name::Symbol)
+    hasproperty(lossfunction, :weighting) || return 1.0
+    weights = lossfunction.weighting
+    if weights isa NamedTuple
+        return hasproperty(weights, name) ? getproperty(weights, name) : 1.0
+    elseif weights isa AbstractDict
+        return get(weights, name, 1.0)
+    end
+    return index <= length(weights) ? weights[index] : 1.0
+end
+
+function _validate_loss_weights(lossfunction, setup)
+    hasproperty(lossfunction, :weighting) || return nothing
+    weights = lossfunction.weighting
+    if weights isa NamedTuple || weights isa AbstractDict
+        extra_names = setdiff(collect(keys(weights)), setup.observable_names)
+        isempty(extra_names) || throw(ArgumentError("Weights refer to unmeasured observables: $extra_names"))
+    elseif setup.heterogeneous_schema && !setup.explicit_observable_order
+        effective_weights = [_observable_weight(lossfunction, objective_index, name)
+                             for (objective_index, name) in enumerate(setup.observable_names)]
+        if !isempty(effective_weights) && any(weight != first(effective_weights) for weight in effective_weights)
+            throw(ArgumentError("Nonuniform vector weights with different observable subsets require observable_order; use named weights instead."))
+        end
+    end
+    all(weight -> weight isa Real && isfinite(weight) && weight >= 0, values(weights)) ||
+        throw(ArgumentError("Observable weights must be finite nonnegative numbers."))
+    return nothing
 end
 
 """
@@ -750,7 +817,7 @@ function _experiment_objectives(lf::AbstractPELossFunction,
         measured = getproperty(expt.observables, name)
         measured_time, measured_mean = _measurement_data(measured)
         simulated_mean = _simulated_at(solution, name, measured_time)
-        first_index = name === :concentration ? 2 : 1
+        first_index = name === :concentration && measured_time[1] == solution.time[1] ? 2 : 1
 
         if lf isa logMLE
             objective = 0.0
@@ -761,16 +828,16 @@ function _experiment_objectives(lf::AbstractPELossFunction,
                 residual = simulated_mean[index] - measured_mean[index]
                 objective += log(2π * variance) + residual^2 / variance
             end
-            return _observable_weight(lf, observable_index) * 0.5 * objective
+            return _observable_weight(lf, observable_index, name) * 0.5 * objective
         end
 
         if !solution.success
-            return _observable_weight(lf, observable_index) * CRISTOOL_FAILED_SIMULATION_PENALTY
+            return _observable_weight(lf, observable_index, name) * CRISTOOL_FAILED_SIMULATION_PENALTY
         end
         objective = first_index > length(measured_mean) ? zero(eltype(simulated_mean)) :
                     mean(abs.(simulated_mean[first_index:end] .-
                               measured_mean[first_index:end]))
-        return _observable_weight(lf, observable_index) * objective
+        return _observable_weight(lf, observable_index, name) * objective
     end
     return contributions
 end
@@ -782,62 +849,53 @@ Log Maximum Likelihood Estimation loss over all prepared experiments. The
 initial concentration point is excluded because it defines the experiment's
 initial condition; all points of every other observable contribute.
 """
-function loss(lf::logMLE, setup::LossSetup, params)
-    total = 0.0
-    for (prep, expt) in zip(setup.prepared, setup.experiments)
-        try
-            solution = _solve_prepared(prep, params)
-            if solution.success
-                total += sum(_experiment_objectives(lf, expt, solution))
-            else
-                total += CRISTOOL_FAILED_SIMULATION_PENALTY
-            end
-        catch
-            total += CRISTOOL_FAILED_SIMULATION_PENALTY
-        end
-    end
-    return total
-end
-
-"""
-    loss(lf::mae, setup::LossSetup, params) -> Real
-
-Mean Absolute Error loss over all prepared experiments. Every point of every
-observable contributes to its observable-specific mean absolute error. Failed
-simulations contribute the configured failure penalty per observable.
-"""
-function loss(lf::mae, setup::LossSetup, params)
-    objective_names = _loss_observable_names(first(setup.experiments), setup.problem.solver)
-    error_sums = [zero(eltype(params)) for _ in objective_names]
-    error_counts = zeros(Int, length(objective_names))
-    for (prep, expt) in zip(setup.prepared, setup.experiments)
-        try
-            solution = _solve_prepared(prep, params)
-            for (observable_index, name) in enumerate(_loss_observable_names(expt, solution))
-                measured = getproperty(expt.observables, name)
-                measured_time, measured_mean = _measurement_data(measured)
-                if solution.success
-                    simulated_mean = _simulated_at(solution, name, measured_time)
-                    first_index = name === :concentration ? 2 : 1
-                    error_sums[observable_index] +=
-                        sum(abs.(simulated_mean[first_index:end] .-
-                                measured_mean[first_index:end]))
-                    error_counts[observable_index] +=
-                        max(length(measured_mean) - first_index + 1, 0)
+function _loss_objectives(lf::AbstractPELossFunction, setup::LossSetup, params)
+    _validate_loss_weights(lf, setup)
+    expected_count = length(setup.prepared[1].odeproblem.p)
+    length(params) == expected_count || throw(DimensionMismatch(
+        "Expected $expected_count kinetic parameters, received $(length(params))."))
+    objective_sums = [zero(eltype(params)) for _ in setup.observable_names]
+    observation_counts = zeros(Int, length(setup.observable_names))
+    for (experiment_index, (prep, expt)) in enumerate(zip(setup.prepared, setup.experiments))
+        solution = _solve_prepared(prep, params)
+        # Numerical failures have a definite penalty. Exceptions from data,
+        # kinetics and custom observables propagate, including DomainError.
+        solution.success || return fill(zero(eltype(params)) + CRISTOOL_FAILED_SIMULATION_PENALTY,
+                                        length(setup.observable_names))
+        for (objective_index, name) in enumerate(setup.observable_names)
+            hasproperty(expt.observables, name) || continue
+            measured = getproperty(expt.observables, name)
+            included_indices = _included_observation_indices(setup, experiment_index, name)
+            predicted = _simulated_at(solution, name, measured.time)
+            for measurement_index in included_indices
+                residual = predicted[measurement_index] - measured.mean[measurement_index]
+                if lf isa logMLE
+                    variance = _measurement_variance(measured, measured.mean[measurement_index],
+                        measurement_index, lf.variance_model, lf.relative_variance_floor)
+                    objective_sums[objective_index] += 0.5 * (log(2π * variance) + residual^2 / variance)
                 else
-                    error_sums[observable_index] += CRISTOOL_FAILED_SIMULATION_PENALTY
-                    error_counts[observable_index] += 1
+                    objective_sums[objective_index] += abs(residual)
                 end
+                observation_counts[objective_index] += 1
             end
-        catch
-            error_sums .+= CRISTOOL_FAILED_SIMULATION_PENALTY
-            error_counts .+= 1
         end
     end
-    return sum(error_counts[i] == 0 ? zero(eltype(params)) :
-               _observable_weight(lf, i) * error_sums[i] / error_counts[i]
-               for i in eachindex(objective_names))
+    return [ _observable_weight(lf, objective_index, name) *
+             (lf isa mae && observation_counts[objective_index] > 0 ?
+                objective_sums[objective_index] / observation_counts[objective_index] :
+                objective_sums[objective_index])
+             for (objective_index, name) in enumerate(setup.observable_names)]
 end
+
+"""
+    loss(lf, setup::LossSetup, params)
+
+Sum named observable objectives across experiments. MAE pools each observable's
+included points before averaging; likelihood sums their NLL contributions.
+Unsuccessful numerical solves receive a penalty. Invalid inputs and user-code
+exceptions propagate to the caller.
+"""
+loss(lf::Union{mae,logMLE}, setup::LossSetup, params) = sum(_loss_objectives(lf, setup, params))
 
 """
     loss(lf::logMLE, problem::CrystallisationProblem, params,

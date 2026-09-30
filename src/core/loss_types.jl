@@ -37,7 +37,7 @@ end
 Log Maximum Likelihood Estimation loss function.
 
 Fields:
-- `weighting::Vector{Float64}`: Weighting factors by observable (default: concentration and size both 1.0)
+- `weighting`: NamedTuple, dictionary or vector of weighting factors by observable (default: concentration and size both 1.0)
 - `variance_model::AbstractVarianceModel`: Variance policy (default: measured variance)
 - `relative_variance_floor::Float64`: Dimensionless minimum variance fraction
   relative to the squared observable magnitude
@@ -45,7 +45,7 @@ Fields:
 - `symbols::Vector{Symbol}`: Parameter symbols [:logMLE]
 """
 Base.@kwdef @concrete struct logMLE <: AbstractPELossFunction
-    weighting::Vector{Float64} = [1.0, 1.0]
+    weighting = [1.0, 1.0]
     variance_model::AbstractVarianceModel = MeasuredVariance()
     relative_variance_floor::Float64 = 1e-12
     string::String = weighting == [1.0, 1.0] ? "Log MLE" : "Log MLE wgted $(weighting)"
@@ -58,10 +58,10 @@ end
 Mean Absolute Error loss function.
 
 Fields:
-- `weighting::Vector{Float64}`: Weighting factors by observable (default: concentration and size both 1.0)
+- `weighting`: NamedTuple, dictionary or vector of weighting factors by observable (default: concentration and size both 1.0)
 - `string::String`: String identifier
 """
 Base.@kwdef @concrete struct mae <: AbstractPELossFunction
-    weighting::Vector{Float64} = [1.0, 1.0]
+    weighting = [1.0, 1.0]
     string::String = weighting == [1.0, 1.0] ? "MAE" : "MAE wgted $(weighting)"
 end

@@ -24,6 +24,7 @@ import StaticArrays
     include("test_chainutilities.jl")
     include("test_bayesian.jl")
     include("test_generalization.jl")
+    include("test_loss_accounting.jl")
     include("test_uncertainty_quantification.jl")
     include("test_autodiff.jl")
     include("test_gradients.jl")
