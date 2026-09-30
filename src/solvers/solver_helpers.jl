@@ -328,19 +328,36 @@ function _fill_signed_first_order_flux!(flux::AbstractVector,
 end
 
 """
-    _auto_abstol_opts(solver, u0, absolute_floor; reltol=solver.reltol)
+    _parameter_eltype(odeproblem.p)
+
+Scalar element type carried by an ODE problem's parameter container, or
+`Float64` for parameter containers without an element type.
+"""
+_parameter_eltype(p::AbstractArray) = eltype(p)
+_parameter_eltype(p) = Float64
+
+"""
+    _auto_abstol_opts(solver, u0, absolute_floor, scalar_type=Float64; reltol=solver.reltol)
 
 Allocate solve-local component tolerances and an AutoAbstol callback. In auto
 mode, each component retains its physical absolute floor while its tolerance
 tracks its own largest magnitude. Scalar mode leaves the supplied floor intact.
+
+The `AutoAbstol` mutable magnitude cache and the `abstol` buffer it writes back
+into are built at `scalar_type`. When ODE parameter derivatives promote the
+integrated state to `ForwardDiff.Dual`, both buffers must accept Dual
+assignment; promoting them keeps the callback derivative-safe while preserving
+the physical per-component floors and per-solve cache isolation.
 """
 function _auto_abstol_opts(solver::AbstractSolver, u0::AbstractVector,
-                           absolute_floor; reltol = solver.reltol)
+                           absolute_floor, scalar_type::Type = Float64;
+                           reltol = solver.reltol)
     if solver.tolerance_mode === :auto
         component_floor = absolute_floor isa AbstractVector ? copy(absolute_floor) :
                           fill(float(absolute_floor), length(u0))
-        return component_floor,
-               AutoAbstol(false; init_curmax = component_floor ./ reltol)
+        promoted_floor = scalar_type.(component_floor)
+        return promoted_floor,
+               AutoAbstol(false; init_curmax = promoted_floor ./ reltol)
     end
     return absolute_floor isa AbstractVector ? copy(absolute_floor) : absolute_floor, nothing
 end
@@ -393,15 +410,16 @@ function _solve_crystallisation_ode(problem::CrystallisationProblem, odeproblem,
         solver_defaults = merge(solver_defaults, (alg_hints = [:stiff],))
     end
     selected_options = merge(solver_defaults, solve_options)
+    scalar_type = promote_type(eltype(odeproblem.u0), _parameter_eltype(odeproblem.p))
     abstol, auto_callback = _auto_abstol_opts(problem.solver, odeproblem.u0,
-                                             selected_options.abstol;
-                                             reltol = selected_options.reltol)
+                                              selected_options.abstol, scalar_type;
+                                              reltol = selected_options.reltol)
     user_callback = callback_factory === nothing ? nothing : callback_factory(odeproblem)
     solve_callback = CallbackSet(auto_callback, user_callback)
     # Templates are reused; callbacks can hold mutable event state. Do not share
     # those states across parameter candidates or concurrent evaluations.
     solve_problem = haskey(odeproblem.kwargs, :callback) ?
-                    remake(odeproblem; callback = deepcopy(odeproblem.kwargs.callback)) :
+                    remake(odeproblem; callback = deepcopy(odeproblem.kwargs[:callback])) :
                     odeproblem
     return solve(solve_problem, algorithm; selected_options..., abstol = abstol,
                  saveat = saveat, callback = solve_callback)

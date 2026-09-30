@@ -110,9 +110,15 @@ CriSTool.growthrate(::SolvePolicyConstantGrowth, kinetic_parameters,
         @test result.u[end][end] ≈ 18.0 atol = 1e-9
     end
     budget_result = CriSTool._solve_crystallisation_ode(callback_problem,
-        callback_template, callback_algorithm, [0.0, 2.0];
-        solve_options = (; maxiters = 1))
-    @test !CriSTool.OrdinaryDiffEq.SciMLBase.successful_retcode(budget_result.retcode)
+        callback_template, CriSTool.OrdinaryDiffEq.Euler(), [0.0, 2.0];
+        solve_options = (; dt = 0.25, adaptive = false, maxiters = 4))
+    @test CriSTool.OrdinaryDiffEq.SciMLBase.ReturnCode.MaxIters ==
+          budget_result.retcode
+    sufficient_budget_result = CriSTool._solve_crystallisation_ode(callback_problem,
+        callback_template, CriSTool.OrdinaryDiffEq.Euler(), [0.0, 2.0];
+        solve_options = (; dt = 0.25, adaptive = false, maxiters = 8))
+    @test sufficient_budget_result.retcode ==
+          CriSTool.OrdinaryDiffEq.SciMLBase.ReturnCode.Success
     @test callback_counts[1] == callback_counts[2]
     @test all(callback_floor_minima .>= callback_problem.solver.abstol)
     @test_throws ArgumentError CriSTool._solve_crystallisation_ode(
