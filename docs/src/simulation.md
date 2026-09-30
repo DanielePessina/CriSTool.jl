@@ -292,3 +292,59 @@ is the route for process settings such as `temp_profile`, `saturation_model`,
 [Temperature profiles](temperature-profiles.md), [Saturation
 models](saturation-models.md), and [Bringing your own system](bring-your-own-system.md)
 for those extensions.
+
+## Configured problems
+
+Build the `CrystallisationProblem` once, then run it directly. This keeps the
+physical configuration (operation, temperature, saturation, seed, solvent
+dynamics) fixed and only changes the simulation settings or the kinetic
+parameters:
+
+```julia
+using CriSTool
+
+problem = CrystallisationProblem(
+    operation = MSMPROperation(volume = 2.0, inflow = 0.5,
+                               feed = CrystallisationFeed(concentration = 2.0)),
+    kinetics_nucleationfunction = nucl_empirical_fixed(
+        log10_nucleation_prefactor = -Inf, nucleation_order = 1.0),
+    parameterset_nucleation = Float64[],            # fixed kinetics take no parameters
+    kinetics_growthfunction = growth_empirical(),
+    parameterset_growth = [1e-9 / 60, 1.0],
+    initial_concentration = 8.0,
+    saturation_model = ConstantSolubility(1.0),
+    solver = MoM())
+
+# Simulate the configured system without rebuilding its properties.
+configured_problem, solution = runsimulation(problem; save_idx = 0.0:3600.0:21600.0)
+
+# Replace only the kinetic parameter blocks (composite `paramaxis(problem)` order).
+configured_problem, solution = runsimulation([2e-9 / 60, 1.0], problem;
+                                              save_idx = 0.0:3600.0:21600.0)
+```
+
+`initial_concentration(problem)` reports the configured tank input, distinct
+from the evolving `solution.concentration`. The same configured problems feed
+`prepare_loss(configured_problems, experiments)` and the inference workflows —
+see [Parameter estimation](parameter-estimation.md).
+
+## Solving the generated SciML problem yourself
+
+`crystallisation_odeproblem(problem, save_times)` returns the `ODEProblem` and
+the solver algorithm the package would use. Advanced callers may solve it with
+their own `solve` options and convert the raw SciML solution back to the
+physical result representation:
+
+```julia
+using CriSTool, OrdinaryDiffEq
+
+ode_problem, algorithm = crystallisation_odeproblem(problem, [0.0, 21600.0])
+raw_solution = solve(ode_problem, algorithm; saveat = [0.0, 21600.0],
+                     reltol = 1e-8, abstol = 1e-12)
+solution = crystallisation_solution(problem, raw_solution)   # physical result
+```
+
+The state layout must match `problem`. Note that a DQMOM ODE state holds scaled
+weighted-node data, not the public physical weights and nodes, so replace the
+algorithm only when you know the resulting state layout is still compatible.
+`crystallisation_solution` validates the layout before converting.
