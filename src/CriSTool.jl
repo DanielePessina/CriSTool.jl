@@ -78,6 +78,8 @@ export CrystallisationFVSolution, CrystallisationMoMSolution,
        CrystallisationProblem
 export Observable, ObservableColumns, CrystallisationExperiment, AbstractExperiment,
        initial_concentration
+export AbstractCrystallisationOperation, BatchOperation, MSMPROperation, FedBatchOperation,
+       CrystallisationFeed, reactor_vars, reactor_volume, operation_flows
 export AbstractInitialCrystals, LogNormalInitialCrystals, GaussianInitialCrystals
 export AbstractSolubilityModel, ConstantSolubility, PolynomialSolubility, CallableSolubility,
        AbstractSaturationModel, ConstantSaturation, PolynomialSaturation, CallableSaturation,
@@ -137,6 +139,7 @@ include("core/measurement_types.jl")
 include("core/solver_types.jl")
 include("core/temperature_types.jl")
 include("core/saturation_types.jl")
+include("core/operation_types.jl")
 include("core/problem_types.jl")
 
 # Measurement ingestion and normalization.
@@ -156,6 +159,7 @@ include("physics/aggregation_breakage_rates.jl")
 
 # Numerical solver implementations and public simulation wrappers.
 include("solvers/solver_helpers.jl")
+include("solvers/operation_balances.jl")
 include("solvers/qmom.jl")
 include("solvers/mom.jl")
 include("solvers/dqmom.jl")

@@ -554,8 +554,8 @@ function _qmom_extinction_callback(problem::CrystallisationProblem)
     concentration_position = findfirst(==(Symbol(:concentration)), names)
     concentration_position === nothing &&
         throw(ArgumentError("initial_solvent_state must define :concentration."))
-    concentration_index = n_moments + concentration_position
-    state_count = n_moments + length(names)
+    concentration_index = _solvent_state_index(problem, :concentration)
+    state_count = n_moments + _operation_state_count(problem.operation) + length(names)
     threshold = _validate_solid_mass_concentration_threshold(problem)
     condition = (state, time, integrator) -> problem.crystal_density * problem.volume_shape_factor * state[4] - threshold
     affect! = integrator -> nothing
@@ -701,7 +701,7 @@ function crystallisation_odeproblem(problem::CrystallisationProblem{NuclF, GrF, 
         throw(ArgumentError("saveat must contain at least two time points."))
     n_moments = moment_count(problem.solver)
     n_solvent = length(propertynames(problem.initial_solvent_state))
-    n_states = n_moments + n_solvent
+    n_states = n_moments + _operation_state_count(problem.operation) + n_solvent
     n_states == length(_get_initial_state(problem)) ||
         throw(ArgumentError("QMOM initial_state must contain $n_moments raw moments " *
                             "followed by $n_solvent solvent-state values."))
@@ -713,10 +713,11 @@ function crystallisation_odeproblem(problem::CrystallisationProblem{NuclF, GrF, 
 
     no_binary_sources = problem.kinetics_aggregationfunction isa noaggregation &&
                         problem.kinetics_breakagefunction isa nobreakage
-    fast_scalar_path = no_binary_sources && n_moments == 6 && n_solvent == 1 &&
+    fast_scalar_path = problem.operation isa BatchOperation && no_binary_sources && n_moments == 6 && n_solvent == 1 &&
                        propertynames(problem.initial_solvent_state) == (:concentration,) &&
                        problem.solvent_dynamics isa DefaultSolventDynamics
 
+    feed_population = _operation_feed_population(problem)
     if fast_scalar_path
         QMOM_model = (state, parameters, time) ->
             _qmom_scalar_model_3(problem, state, parameters, time)
@@ -782,10 +783,13 @@ function crystallisation_odeproblem(problem::CrystallisationProblem{NuclF, GrF, 
                                                             time,
                                                             scalar_growth_rate,
                                                             volume_rate)
-            return SVector(ntuple(Val(n_states)) do state_index
+            reactor_count = _operation_state_count(problem.operation)
+            internal_rates = SVector(ntuple(Val(n_states)) do state_index
                 state_index <= n_moments ? moment_derivatives[state_index] :
-                solvent_derivatives[state_index - n_moments]
+                (state_index <= n_moments + reactor_count ? zero(state[state_index]) :
+                 solvent_derivatives[state_index - n_moments - reactor_count])
             end)
+            return _compose_operation_rhs(problem, state, time, internal_rates, feed_population)
         end
     end
 
@@ -874,6 +878,7 @@ function _wrap_solution(problem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
                                        final_state,
                                        solution.stats,
                                        successful,
+                                       _reactor_solution_state(problem, solution),
                                        diagnostics)
 end
 
@@ -925,7 +930,7 @@ qmom_quadrature(solution::CrystallisationQMOMSolution, time_index::Integer) =
 
 time(solution::CrystallisationQMOMSolution) = solution.time
 state_vars(solution::CrystallisationQMOMSolution) =
-    merge(solution.solvent_state,
+    merge(solution.solvent_state, reactor_vars(solution),
           (; moments = solution.moments,
              quadrature_nodes = solution.quadrature_nodes,
              quadrature_weights = solution.quadrature_weights))

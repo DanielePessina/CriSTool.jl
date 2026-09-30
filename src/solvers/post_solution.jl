@@ -234,7 +234,7 @@ _size_trajectory(sol::CrystallisationFVSolution) = sol.d50q
 Named solvent-state variables of a MoM solution, including `concentration`
 and any additional coupled solvent variables.
 """
-state_vars(sol::CrystallisationMoMSolution) = sol.solvent_state
+state_vars(sol::CrystallisationMoMSolution) = merge(sol.solvent_state, reactor_vars(sol))
 
 """
     state_vars(sol::CrystallisationFVSolution) -> NamedTuple
@@ -272,7 +272,7 @@ size metrics are available automatically; users can extend this method for a
 custom solution observable.
 """
 function observable_values(sol::AbstractSolution, name::Symbol)
-    named_values = merge(state_vars(sol), size_metrics(sol))
+    named_values = merge(state_vars(sol), reactor_vars(sol), size_metrics(sol))
     hasproperty(named_values, name) ||
         throw(ArgumentError("No simulated observable named :$name for $(typeof(sol))."))
     return getproperty(named_values, name)

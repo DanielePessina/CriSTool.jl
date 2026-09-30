@@ -622,6 +622,7 @@ function _experiment_problem(problem::CrystallisationProblem,
         # Preserve public population coordinates, including DQMOM weights/nodes.
         # Solvent conditions belong to the experiment; never mutate its template.
         vcat(problem.initial_state[_population_state_range(problem)],
+             problem.initial_state[_reactor_state_range(problem)],
              collect(values(experiment_solvent)))
     end
     experiment_problem = _copy_crystallisation_problem(problem;

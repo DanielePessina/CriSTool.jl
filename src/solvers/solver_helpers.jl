@@ -74,13 +74,13 @@ _get_initial_state(CryProblem) = isnothing(CryProblem.initial_state) ?
                                      CryProblem.initial_state
 
 _zero_state(solver::AbstractDiscretisedSolver, CryProblem) =
-    [zeros(solver.meshsize); collect(values(CryProblem.initial_solvent_state))]
+    [zeros(solver.meshsize); _operation_initial_state(CryProblem.operation); collect(values(CryProblem.initial_solvent_state))]
 _zero_state(solver::MoM, CryProblem) =
-    [zeros(solver.nmoments + 1); collect(values(CryProblem.initial_solvent_state))]
+    [zeros(solver.nmoments + 1); _operation_initial_state(CryProblem.operation); collect(values(CryProblem.initial_solvent_state))]
 _zero_state(solver::QMOM, CryProblem) =
-    [zeros(moment_count(solver)); collect(values(CryProblem.initial_solvent_state))]
+    [zeros(moment_count(solver)); _operation_initial_state(CryProblem.operation); collect(values(CryProblem.initial_solvent_state))]
 _zero_state(solver::DQMOM, CryProblem) =
-    [zeros(2 * solver.nquadrature); collect(values(CryProblem.initial_solvent_state))]
+    [zeros(2 * solver.nquadrature); _operation_initial_state(CryProblem.operation); collect(values(CryProblem.initial_solvent_state))]
 
 """
     _build_timestepping_algorithm(algorithm_type; step_limiter=nothing, stage_limiter=nothing)

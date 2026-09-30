@@ -96,7 +96,8 @@ Base.@kwdef @concrete struct CrystallisationProblem{NuF <: AbstractNucleationFun
                                                     SS <: NamedTuple,
                                                     SD,
                                                     DissF <: AbstractDissolutionFunction,
-                                                    DissP <: AbstractVector{<:Real}} <:
+                                                    DissP <: AbstractVector{<:Real},
+                                                    OP <: AbstractCrystallisationOperation} <:
                              AbstractCrystallisationProblem
 
     # Operation
@@ -135,6 +136,7 @@ Base.@kwdef @concrete struct CrystallisationProblem{NuF <: AbstractNucleationFun
     # Dissolution is an independent signed crystal-growth-rate contribution.
     kinetics_dissolutionfunction::DissF = nodissolution()
     parameterset_dissolution::DissP = Float64[]
+    operation::OP = BatchOperation()
 
 end
 
@@ -152,7 +154,9 @@ _population_state_range(problem::CrystallisationProblem) =
 """Indices of the named solvent block following the solver population."""
 function _solvent_state_range(problem::CrystallisationProblem)
     population_count = _population_state_count(problem.solver)
-    return (population_count + 1):(population_count + length(problem.initial_solvent_state))
+    reactor_count = _operation_state_count(problem.operation)
+    return (population_count + reactor_count + 1):
+           (population_count + reactor_count + length(problem.initial_solvent_state))
 end
 
 function _solvent_state_index(problem::CrystallisationProblem, name::Symbol)
@@ -245,7 +249,7 @@ function _validate_crystallisation_problem(problem::CrystallisationProblem)
                                      problem.parameterset_dissolution, problem)
 
     population_state_count = _population_state_count(problem.solver)
-    expected_state_count = population_state_count + length(solvent_names)
+    expected_state_count = population_state_count + _operation_state_count(problem.operation) + length(solvent_names)
     if !isnothing(problem.initial_state)
         length(problem.initial_state) == expected_state_count ||
             throw(ArgumentError("initial_state has length $(length(problem.initial_state)); " *
@@ -257,6 +261,8 @@ function _validate_crystallisation_problem(problem::CrystallisationProblem)
                 throw(ArgumentError("initial number density must be nonnegative."))
         end
     end
+
+    _validate_operation(problem, problem.operation)
 
     saturation_value = saturation_concentration(problem, 0.0)
     isfinite(saturation_value) && saturation_value > 0.0 ||

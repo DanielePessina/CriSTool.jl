@@ -16,10 +16,12 @@ without aggregation or breakage.
 @inline function _mom_rhs(CryProblem, scalar_growth_rate, B, solvent_rates,
                           u::SVector{N}) where {N}
     n_population = _population_state_count(CryProblem.solver)
+    reactor_count = _operation_state_count(CryProblem.operation)
     return SVector(ntuple(Val(N)) do k
         k <= n_population ?
             (k == 1 ? B : (k - 1) * scalar_growth_rate * u[k - 1]) :
-            solvent_rates[k - n_population]
+            (k <= n_population + reactor_count ? zero(u[k]) :
+             solvent_rates[k - n_population - reactor_count])
     end)
 end
 
@@ -38,12 +40,12 @@ function _mom_extinction_callback(CryProblem::CrystallisationProblem)
 
     n_solvent = length(propertynames(CryProblem.initial_solvent_state))
     n_population = n_mom + 1
-    n_states = n_population + n_solvent
+    n_states = n_population + _operation_state_count(CryProblem.operation) + n_solvent
     solvent_names = propertynames(CryProblem.initial_solvent_state)
     concentration_position = findfirst(==(Symbol(:concentration)), solvent_names)
     concentration_position === nothing &&
         throw(ArgumentError("initial_solvent_state must define :concentration."))
-    concentration_index = n_population + concentration_position
+    concentration_index = _solvent_state_index(CryProblem, :concentration)
     solid_mass_concentration_threshold = _validate_solid_mass_concentration_threshold(CryProblem)
 
     condition = (state, time, integrator) ->
@@ -142,6 +144,7 @@ function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, Gr
         throw(ArgumentError("MoM dissolution requires nmoments >= 3 to track crystal volume."))
     end
 
+    feed_population = _operation_feed_population(CryProblem)
     function MoM_model(u, p, t)
         scalar_growth_rate = net_growth_rate(CryProblem.kinetics_growthfunction,
                                              p.gr,
@@ -153,7 +156,8 @@ function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, Gr
         B = nucleationrate(CryProblem.kinetics_nucleationfunction, p.nucl,
                            CryProblem, u, t)
         solvent_rates = _solvent_derivatives(CryProblem, u, t, scalar_growth_rate)
-        return _mom_rhs(CryProblem, scalar_growth_rate, B, solvent_rates, u)
+        internal_rates = _mom_rhs(CryProblem, scalar_growth_rate, B, solvent_rates, u)
+        return _compose_operation_rhs(CryProblem, u, t, internal_rates, feed_population)
     end
 
     θ = ComponentArray(;
@@ -164,7 +168,7 @@ function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, Gr
     ET = eltype(CryProblem.parameterset_nucleation)
     n_mom = CryProblem.solver.nmoments
     u0_vec = ET.(_get_initial_state(CryProblem))
-    n_states = n_mom + 1 + length(propertynames(CryProblem.initial_solvent_state))
+    n_states = n_mom + 1 + _operation_state_count(CryProblem.operation) + length(propertynames(CryProblem.initial_solvent_state))
     u0_typed = SVector(ntuple(k -> u0_vec[k], Val(n_states)))
     ODEprob = ODEProblem(MoM_model,
                          u0_typed,
@@ -205,7 +209,7 @@ function _wrap_solution(CryProblem::CrystallisationProblem{NuclF, GrF, nobreakag
     final_state = collect(sol[:, end])
 
     n_mom = CryProblem.solver.nmoments
-    n_states = n_mom + 1 + length(propertynames(CryProblem.initial_solvent_state))
+    n_states = n_mom + 1 + _operation_state_count(CryProblem.operation) + length(propertynames(CryProblem.initial_solvent_state))
     # Fixed moment indices: state k holds µ_{k-1}; µ2 = state 3, µ3 = state 4,
     # µ4 = state 5. Higher moments (if any) do not change these metrics.
     d32 = n_mom >= 3 ?
@@ -231,7 +235,8 @@ function _wrap_solution(CryProblem::CrystallisationProblem{NuclF, GrF, nobreakag
                                       solvent_solution_state,
                                       final_state,
                                       sol.stats,
-                                      OrdinaryDiffEq.SciMLBase.successful_retcode(sol.retcode))
+                                      OrdinaryDiffEq.SciMLBase.successful_retcode(sol.retcode),
+                                      _reactor_solution_state(CryProblem, sol))
 end
 
 function _simulatecrystallisation(CryProblem::CrystallisationProblem{NuclF, GrF, nobreakage,
