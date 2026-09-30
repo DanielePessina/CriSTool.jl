@@ -19,6 +19,7 @@ import StaticArrays
     include("test_aggregation_breakage.jl")
     include("test_runsimulation.jl")
     include("test_solvers.jl")
+    include("test_solve_configuration.jl")
     include("test_staticarrays.jl")
     include("test_input_validation.jl")
     include("test_chainutilities.jl")

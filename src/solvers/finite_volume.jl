@@ -303,7 +303,8 @@ end
 function _simulatecrystallisation(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
                                                                       FiniteVol, NuP, GrP,
                                                                       BrP, AggP, TP},
-                                   saveat)::CrystallisationFVSolution where {NuclF <:
+                                   saveat; algorithm = nothing, solve_options::NamedTuple = (;),
+                                  callback_factory = nothing)::CrystallisationFVSolution where {NuclF <:
                                                                              AbstractNucleationFunction,
                                                                              GrF <:
                                                                              Union{AbstractFPScalarGrowthFunction,
@@ -324,17 +325,9 @@ function _simulatecrystallisation(CryProblem::CrystallisationProblem{NuclF, GrF,
                                                                              AbstractTemperature}
 
     ODEprob, tstep_solver = crystallisation_odeproblem(CryProblem, saveat)
-    abstol_tol, auto_tol_cb = _auto_abstol_opts(CryProblem.solver, ODEprob.u0,
-                                                CryProblem.solver.abstol)
-    ODEsol = solve(ODEprob,
-                   tstep_solver;
-                   reltol = CryProblem.solver.reltol,
-                   abstol = abstol_tol,
-                   callback = auto_tol_cb,
-                   dense = false,
-                   alg_hints = [:stiff],
-                   saveat = saveat,
-                   maxiters = CRISTOOL_MAX_SOLVER_ITERS,)
+    ODEsol = _solve_crystallisation_ode(CryProblem, ODEprob,
+                                          algorithm === nothing ? tstep_solver : algorithm,
+                                          saveat; solve_options, callback_factory)
     return _wrap_solution(CryProblem, ODEsol)
 end
 
@@ -538,7 +531,8 @@ end
 function _simulatecrystallisation(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
                                                                       FiniteVol, NuP, GrP,
                                                                       BrP, AggP, TP},
-                                   saveat)::CrystallisationFVSolution where {NuclF <:
+                                   saveat; algorithm = nothing, solve_options::NamedTuple = (;),
+                                  callback_factory = nothing)::CrystallisationFVSolution where {NuclF <:
                                                                              AbstractNucleationFunction,
                                                                              GrF <:
                                                                              Union{AbstractFPLengthGrowthFunction,
@@ -561,16 +555,8 @@ function _simulatecrystallisation(CryProblem::CrystallisationProblem{NuclF, GrF,
     _flux_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 1))
 
     ODEprob, tstep_solver = crystallisation_odeproblem(CryProblem, saveat)
-    abstol_tol, auto_tol_cb = _auto_abstol_opts(CryProblem.solver, ODEprob.u0,
-                                                CryProblem.solver.abstol)
-    ODEsol = solve(ODEprob,
-                   tstep_solver;
-                   reltol = CryProblem.solver.reltol,
-                   abstol = abstol_tol,
-                   callback = auto_tol_cb,
-                   dense = false,
-                   alg_hints = [:stiff],
-                   saveat = saveat,
-                   maxiters = CRISTOOL_MAX_SOLVER_ITERS,)
+    ODEsol = _solve_crystallisation_ode(CryProblem, ODEprob,
+                                          algorithm === nothing ? tstep_solver : algorithm,
+                                          saveat; solve_options, callback_factory)
     return _wrap_solution(CryProblem, ODEsol)
 end

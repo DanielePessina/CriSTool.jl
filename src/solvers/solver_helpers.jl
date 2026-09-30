@@ -328,25 +328,81 @@ function _fill_signed_first_order_flux!(flux::AbstractVector,
 end
 
 """
-    _auto_abstol_opts(solver, u0, scalar_tol) -> (abstol, callback)
+    _auto_abstol_opts(solver, u0, absolute_floor; reltol=solver.reltol)
 
-`tolerance_mode = :auto` returns a per-component absolute-tolerance floor
-(`fill(abstol, length(u0))`, so `AutoAbstol` runs in array mode and each state
-component tracks its own running max) plus the solve-level `AutoAbstol`
-callback (`save=false`: never injects extra save points; `u_modified!` is
-forced false inside the callback, so it cannot re-trigger FSAL or interfere
-with problem-level callbacks such as the extinction callbacks, which
-`merge_problem_kwargs` combines into a `CallbackSet`).
-
-`:scalar` (the default) returns `(scalar_tol, nothing)` — passing
-`callback = nothing` leaves the problem-level callback untouched, so the
-`:scalar` solve path is byte-identical to the pre-`tolerance_mode` code.
+Allocate solve-local component tolerances and an AutoAbstol callback. In auto
+mode, each component retains its physical absolute floor while its tolerance
+tracks its own largest magnitude. Scalar mode leaves the supplied floor intact.
 """
-@inline function _auto_abstol_opts(solver::AbstractSolver, u0::AbstractVector,
-                                   scalar_tol)
+function _auto_abstol_opts(solver::AbstractSolver, u0::AbstractVector,
+                           absolute_floor; reltol = solver.reltol)
     if solver.tolerance_mode === :auto
-        floor = fill(float(solver.abstol), length(u0))
-        return floor, AutoAbstol(false; init_curmax = floor)
+        component_floor = absolute_floor isa AbstractVector ? copy(absolute_floor) :
+                          fill(float(absolute_floor), length(u0))
+        return component_floor,
+               AutoAbstol(false; init_curmax = component_floor ./ reltol)
     end
-    return scalar_tol, nothing
+    return absolute_floor isa AbstractVector ? copy(absolute_floor) : absolute_floor, nothing
+end
+
+_solver_absolute_floor(problem::CrystallisationProblem, odeproblem) = problem.solver.abstol
+
+function _solver_absolute_floor(problem::CrystallisationProblem{NuclF, GrF, BrF,
+                                                                 AggF, QMOM},
+                                 odeproblem) where {NuclF, GrF, BrF, AggF}
+    qmom_solver = problem.solver
+    n_moments = moment_count(qmom_solver)
+    moment_zero = abs(odeproblem.u0[1])
+    # A scalar tolerance cannot resolve SI raw moments with disparate dimensions.
+    moment_tolerances = [max(qmom_solver.abstol *
+                             max(moment_zero * qmom_solver.coordinate_scale^index,
+                                 eps(Float64) * qmom_solver.coordinate_scale^index),
+                             eps(Float64) * qmom_solver.coordinate_scale^index)
+                         for index in 0:(n_moments - 1)]
+    return vcat(moment_tolerances,
+                fill(qmom_solver.abstol, length(odeproblem.u0) - n_moments))
+end
+
+function _validate_crystallisation_solve_options(solve_options::NamedTuple)
+    for option_name in keys(solve_options)
+        option_name in (:u0, :p, :tspan, :saveat, :save_idxs, :callback,
+                        :merge_callbacks, :save_start, :save_end, :save_everystep,
+                        :initialize_save, :timeseries_steps) &&
+            throw(ArgumentError("solve_options cannot set $option_name; preserve the prepared state/time contract and use callback_factory for callbacks."))
+    end
+    return solve_options
+end
+
+"""
+    _solve_crystallisation_ode(problem, odeproblem, algorithm, saveat;
+                              solve_options=(;), callback_factory=nothing)
+
+Shared direct/prepared option policy. `callback_factory(odeproblem)` constructs
+one fresh user callback per evaluation, composed with package safety callbacks.
+Iteration and elapsed-time limits may be supplied explicitly in `solve_options`.
+"""
+function _solve_crystallisation_ode(problem::CrystallisationProblem, odeproblem,
+                                    algorithm, saveat;
+                                    solve_options::NamedTuple = (;),
+                                    callback_factory = nothing)
+    _validate_crystallisation_solve_options(solve_options)
+    solver_defaults = (reltol = problem.solver.reltol,
+                       abstol = _solver_absolute_floor(problem, odeproblem),
+                       dense = false, maxiters = CRISTOOL_MAX_SOLVER_ITERS)
+    if !(problem.solver isa MoM)
+        solver_defaults = merge(solver_defaults, (alg_hints = [:stiff],))
+    end
+    selected_options = merge(solver_defaults, solve_options)
+    abstol, auto_callback = _auto_abstol_opts(problem.solver, odeproblem.u0,
+                                             selected_options.abstol;
+                                             reltol = selected_options.reltol)
+    user_callback = callback_factory === nothing ? nothing : callback_factory(odeproblem)
+    solve_callback = CallbackSet(auto_callback, user_callback)
+    # Templates are reused; callbacks can hold mutable event state. Do not share
+    # those states across parameter candidates or concurrent evaluations.
+    solve_problem = haskey(odeproblem.kwargs, :callback) ?
+                    remake(odeproblem; callback = deepcopy(odeproblem.kwargs.callback)) :
+                    odeproblem
+    return solve(solve_problem, algorithm; selected_options..., abstol = abstol,
+                 saveat = saveat, callback = solve_callback)
 end

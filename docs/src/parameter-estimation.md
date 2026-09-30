@@ -189,3 +189,36 @@ its initial crystal population and other solvent initial values. It applies each
 experiment's measured initial concentration and constant temperature. Explicit
 `initial_crystals` on an experiment replace the template population. Preparation
 creates a new problem and leaves the template unchanged.
+
+## Simulation options in prepared losses
+
+Direct simulation and prepared loss evaluation use the same solver tolerances
+and iteration limits. QMOM uses an absolute tolerance for each raw moment,
+scaled to its physical dimensions; `tolerance_mode = :auto` preserves those
+floors and adapts each component separately. Each evaluation creates fresh
+callback state, including when parameter candidates run concurrently.
+
+Keep simulation settings separate from optimizer options:
+
+```julia
+setup = prepare_loss(problem, experiments;
+    solve_options = (; reltol = 1e-7, maxiters = 100_000, maxtime = 30.0))
+objective_value = loss(lossfn, setup, optimal_params)
+```
+
+An optional `algorithm` keyword overrides the selected SciML time-stepper.
+The default has no special prepared-loss wall-clock limit. Set `maxtime` or
+`maxiters` explicitly when an inference workflow needs a candidate budget.
+
+For a custom SciML callback, pass `callback_factory = odeproblem -> callback`.
+The factory runs once per solve and should construct fresh mutable state.
+Its callback composes with the package domain, extinction and CFL callbacks.
+Use `save_positions = (false, false)` when callback events should not add
+measurement predictions. The callback must preserve the population and solvent
+state layout. Errors raised by the factory propagate to the caller.
+
+`solve_options` accepts a named tuple of SciML options. State, parameter,
+integration-span and output-selection overrides (`u0`, `p`, `tspan`, `saveat`,
+`save_idxs`, and saving controls) are reserved by the prepared observation
+contract. Raw `callback` and `merge_callbacks` overrides are also reserved;
+use the factory to retain package safety callbacks.

@@ -291,7 +291,12 @@ struct PreparedExperiment
     odeproblem::ODEProblem
     algorithm::Any
     saveat::Vector{Float64}
+    solve_options::NamedTuple
+    callback_factory::Any
 end
+
+PreparedExperiment(problem, odeproblem, algorithm, saveat) =
+    PreparedExperiment(problem, odeproblem, algorithm, saveat, (;), nothing)
 
 """
     LossSetup
@@ -312,25 +317,32 @@ end
 
 """
     prepare_loss(problem::CrystallisationProblem,
-                 experiments::Vector{CrystallisationExperiment}) -> LossSetup
+                 experiments::Vector{CrystallisationExperiment};
+                 algorithm=nothing, solve_options=(;), callback_factory=nothing) -> LossSetup
 
 Build per-experiment `ODEProblem` templates (u0 from each experiment's
 initial concentration and initial crystals, tspan from its measurement grid,
 constant temperature profile). Each loss evaluation then only remakes the parameter
 vector — no ODEProblem construction in the optimisation loop.
+Simulation options are distinct from optimizer options; `callback_factory(odeproblem)`
+builds a fresh callback for each evaluation and composes with package callbacks.
 """
 function prepare_loss(problem::CrystallisationProblem,
                       experiments::Vector{<:AbstractExperiment};
                       observable_order = nothing,
-                      exclude_initial_concentration::Bool = true)
+                      exclude_initial_concentration::Bool = true,
+                      algorithm = nothing, solve_options::NamedTuple = (;),
+                      callback_factory = nothing)
     isempty(experiments) && throw(ArgumentError("At least one experiment is required."))
+    _validate_crystallisation_solve_options(solve_options)
     prepared = map(experiments) do expt
         per_exp_problem = _experiment_problem(problem, expt)
         saveat = _loss_saveat(expt, problem.solver)
-        odeprob, algorithm = crystallisation_odeproblem(per_exp_problem,
+        odeprob, default_algorithm = crystallisation_odeproblem(per_exp_problem,
                                                         saveat)
-        PreparedExperiment(per_exp_problem, odeprob, algorithm,
-                           saveat)
+        PreparedExperiment(per_exp_problem, odeprob,
+                           algorithm === nothing ? default_algorithm : algorithm,
+                           saveat, solve_options, callback_factory)
     end
     return _build_loss_setup(problem, experiments, prepared;
                              observable_order, exclude_initial_concentration)
@@ -365,7 +377,10 @@ The problems must share the estimated kinetic parameter names and ordering.
 function prepare_loss(configured_problems::AbstractVector{<:CrystallisationProblem},
                       experiments::Vector{<:AbstractExperiment};
                       observable_order = nothing,
-                      exclude_initial_concentration::Bool = false)
+                      exclude_initial_concentration::Bool = false,
+                      algorithm = nothing, solve_options::NamedTuple = (;),
+                      callback_factory = nothing)
+    _validate_crystallisation_solve_options(solve_options)
     length(configured_problems) == length(experiments) && !isempty(experiments) ||
         throw(ArgumentError("Supply one configured problem per experiment."))
     parameter_axis = paramaxis(first(configured_problems))
@@ -378,8 +393,12 @@ function prepare_loss(configured_problems::AbstractVector{<:CrystallisationProbl
                 "Experiment $(expt.exp_id) declares seeds conflicting with its configured problem."))
         end
         saveat = _loss_saveat(expt, configured.solver)
-        odeproblem, algorithm = crystallisation_odeproblem(configured, saveat)
-        PreparedExperiment(configured, odeproblem, algorithm, saveat)
+        _validate_crystallisation_problem(configured)
+        _validate_save_times(saveat)
+        odeproblem, default_algorithm = crystallisation_odeproblem(configured, saveat)
+        PreparedExperiment(configured, odeproblem,
+            algorithm === nothing ? default_algorithm : algorithm, saveat,
+            solve_options, callback_factory)
     end
     return _build_loss_setup(first(configured_problems), experiments, prepared;
                              observable_order, exclude_initial_concentration)
@@ -634,29 +653,6 @@ function _params_to_p(prob::CrystallisationProblem, params)
     return ComponentArray(params, paramaxis(prob))
 end
 
-function _solve_prepared_problem(odeproblem, algorithm, saveat,
-                                 solver::AbstractMomentSolver)
-    return solve(odeproblem, algorithm;
-                 saveat = saveat,
-                 reltol = solver.reltol,
-                 abstol = solver.abstol,
-                 dense = false,
-                 maxiters = CRISTOOL_MAX_PREPARED_SOLVER_ITERS,
-                 maxtime = CRISTOOL_MAX_PREPARED_SOLVER_SECONDS)
-end
-
-function _solve_prepared_problem(odeproblem, algorithm, saveat,
-                                 solver::AbstractDiscretisedSolver)
-    return solve(odeproblem, algorithm;
-                 saveat = saveat,
-                 reltol = solver.reltol,
-                 abstol = solver.abstol,
-                 dense = false,
-                 alg_hints = [:stiff],
-                 maxiters = CRISTOOL_MAX_PREPARED_DISCRETIZED_SOLVER_ITERS,
-                 maxtime = CRISTOOL_MAX_PREPARED_SOLVER_SECONDS)
-end
-
 """
     _solve_prepared(prep::PreparedExperiment, params) -> AbstractSolution
 
@@ -666,8 +662,9 @@ options as `_simulatecrystallisation`.
 """
 function _solve_prepared(prep::PreparedExperiment, params)
     remade = remake(prep.odeproblem; p = _params_to_p(prep.problem, params))
-    sol = _solve_prepared_problem(remade, prep.algorithm, prep.saveat,
-                                  prep.problem.solver)
+    sol = _solve_crystallisation_ode(prep.problem, remade, prep.algorithm, prep.saveat;
+                                     solve_options = prep.solve_options,
+                                     callback_factory = prep.callback_factory)
     return _wrap_solution(prep.problem, sol)
 end
 

@@ -801,7 +801,8 @@ function _simulatecrystallisation(problem::CrystallisationProblem{NuclF, GrF, Br
                                                                    AggF, DQMOM,
                                                                    NuP, GrP, BrP,
                                                                    AggP, TP},
-                                  saveat)::CrystallisationDQMOMSolution where {
+                                  saveat; algorithm = nothing, solve_options::NamedTuple = (;),
+                                  callback_factory = nothing)::CrystallisationDQMOMSolution where {
                                       NuclF <: AbstractNucleationFunction,
                                       GrF <: AbstractGrowthFunction,
                                       BrF <: AbstractBreakageFunction,
@@ -812,17 +813,9 @@ function _simulatecrystallisation(problem::CrystallisationProblem{NuclF, GrF, Br
                                       AggP <: AbstractVector{<:Real},
                                       TP <: AbstractTemperature}
     ode_problem, time_step_solver = crystallisation_odeproblem(problem, saveat)
-    abstol_tol, auto_tol_cb = _auto_abstol_opts(problem.solver, ode_problem.u0,
-                                                problem.solver.abstol)
-    ode_solution = solve(ode_problem,
-                         time_step_solver;
-                         callback = auto_tol_cb,
-                         saveat = saveat,
-                         reltol = problem.solver.reltol,
-                         abstol = abstol_tol,
-                         dense = false,
-                         alg_hints = [:stiff],
-                         maxiters = CRISTOOL_MAX_SOLVER_ITERS)
+    ode_solution = _solve_crystallisation_ode(problem, ode_problem,
+                                          algorithm === nothing ? time_step_solver : algorithm,
+                                          saveat; solve_options, callback_factory)
     return _wrap_solution(problem, ode_solution)
 end
 

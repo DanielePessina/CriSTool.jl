@@ -881,7 +881,8 @@ function _simulatecrystallisation(problem::CrystallisationProblem{NuclF, GrF, Br
                                                                    AggF, QMOM,
                                                                    NuP, GrP, BrP,
                                                                    AggP, TP},
-                                  saveat)::CrystallisationQMOMSolution where {
+                                  saveat; algorithm = nothing, solve_options::NamedTuple = (;),
+                                  callback_factory = nothing)::CrystallisationQMOMSolution where {
                                       NuclF <: AbstractNucleationFunction,
                                       GrF <: AbstractGrowthFunction,
                                       BrF <: AbstractBreakageFunction,
@@ -892,33 +893,9 @@ function _simulatecrystallisation(problem::CrystallisationProblem{NuclF, GrF, Br
                                       AggP <: AbstractVector{<:Real},
                                       TP <: AbstractTemperature}
     ode_problem, time_step_solver = crystallisation_odeproblem(problem, saveat)
-    # Raw moments in metres have dimensions spanning 30 or more orders of
-    # magnitude.  A scalar absolute tolerance would effectively freeze the
-    # high moments (and immediately drive an otherwise valid rule outside the
-    # realizable cone).  Scale each moment tolerance by M₀ L_scale^k while
-    # retaining the configured absolute tolerance for the solvent variables.
-    initial_state = _get_initial_state(problem)
-    n_moments = moment_count(problem.solver)
-    moment_zero = abs(initial_state[1])
-    moment_tolerances = [max(problem.solver.abstol *
-                             max(moment_zero * problem.solver.coordinate_scale^index,
-                                 eps(Float64) * problem.solver.coordinate_scale^index),
-                             eps(Float64) * problem.solver.coordinate_scale^index)
-                         for index in 0:(n_moments - 1)]
-    solvent_tolerances = fill(problem.solver.abstol,
-                              length(propertynames(problem.initial_solvent_state)))
-    abstol_tol, auto_tol_cb = _auto_abstol_opts(problem.solver, ode_problem.u0,
-                                                vcat(moment_tolerances,
-                                                     solvent_tolerances))
-    ode_solution = solve(ode_problem,
-                         time_step_solver;
-                         callback = auto_tol_cb,
-                         saveat = saveat,
-                         reltol = problem.solver.reltol,
-                         abstol = abstol_tol,
-                         dense = false,
-                         alg_hints = [:stiff],
-                         maxiters = CRISTOOL_MAX_SOLVER_ITERS)
+    ode_solution = _solve_crystallisation_ode(problem, ode_problem,
+                                          algorithm === nothing ? time_step_solver : algorithm,
+                                          saveat; solve_options, callback_factory)
     return _wrap_solution(problem, ode_solution)
 end
 
