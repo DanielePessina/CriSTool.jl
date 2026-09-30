@@ -11,6 +11,7 @@ import StaticArrays
     include("test_structs.jl")
     include("test_initial_state.jl")
     include("test_operations.jl")
+    include("test_mesh_operations.jl")
     include("test_saturation.jl")
     include("test_kinetics.jl")
     include("test_dissolution.jl")

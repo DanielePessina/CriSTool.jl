@@ -72,10 +72,10 @@ paramaxis(prob::CrystallisationProblem) = paramaxis(prob.kinetics_nucleationfunc
     crystal_state(problem, state) -> AbstractVector
 
 Crystal-population part of a solver state: the named `n` component for
-ComponentArray states (MoM moments), or the state prefix before the named
-solvent-state variables for flat discretised states (mesh densities).
+ComponentArray states (MoM moments), or the solver population range for flat
+states, excluding optional reactor and solvent blocks.
 """
 crystal_state(state::ComponentArrays.ComponentVector) = state.n
 crystal_state(state::AbstractVector) = @view state[1:(end - 1)]
 crystal_state(problem::CrystallisationProblem, state) =
-    @view state[1:(end - length(propertynames(problem.initial_solvent_state)))]
+    @view state[_population_state_range(problem)]

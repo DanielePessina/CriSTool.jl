@@ -135,7 +135,61 @@ _compose_operation_rhs(problem, numerical_state, simulation_time, internal_rates
     _compose_operation_rhs(problem, numerical_state, simulation_time, internal_rates,
                            feed_population, problem.operation)
 
-"""Hydraulic trajectory variables, separate from solvent-phase variables."""
+"""Add inlet, outlet and reactor-volume terms to an in-place mesh RHS.
+
+The mesh solvers compute their established crystallisation terms first, then
+call this helper to add the independent operation transport.  The batch
+specialisation is an empty inline method, so its RHS keeps the existing
+allocation-free path.
+"""
+@inline _add_operation_transport!(derivative, numerical_state, problem,
+                                  simulation_time, feed_population,
+                                  ::BatchOperation) = nothing
+
+function _add_operation_transport!(derivative, numerical_state, problem,
+                                  simulation_time, feed_population,
+                                  operation::Union{MSMPROperation, FedBatchOperation})
+    operation_context = _operation_transport_context(problem, numerical_state,
+                                                     simulation_time)
+    population_range = _population_state_range(problem)
+    @inbounds for population_position in eachindex(feed_population)
+        state_index = population_range[population_position]
+        derivative[state_index] += operation_context.exchange_rate *
+                                   (feed_population[population_position] -
+                                    numerical_state[state_index])
+    end
+
+    if operation isa FedBatchOperation
+        derivative[first(_reactor_state_range(problem))] =
+            operation_context.volume_rate
+    end
+
+    solvent_names = propertynames(problem.initial_solvent_state)
+    first_solvent = first(_solvent_state_range(problem))
+    @inbounds for solvent_position in eachindex(solvent_names)
+        solvent_name = solvent_names[solvent_position]
+        state_index = first_solvent + solvent_position - 1
+        transport_rate = solvent_name === :concentration ?
+            operation_context.exchange_rate *
+                (operation_context.feed_values.concentration -
+                 numerical_state[state_index]) :
+            getproperty(operation_context.extra_rates, solvent_name)
+        derivative[state_index] += transport_rate
+    end
+    return nothing
+end
+
+@inline _add_operation_transport!(derivative, numerical_state, problem,
+                                  simulation_time, feed_population) =
+    _add_operation_transport!(derivative, numerical_state, problem,
+                              simulation_time, feed_population, problem.operation)
+
+"""Reactor and mesh-boundary trajectories, separate from solvent variables.
+
+Finite-volume and WENO results include signed lower/upper size-boundary
+solid-mass flow in kg/s. A positive flow is outward from the represented size
+domain.
+"""
 reactor_vars(solution::AbstractSolution) = hasproperty(solution, :reactor_state) ?
     solution.reactor_state : (;)
 _reactor_solution_state(problem, ode_solution, ::BatchOperation) = (;)

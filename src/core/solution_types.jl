@@ -22,6 +22,9 @@ abstract type AbstractSolution end
     - `d50q::Vector{TDq}`: Median size vector
     - `ode_stats`: ODE solver statistics (e.g., DEStats) or `nothing`
     - `success::Bool`: Success flag
+    - `reactor_state::NamedTuple`: Reactor-volume and size-boundary-flow
+      trajectories. Mesh solutions report signed lower/upper solid-mass flows
+      in kg/s, with positive values directed out of the size domain.
 
 """
 @concrete struct CrystallisationFVSolution{Tt, TCo, TNn, TVd, TDq, TDm, TL, TStats} <:

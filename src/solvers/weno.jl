@@ -303,6 +303,105 @@ function _fill_signed_weno_flux!(flux::AbstractVector,
     return flux
 end
 
+"""Fill the legacy positive scalar-growth WENO flux in place."""
+@inline function _fill_positive_weno_flux!(flux::AbstractVector,
+                                           numberdensity::AbstractVector,
+                                           scalar_growth_rate,
+                                           nucleation_rate,
+                                           ndens_pad_cache::AbstractVector)
+    @inbounds begin
+        ndens_pad_cache[1] = nucleation_rate
+        ndens_pad_cache[2] = nucleation_rate
+        ndens_pad_cache[3:(end - 2)] .= numberdensity
+        ndens_pad_cache[end - 1] = zero(eltype(ndens_pad_cache))
+        ndens_pad_cache[end] = zero(eltype(ndens_pad_cache))
+
+        flux[1] = nucleation_rate
+        flux[2] = scalar_growth_rate *
+                  0.5 * (numberdensity[1] + numberdensity[2])
+        for cell_index in 3:length(numberdensity)
+            flux[cell_index] = scalar_growth_rate *
+                               weno_flux(ndens_pad_cache, cell_index + 1)
+        end
+        high_order_state = numberdensity[end] +
+                           0.5 * (numberdensity[end] - numberdensity[end - 1])
+        flux[end] = scalar_growth_rate * high_order_state
+    end
+    return flux
+end
+
+"""Boundary solid-mass flow samples using the exact WENO face fluxes.
+
+The signed lower and upper flows are positive out of the size domain and use
+kg/s. Batch operation volume is the explicit reactor volume; the default
+1 m³ value is its documented unit-volume reference.
+"""
+function _mesh_boundary_flow_state(solver::WENO, problem, ode_solution)
+    saved_times = ode_solution.t
+    sample_state = first(ode_solution.u)
+    lower_mass_flow = Vector{typeof(zero(eltype(sample_state)))}(undef, length(saved_times))
+    upper_mass_flow = similar(lower_mass_flow)
+    flux_cache = similar(sample_state, solver.meshsize + 1)
+    ndens_pad_cache = similar(sample_state, solver.meshsize + 4)
+    growth_rate_cache = similar(sample_state, solver.meshsize)
+    parameters = (; nucl = problem.parameterset_nucleation,
+                  gr = problem.parameterset_growth,
+                  diss = problem.parameterset_dissolution)
+    lower_length = first(solver.cell_face)
+    upper_length = last(solver.cell_face)
+    mass_scale = problem.crystal_density * problem.volume_shape_factor
+
+    for time_index in eachindex(saved_times)
+        numerical_state = ode_solution.u[time_index]
+        numberdensity = crystal_state(problem, numerical_state)
+        simulation_time = saved_times[time_index]
+        nucleation_rate_value = nucleationrate(problem.kinetics_nucleationfunction,
+                                               parameters.nucl, problem,
+                                               numerical_state, simulation_time)
+
+        if problem.kinetics_growthfunction isa Union{AbstractFPScalarGrowthFunction,
+                                                     AbstractFPScalarDissolutionFunction} &&
+           !(problem.kinetics_dissolutionfunction isa AbstractFPLengthDissolutionFunction)
+            scalar_growth_rate = net_growth_rate(
+                problem.kinetics_growthfunction, parameters.gr,
+                problem.kinetics_dissolutionfunction, parameters.diss,
+                problem, numerical_state, simulation_time)
+            if scalar_growth_rate > zero(scalar_growth_rate)
+                _fill_positive_weno_flux!(flux_cache, numberdensity,
+                                          scalar_growth_rate,
+                                          nucleation_rate_value,
+                                          ndens_pad_cache)
+            elseif scalar_growth_rate < zero(scalar_growth_rate)
+                _fill_signed_weno_flux!(flux_cache, numberdensity,
+                                        scalar_growth_rate,
+                                        nucleation_rate_value,
+                                        ndens_pad_cache)
+            else
+                fill!(flux_cache, zero(scalar_growth_rate))
+            end
+        else
+            net_growth_rate!(growth_rate_cache,
+                             problem.kinetics_growthfunction, parameters.gr,
+                             problem.kinetics_dissolutionfunction, parameters.diss,
+                             problem, numerical_state, simulation_time,
+                             solver.cell_centre)
+            _fill_signed_weno_flux!(flux_cache, numberdensity,
+                                    growth_rate_cache,
+                                    nucleation_rate_value,
+                                    ndens_pad_cache)
+        end
+
+        reactor_volume_value = _mesh_reactor_volume(problem, numerical_state)
+        lower_mass_flow[time_index] = -flux_cache[1] * lower_length^3 *
+                                      mass_scale * reactor_volume_value
+        upper_mass_flow[time_index] = flux_cache[end] * upper_length^3 *
+                                      mass_scale * reactor_volume_value
+    end
+
+    return (; size_boundary_lower_solid_mass_flow = lower_mass_flow,
+              size_boundary_upper_solid_mass_flow = upper_mass_flow)
+end
+
 function _weno_rhs!(dstdt, st, p, t, CryProblem,
                     growthfunction::Union{AbstractFPScalarGrowthFunction,
                                           AbstractFPScalarDissolutionFunction},
@@ -343,21 +442,9 @@ function _weno_rhs!(dstdt, st, p, t, CryProblem,
     if scalar_growth_rate > zero(scalar_growth_rate)
         # Positive growth fast path: preserve the existing WENO reconstruction
         # and lower-boundary nucleation convention.
-        ndens_pad_cache[1] = inflowbc
-        ndens_pad_cache[2] = inflowbc
-        ndens_pad_cache[3:(end - 2)] .= numberdensity
-        ndens_pad_cache[end - 1] = zero(eltype(st))
-        ndens_pad_cache[end] = zero(eltype(st))
-
-        flux_cache[1] = inflowbc
-        flux_cache[2] = scalar_growth_rate *
-                        0.5 * (numberdensity[1] + numberdensity[2])
-        @inbounds for i in 3:length(numberdensity)
-            flux_cache[i] = scalar_growth_rate * weno_flux(ndens_pad_cache, i + 1)
-        end
-        high_order_state = numberdensity[end] +
-                           0.5 * (numberdensity[end] - numberdensity[end - 1])
-        flux_cache[end] = scalar_growth_rate * high_order_state
+        _fill_positive_weno_flux!(flux_cache, numberdensity,
+                                  scalar_growth_rate, inflowbc,
+                                  ndens_pad_cache)
     elseif scalar_growth_rate < zero(scalar_growth_rate)
         # Negative growth is outflow at lmin and zero-inflow at lmax.  Use
         # the mirrored fifth-order WENO right trace at every interior face;
@@ -424,6 +511,7 @@ function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, Gr
     _flux_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 1))
     _ndens_pad_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 4))
     _growth_rate_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize))
+    feed_population = _operation_feed_population(CryProblem)
 
     function WENO_Model(dstdt, st, p, t)
         _weno_rhs!(dstdt,
@@ -435,6 +523,7 @@ function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, Gr
                    get_tmp(_flux_cache_dc, st),
                    get_tmp(_ndens_pad_cache_dc, st),
                    _growth_rate_cache_dc)
+        _add_operation_transport!(dstdt, st, CryProblem, t, feed_population)
         return nothing
     end
 
@@ -525,12 +614,14 @@ function _wrap_solution(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF
     _flux_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 1))
     _ndens_pad_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 4))
 
-    n_solvent = length(propertynames(CryProblem.initial_solvent_state))
-    nd_matrix = sol[1:(end - n_solvent), :]
+    nd_matrix = sol[_population_state_range(CryProblem), :]
     vol_weighted_dens = volumeweighteddensity(CryProblem.solver.cell_centre, nd_matrix,
                                               CryProblem.volume_shape_factor)
     moments = _momentsizes(CryProblem.solver.cell_centre, nd_matrix)
     solvent_solution_state = _solvent_solution_state(CryProblem, sol)
+    reactor_state = merge(_reactor_solution_state(CryProblem, sol),
+                          _mesh_boundary_flow_state(CryProblem.solver,
+                                                    CryProblem, sol))
 
     return CrystallisationFVSolution(sol.t, ### Will eventually have to be changed to discretised solution
                                      solvent_solution_state.concentration,
@@ -549,7 +640,8 @@ function _wrap_solution(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF
                                      solvent_solution_state,
                                      sol[:, end],
                                      sol.stats,
-                                     OrdinaryDiffEq.SciMLBase.successful_retcode(sol.retcode))
+                                     OrdinaryDiffEq.SciMLBase.successful_retcode(sol.retcode),
+                                     reactor_state)
 end
 function _simulatecrystallisation(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
                                                                      WENO, NuP, GrP, BrP,
