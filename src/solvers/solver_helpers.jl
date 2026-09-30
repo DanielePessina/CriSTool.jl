@@ -418,9 +418,9 @@ function _solve_crystallisation_ode(problem::CrystallisationProblem, odeproblem,
     solve_callback = CallbackSet(auto_callback, user_callback)
     # Templates are reused; callbacks can hold mutable event state. Do not share
     # those states across parameter candidates or concurrent evaluations.
-    solve_problem = haskey(odeproblem.kwargs, :callback) ?
-                    remake(odeproblem; callback = deepcopy(odeproblem.kwargs[:callback])) :
-                    odeproblem
+    original_callback = get(odeproblem.kwargs, :callback, nothing)
+    solve_problem = isnothing(original_callback) ? odeproblem :
+                    remake(odeproblem; callback = deepcopy(original_callback))
     return solve(solve_problem, algorithm; selected_options..., abstol = abstol,
                  saveat = saveat, callback = solve_callback)
 end

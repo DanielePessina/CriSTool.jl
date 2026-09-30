@@ -74,6 +74,7 @@ const CRISTOOL_PRIOR_PLOT_SAMPLES = 2^18
 ## Export stuff
 export CrystallisationFVSolution, CrystallisationMoMSolution,
        CrystallisationQMOMSolution, CrystallisationDQMOMSolution,
+       CrystallisationSteadyStateSolution, SteadyStateConvergenceError,
        EnsembleFVSolution, EnsembleMoMSolution,
        CrystallisationProblem
 export Observable, ObservableColumns, CrystallisationExperiment, AbstractExperiment,
@@ -107,6 +108,7 @@ export AbstractAggregationFunction, AbstractBreakageFunction, nobreakage,
        aggr_scalar, aggr_linear, aggr_linearvol, aggr_avg
 export runsimulation, paramaxis, crystallisation_odeproblem,
        crystallisation_solution,
+       solve_steadystate,
        get_characteristic_size, getmomentsizes,
        initial_state_from_characteristics
 export AbstractPELossFunction, AbstractVarianceModel, MeasuredVariance, RelativeVariance,
@@ -168,6 +170,7 @@ include("solvers/dqmom.jl")
 include("solvers/finite_volume.jl")
 include("solvers/weno.jl")
 include("solvers/runsimulation.jl")
+include("solvers/steady_state.jl")
 
 include("output/pretty_printing.jl")
 
