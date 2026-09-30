@@ -81,7 +81,7 @@ use different observable subsets or field orders:
 ```julia
 lossfn = mae(weighting = (; concentration = 1.0, d43 = 0.5))
 setup = prepare_loss(problem, experiments)
-objectives = batchLF_procMO(lossfn, setup, optimal_params)
+objectives = CriSTool.batchLF_procMO(lossfn, setup, optimal_params)
 setup.observable_names # labels of the multiobjective result
 ```
 
