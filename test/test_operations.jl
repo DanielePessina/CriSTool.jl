@@ -1,5 +1,5 @@
 # Hand-computed inventory/mixing oracles; this file uses runtests.jl imports.
-struct OperationZeroNucleation <: AbstractFPNucleationFunction
+struct OperationZeroNucleation <: CriSTool.AbstractFPNucleationFunction
     nparams::Int
 end
 CriSTool.paramaxis(::OperationZeroNucleation) = CriSTool.ComponentArrays.Axis()

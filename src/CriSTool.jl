@@ -106,6 +106,7 @@ export AbstractAggregationFunction, AbstractBreakageFunction, nobreakage,
        breakage_empirical, breakage_uniform, noaggregation,
        aggr_scalar, aggr_linear, aggr_linearvol, aggr_avg
 export runsimulation, paramaxis, crystallisation_odeproblem,
+       crystallisation_solution,
        get_characteristic_size, getmomentsizes,
        initial_state_from_characteristics
 export AbstractPELossFunction, AbstractVarianceModel, MeasuredVariance, RelativeVariance,
@@ -121,6 +122,7 @@ export AbstractSolver, AbstractMomentSolver, FiniteVol, MoM, QMOM, DQMOM, WENO,
        aggregation_moment_source, breakage_moment_source
 export run_abc, AbstractABCSampler, ABCDESampler, ABCDETurnerSampler
 export run_ensemble, run_ensemble_fixed
+export PredictionEnsemble, prediction_summary
 export PE_Routine, PE_Routine_Optimisation, ABCDE_Routine, ABCDE_Turner_Routine,
        plot_posterior_pairplot, plot_measurements_vs_ensemble
 export ChainPairPlots, ChainStatsPlots, ChainMeasurementPlots
@@ -187,6 +189,7 @@ include("inference/bayesian.jl")
 # Uncertainty workflows.
 include("uncertainty/sensitivity.jl")
 include("uncertainty/ensembles.jl")
+include("inference/workflow_interfaces.jl")
 
 # Plotting is included last because it consumes all public solution and
 # inference interfaces.

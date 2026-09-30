@@ -333,8 +333,8 @@ end
 Scalar element type carried by an ODE problem's parameter container, or
 `Float64` for parameter containers without an element type.
 """
-_parameter_eltype(p::AbstractArray) = eltype(p)
-_parameter_eltype(p) = Float64
+_parameter_eltype(ode_parameters::AbstractArray) = eltype(ode_parameters)
+_parameter_eltype(ode_parameters) = Float64
 
 """
     _auto_abstol_opts(solver, u0, absolute_floor, scalar_type=Float64; reltol=solver.reltol)

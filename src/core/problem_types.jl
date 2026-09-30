@@ -206,6 +206,11 @@ called once at the public simulation boundary; the hot RHS only evaluates the
 already validated rate laws.
 """
 function _validate_crystallisation_problem(problem::CrystallisationProblem)
+    if problem.solver isa MoM &&
+       (!(problem.kinetics_aggregationfunction isa noaggregation) ||
+        !(problem.kinetics_breakagefunction isa nobreakage))
+        throw(ArgumentError("MoM does not support aggregation or breakage; choose a quadrature or discretised solver."))
+    end
     solvent_names = propertynames(problem.initial_solvent_state)
     concentration_position = findfirst(==(Symbol(:concentration)), solvent_names)
     concentration_position === nothing &&

@@ -300,10 +300,36 @@ struct PreparedExperiment
     saveat::Vector{Float64}
     solve_options::NamedTuple
     callback_factory::Any
+    mode::Symbol
+    steady_options::NamedTuple
+end
+
+# A numerical return-code failure must remain a failed candidate even if its
+# truncated population cannot be reconstructed into physical size metrics.
+struct FailedPreparedSimulation{TS, TR} <: AbstractSolution
+    time::Vector{Float64}
+    concentration::Vector{Float64}
+    d32::Vector{Float64}
+    d43::Vector{Float64}
+    d50q::Vector{Float64}
+    ode_stats::TS
+    reason::TR
+    success::Bool
+end
+state_vars(failed_solution::FailedPreparedSimulation) = (; concentration = failed_solution.concentration)
+size_metrics(failed_solution::FailedPreparedSimulation) =
+    (; d32 = failed_solution.d32, d43 = failed_solution.d43, d50q = failed_solution.d50q)
+
+function _failed_prepared_simulation(preparation, ode_solution, reason)
+    missing_values = fill(NaN, length(preparation.saveat))
+    return FailedPreparedSimulation(copy(preparation.saveat), missing_values,
+        copy(missing_values), copy(missing_values), copy(missing_values), ode_solution.stats, reason, false)
 end
 
 PreparedExperiment(problem, odeproblem, algorithm, saveat) =
-    PreparedExperiment(problem, odeproblem, algorithm, saveat, (;), nothing)
+    PreparedExperiment(problem, odeproblem, algorithm, saveat, (;), nothing, :transient, (;))
+PreparedExperiment(problem, odeproblem, algorithm, saveat, solve_options, callback_factory) =
+    PreparedExperiment(problem, odeproblem, algorithm, saveat, solve_options, callback_factory, :transient, (;))
 
 """
     LossSetup
@@ -320,6 +346,7 @@ struct LossSetup
     included_observations::Vector{Dict{Symbol,Vector{Int}}}
     heterogeneous_schema::Bool
     explicit_observable_order::Bool
+    observable_projections::NamedTuple
 end
 
 """
@@ -339,7 +366,14 @@ function prepare_loss(problem::CrystallisationProblem,
                       observable_order = nothing,
                       exclude_initial_concentration::Bool = true,
                       algorithm = nothing, solve_options::NamedTuple = (;),
-                      callback_factory = nothing)
+                      callback_factory = nothing, observable_projections::NamedTuple = (;),
+                      mode::Symbol = :transient, steady_options::NamedTuple = (;))
+    mode in (:transient, :steady) || throw(ArgumentError("mode must be :transient or :steady."))
+    if mode === :steady
+        return prepare_loss([problem for _ in experiments], experiments;
+            observable_order, exclude_initial_concentration = false, algorithm,
+            solve_options, callback_factory, observable_projections, mode, steady_options)
+    end
     isempty(experiments) && throw(ArgumentError("At least one experiment is required."))
     _validate_crystallisation_solve_options(solve_options)
     prepared = map(experiments) do expt
@@ -352,12 +386,13 @@ function prepare_loss(problem::CrystallisationProblem,
                            saveat, solve_options, callback_factory)
     end
     return _build_loss_setup(problem, experiments, prepared;
-                             observable_order, exclude_initial_concentration)
+                             observable_order, exclude_initial_concentration, observable_projections)
 end
 
 function _build_loss_setup(problem, experiments, prepared;
                            observable_order = nothing,
-                           exclude_initial_concentration::Bool = true)
+                           exclude_initial_concentration::Bool = true,
+                           observable_projections::NamedTuple = (;))
     isempty(experiments) && throw(ArgumentError("At least one experiment is required."))
     schemas = [collect(propertynames(expt.observables)) for expt in experiments]
     heterogeneous = any(Set(schema) != Set(first(schemas)) for schema in schemas)
@@ -369,8 +404,12 @@ function _build_loss_setup(problem, experiments, prepared;
     included = [Dict(name => _included_observation_indices(expt, name, prep.saveat[1];
                         exclude_initial_concentration) for name in propertynames(expt.observables))
                 for (prep, expt) in zip(prepared, experiments)]
+    builtin_names = (:concentration, :d10, :d32, :d43, :d10q, :d50q, :d90q,
+                     :moment2, :volume, propertynames(problem.initial_solvent_state)...)
+    any(projection_name in builtin_names for projection_name in propertynames(observable_projections)) &&
+        throw(ArgumentError("Local projections must not replace built-in solvent, reactor or size observables."))
     return LossSetup(problem, experiments, prepared, names, included, heterogeneous,
-                     !isnothing(observable_order))
+                     !isnothing(observable_order), observable_projections)
 end
 
 """
@@ -386,7 +425,12 @@ function prepare_loss(configured_problems::AbstractVector{<:CrystallisationProbl
                       observable_order = nothing,
                       exclude_initial_concentration::Bool = false,
                       algorithm = nothing, solve_options::NamedTuple = (;),
-                      callback_factory = nothing)
+                      callback_factory = nothing, initial_time::Real = 0.0,
+                      observable_projections::NamedTuple = (;), mode::Symbol = :transient,
+                      steady_options::NamedTuple = (;))
+    mode in (:transient, :steady) || throw(ArgumentError("mode must be :transient or :steady."))
+    mode === :steady && exclude_initial_concentration &&
+        throw(ArgumentError("Steady concentration measurements cannot supply initial conditions."))
     _validate_crystallisation_solve_options(solve_options)
     length(configured_problems) == length(experiments) && !isempty(experiments) ||
         throw(ArgumentError("Supply one configured problem per experiment."))
@@ -399,16 +443,26 @@ function prepare_loss(configured_problems::AbstractVector{<:CrystallisationProbl
             declared == _get_initial_state(configured) || throw(ArgumentError(
                 "Experiment $(expt.exp_id) declares seeds conflicting with its configured problem."))
         end
-        saveat = _loss_saveat(expt, configured.solver)
+        observation_times = _loss_saveat(expt, configured.solver; require_multiple = false)
+        saveat = if mode === :steady
+            [0.0]
+        else
+            isfinite(initial_time) && 0 <= initial_time <= first(observation_times) ||
+                throw(ArgumentError("initial_time must be finite, nonnegative and no later than the observations."))
+            sort!(unique!(vcat(Float64(initial_time), observation_times)))
+        end
         _validate_crystallisation_problem(configured)
         _validate_save_times(saveat)
-        odeproblem, default_algorithm = crystallisation_odeproblem(configured, saveat)
+        integration_times = mode === :steady ?
+            [0.0, Float64(get(steady_options, :relaxation_horizon, 1e6))] : saveat
+        _validate_save_times(integration_times)
+        odeproblem, default_algorithm = crystallisation_odeproblem(configured, integration_times)
         PreparedExperiment(configured, odeproblem,
             algorithm === nothing ? default_algorithm : algorithm, saveat,
-            solve_options, callback_factory)
+            solve_options, callback_factory, mode, steady_options)
     end
     return _build_loss_setup(first(configured_problems), experiments, prepared;
-                             observable_order, exclude_initial_concentration)
+                             observable_order, exclude_initial_concentration, observable_projections)
 end
 
 
@@ -667,10 +721,24 @@ options as `_simulatecrystallisation`.
 """
 function _solve_prepared(prep::PreparedExperiment, params)
     remade = remake(prep.odeproblem; p = _params_to_p(prep.problem, params))
+    if prep.mode === :steady
+        return _solve_steadystate_ode(prep.problem, remade, prep.algorithm;
+            steady_options = prep.steady_options, solve_options = prep.solve_options,
+            callback_factory = prep.callback_factory)
+    end
     sol = _solve_crystallisation_ode(prep.problem, remade, prep.algorithm, prep.saveat;
                                      solve_options = prep.solve_options,
                                      callback_factory = prep.callback_factory)
-    return _wrap_solution(prep.problem, sol)
+    OrdinaryDiffEq.SciMLBase.successful_retcode(sol.retcode) ||
+        return _failed_prepared_simulation(prep, sol, sol.retcode)
+    # This catch surrounds package post-processing only. User kinetic,
+    # callback and observable errors occur outside it and still propagate.
+    try
+        return _wrap_solution(prep.problem, sol)
+    catch reconstruction_error
+        reconstruction_error isa DomainError || rethrow()
+        return _failed_prepared_simulation(prep, sol, reconstruction_error)
+    end
 end
 
 """
@@ -698,14 +766,15 @@ _loss_observable_names(expt::CrystallisationExperiment, ::AbstractSolver) =
 _loss_observable_names(expt::CrystallisationExperiment, solution::AbstractSolution) =
     _loss_observable_names(expt, MoM())
 
-function _loss_saveat(expt::CrystallisationExperiment, solver::AbstractSolver)
+function _loss_saveat(expt::CrystallisationExperiment, solver::AbstractSolver;
+                     require_multiple::Bool = true)
     times = Float64[]
     for name in _loss_observable_names(expt, solver)
         measured = getproperty(expt.observables, name)
         append!(times, Float64.(measured.time))
     end
     saveat = sort!(unique!(times))
-    length(saveat) >= 2 ||
+    (!require_multiple || length(saveat) >= 2) ||
         throw(ArgumentError("An experiment needs at least two distinct observation times."))
     return saveat
 end
@@ -758,6 +827,26 @@ function _simulated_at(solution::AbstractSolution, name::Symbol,
         (target_time .<= solution.time[end])) ||
         throw(ArgumentError("Observation times for :$name lie outside the simulated time span."))
     return [_linear_interpolate(solution.time, simulated, t) for t in target_time]
+end
+
+function _setup_observable_values(setup::LossSetup, solution::AbstractSolution, name::Symbol)
+    hasproperty(setup.observable_projections, name) || return observable_values(solution, name)
+    projected_values = getproperty(setup.observable_projections, name)(solution)
+    projected_values isa AbstractVector && length(projected_values) == length(solution.time) ||
+        throw(ArgumentError("Projection :$name must return a trajectory matching the solution times."))
+    all(projected_value isa Real && isfinite(projected_value) for projected_value in projected_values) ||
+        throw(ArgumentError("Projection :$name must contain finite real values."))
+    return projected_values
+end
+
+function _simulated_at(setup::LossSetup, solution::AbstractSolution, name::Symbol,
+                       target_time::AbstractVector)
+    projected_values = _setup_observable_values(setup, solution, name)
+    projected_values isa AbstractVector ||
+        throw(ArgumentError("Simulated observable :$name must be a trajectory."))
+    all(first(solution.time) <= measured_time <= last(solution.time) for measured_time in target_time) ||
+        throw(ArgumentError("Observation times for :$name lie outside the simulated time span."))
+    return [_linear_interpolate(solution.time, projected_values, measured_time) for measured_time in target_time]
 end
 
 function _included_observation_indices(expt::CrystallisationExperiment, name::Symbol,
@@ -868,7 +957,9 @@ function _loss_objectives(lf::AbstractPELossFunction, setup::LossSetup, params)
             hasproperty(expt.observables, name) || continue
             measured = getproperty(expt.observables, name)
             included_indices = _included_observation_indices(setup, experiment_index, name)
-            predicted = _simulated_at(solution, name, measured.time)
+            predicted = prep.mode === :steady ?
+                fill(only(_setup_observable_values(setup, solution, name)), length(measured.time)) :
+                _simulated_at(setup, solution, name, measured.time)
             for measurement_index in included_indices
                 residual = predicted[measurement_index] - measured.mean[measurement_index]
                 if lf isa logMLE

@@ -21,6 +21,7 @@ size_metrics
 observable_values
 solvent_state
 crystallisation_odeproblem
+crystallisation_solution
 ```
 
 ## Solvent dynamics
