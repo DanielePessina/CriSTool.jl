@@ -13,8 +13,8 @@ Two samplers ship today:
   Sederberg variant with K-group migration and a kernel proposal.
 
 `ABCDE_Routine` and `ABCDE_Turner_Routine` remain as thin
-backward-compat shims over `run_abc` — existing call sites continue to
-work unchanged.
+compatibility shims over `run_abc`. Both accept `target` and the new
+loss-specific `test = :auto` default.
 
 All forms require:
 - measurement sets
@@ -63,7 +63,7 @@ res, meta = run_abc(lossfn, measurements, optimal_params, prior,
                     nparticles = 512,
                     generations = 256,
                     confidenceinterval = 0.95,
-                    test = :f)
+                    test = :auto)
 ```
 
 ## Example: Turner variant via `run_abc`
@@ -91,7 +91,7 @@ res, meta = ABCDE_Routine(lossfn, measurements, optimal_params, prior,
                           nparticles = 512,
                           generations = 256,
                           confidenceinterval = 0.95,
-                          test = :f)
+                          test = :auto)
 ```
 
 ## Adding a new sampler
@@ -111,10 +111,31 @@ res, meta = ABCDE_Routine(lossfn, measurements, optimal_params, prior,
 
 ## Notes
 
-- Use `test = :f` or `test = :wilks` to select the ABCDE threshold.
+- The default `test = :auto` derives an additive Wilks target only for
+  unit-weight `logMLE`: `reference_loss + quantile(Chisq(nparameters), confidenceinterval)/2`.
+  Negative Gaussian NLL values are valid; multiplying them by an F factor is not.
+- `:wilks`, `:chisq`, and `:chisqtest` select the same likelihood-ratio policy.
+  It assumes a regular identifiable likelihood, an interior maximum-likelihood
+  estimate, and sufficient data for the asymptotic approximation. Boundary
+  parameters, non-identifiability, and small samples can invalidate its coverage.
+- MAE, custom discrepancies, and weighted likelihoods require an explicit finite
+  `target` at least as large as the loss at the reference parameters. For example,
+  `run_abc(mae(), setup, optimal_params, prior; target = 0.2)` uses the caller's
+  discrepancy tolerance without claiming confidence coverage.
+- `:f`, `:fstat`, and `:ftest` are rejected for automatic target derivation:
+  neither current loss is a residual-sum-of-squares discrepancy. Explicit `target`
+  overrides derivation.
+- `run_abc(lossfn, setup::LossSetup, optimal_params, prior; ...)` preserves the
+  configured system, experiment preparation, and solve options. Included
+  observation counts follow the loss's selection; excluded initial concentration
+  points and zero-weight observables are not counted. The result metadata records
+  `target_policy` and `included_observations`.
 - Prefer `product_distribution` or
   `create_product_prior`.
 - Use `validation = ...` to run posterior predictive checks on extra data.
+  Supply a prepared `LossSetup` to preserve custom validation solve settings
+  and observation selection, or supply experiments to prepare them with the
+  configured system.
 - Pass `outputdir = ...` to persist the posterior object (`.jld2`) and
   plots. With the default `outputdir = nothing` the routine performs no
   filesystem writes (it never writes into the current working directory).

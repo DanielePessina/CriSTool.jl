@@ -28,6 +28,7 @@ import StaticArrays
     include("test_optimizer_configuration.jl")
     include("test_generalization.jl")
     include("test_loss_accounting.jl")
+    include("test_abc_targets.jl")
     include("test_uncertainty_quantification.jl")
     include("test_autodiff.jl")
     include("test_gradients.jl")
