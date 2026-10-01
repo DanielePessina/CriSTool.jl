@@ -54,6 +54,9 @@ CriSTool.growthrate(::AccountingBrokenGrowth, parameters, configured, state, tim
     explicit_setup = prepare_loss([constant_problem], [both_fields])
     @test loss(mae(), explicit_setup, Float64[]) ≈ 1.5
     @test CriSTool._included_observation_indices(explicit_setup, 1, :concentration) == [1, 2]
+    template_scored_c0_setup = prepare_loss(constant_problem, [both_fields];
+        exclude_initial_concentration = false)
+    @test loss(mae(), template_scored_c0_setup, Float64[]) ≈ 1.5
     different_conditions = CrystallisationProblem(;
         kinetics_nucleationfunction = nucl_empirical_fixed(log10_nucleation_prefactor = -300.0, nucleation_order = 1.0),
         kinetics_growthfunction = growth_empirical_fixed(growth_coefficient = 0.0, growth_order = 1.0),
@@ -75,10 +78,71 @@ CriSTool.growthrate(::AccountingBrokenGrowth, parameters, configured, state, tim
     @test_throws Exception CriSTool.batchLF_procSO(mae(), unknown_setup, zeros(2, 0))
     @test_throws Exception CriSTool.batchLF_procMO(mae(), unknown_setup, zeros(2, 0))
     late_concentration = CrystallisationExperiment(; temperature = 293.15, exp_id = 1,
-        observables = (; concentration = Observable(; time = [1.0, 2.0], mean = [10.0, 11.0]),
-                         pH = ph_data))
-    @test_throws ArgumentError prepare_loss(constant_problem, [late_concentration])
+        observables = (; concentration = Observable(; time = [10.0, 20.0], mean = [12.0, 13.0]),
+                         pH = Observable(; time = [0.0, 20.0], mean = [7.0, 7.0])))
+    for exclude_initial_concentration in (true, false)
+        preparation_error = try
+            prepare_loss(constant_problem, [late_concentration];
+                exclude_initial_concentration)
+            nothing
+        catch caught_error
+            caught_error
+        end
+        @test preparation_error isa ArgumentError
+        @test occursin("configure initial concentration independently",
+                       sprint(showerror, preparation_error))
+    end
+    explicit_late_setup = prepare_loss([constant_problem], [late_concentration])
+    @test initial_concentration(explicit_late_setup.prepared[1].problem) == 10.0
+    @test CriSTool._included_observation_indices(explicit_late_setup, 1, :concentration) == [1, 2]
+    @test loss(mae(), explicit_late_setup, Float64[]) ≈ 2.5
     @test_throws ArgumentError prepare_loss(constant_problem, [both_fields]; observable_order = [:pH])
+end
+
+@testset "Local projection names reserve built-in solver observables" begin
+    projection_experiment = CrystallisationExperiment(; temperature = 293.15, exp_id = 1,
+        observables = (; concentration = Observable(; time = [0.0, 1.0], mean = [10.0, 10.0])))
+    projection_nucleation = nucl_empirical_fixed(log10_nucleation_prefactor = -300.0,
+        nucleation_order = 1.0)
+    projection_growth = growth_empirical_fixed([0.0, 1.0])
+    direct_quadrature_state = [1e12, 2e12, 3e12, 8e-6, 10e-6, 12e-6, 10.0]
+    projection_cases = (
+        (FiniteVol(meshsize = 8, lmax = 50e-6), nothing,
+         (:numberdensity, :voldensity, :size_boundary_lower_solid_mass_flow,
+          :size_boundary_upper_solid_mass_flow)),
+        (QMOM(nquadrature = 3), nothing,
+         (:moments, :quadrature_nodes, :quadrature_weights)),
+        (DQMOM(nquadrature = 3), direct_quadrature_state,
+         (:moments, :weights, :nodes)))
+
+    for (projection_solver, projection_initial_state, reserved_names) in projection_cases
+        solver_problem = CrystallisationProblem(;
+            kinetics_nucleationfunction = projection_nucleation,
+            kinetics_growthfunction = projection_growth,
+            parameterset_nucleation = Float64[], parameterset_growth = Float64[],
+            initial_concentration = 10.0,
+            initial_state = projection_initial_state,
+            solver = projection_solver)
+        for reserved_name in reserved_names
+            collision_projection = NamedTuple{(reserved_name,)}(
+                (physical_solution -> physical_solution.concentration,))
+            @test_throws ArgumentError prepare_loss([solver_problem], [projection_experiment];
+                observable_projections = collision_projection)
+        end
+    end
+
+    concentration_only_problem = CrystallisationProblem(;
+        kinetics_nucleationfunction = projection_nucleation,
+        kinetics_growthfunction = projection_growth,
+        parameterset_nucleation = Float64[], parameterset_growth = Float64[],
+        initial_concentration = 10.0, solver = MoM())
+    extra_solvent_problem = CriSTool._copy_crystallisation_problem(
+        concentration_only_problem;
+        initial_solvent_state = (; concentration = 10.0, pH = 7.0))
+    @test_throws ArgumentError prepare_loss(
+        CrystallisationProblem[concentration_only_problem, extra_solvent_problem],
+        [projection_experiment, projection_experiment];
+        observable_projections = (; pH = physical_solution -> physical_solution.concentration))
 end
 
 @testset "User kinetic exceptions propagate" begin

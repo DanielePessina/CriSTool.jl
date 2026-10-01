@@ -379,8 +379,14 @@ function prepare_loss(problem::CrystallisationProblem,
     isempty(experiments) && throw(ArgumentError("At least one experiment is required."))
     _validate_crystallisation_solve_options(solve_options)
     prepared = map(experiments) do expt
-        per_exp_problem = _experiment_problem(problem, expt)
         saveat = _loss_saveat(expt, problem.solver)
+        concentration_start = Float64(first(expt.observables.concentration.time))
+        concentration_start == first(saveat) || throw(ArgumentError(
+            "Template-based transient preparation uses the first concentration measurement as C0, " *
+            "so it must be at the simulation start. For later concentration measurements, " *
+            "configure initial concentration independently and call " *
+            "prepare_loss(configured_problems, experiments)."))
+        per_exp_problem = _experiment_problem(problem, expt)
         odeprob, default_algorithm = crystallisation_odeproblem(per_exp_problem,
                                                         saveat)
         PreparedExperiment(per_exp_problem, odeprob,
@@ -389,6 +395,28 @@ function prepare_loss(problem::CrystallisationProblem,
     end
     return _build_loss_setup(problem, experiments, prepared;
                              observable_order, exclude_initial_concentration, observable_projections)
+end
+
+const _BUILTIN_LOSS_PROJECTION_NAMES = (
+    :concentration, :d10, :d32, :d43, :d10q, :d50q, :d90q, :moment2,
+    :numberdensity, :voldensity, :moments, :quadrature_nodes,
+    :quadrature_weights, :weights, :nodes, :volume,
+    :size_boundary_lower_solid_mass_flow, :size_boundary_upper_solid_mass_flow)
+
+function _validate_loss_projection_names(problem, prepared, observable_projections)
+    isempty(observable_projections) && return nothing
+    builtin_names = Set(_BUILTIN_LOSS_PROJECTION_NAMES)
+    union!(builtin_names, propertynames(problem.initial_solvent_state))
+    for prepared_experiment in prepared
+        union!(builtin_names,
+               propertynames(prepared_experiment.problem.initial_solvent_state))
+    end
+    collisions = sort!(collect(intersect(Set(propertynames(observable_projections)),
+                                         builtin_names)))
+    isempty(collisions) && return nothing
+    collision_names = join((":$name" for name in collisions), ", ")
+    throw(ArgumentError("Local projections must not replace built-in or configured " *
+                        "solvent observables: $collision_names."))
 end
 
 function _build_loss_setup(problem, experiments, prepared;
@@ -406,10 +434,7 @@ function _build_loss_setup(problem, experiments, prepared;
     included = [Dict(name => _included_observation_indices(expt, name, prep.saveat[1];
                         exclude_initial_concentration) for name in propertynames(expt.observables))
                 for (prep, expt) in zip(prepared, experiments)]
-    builtin_names = (:concentration, :d10, :d32, :d43, :d10q, :d50q, :d90q,
-                     :moment2, :volume, propertynames(problem.initial_solvent_state)...)
-    any(projection_name in builtin_names for projection_name in propertynames(observable_projections)) &&
-        throw(ArgumentError("Local projections must not replace built-in solvent, reactor or size observables."))
+    _validate_loss_projection_names(problem, prepared, observable_projections)
     return LossSetup(problem, experiments, prepared, names, included, heterogeneous,
                      !isnothing(observable_order), observable_projections)
 end
