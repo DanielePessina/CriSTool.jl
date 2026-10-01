@@ -94,6 +94,89 @@ growthrate_at_length(gf::AbstractFPLengthDissolutionFunction,
         zero(supersaturation_ratio)
 end
 
+@inline function _length_dissolution_context(
+    dissolutionfunction::growth_dissolution_length,
+    parameters,
+    problem::CrystallisationProblem,
+    state,
+    time)
+    named_parameters = _named_params(dissolutionfunction, parameters)
+    supersaturation_ratio = supersaturation(problem, state, time)
+    driving_force = _dissolution_drive(supersaturation_ratio)
+    return named_parameters, driving_force
+end
+
+@inline function _length_dissolution_prefactor(named_parameters,
+                                               driving_force,
+                                               problem::CrystallisationProblem,
+                                               time)
+    temperature_value = temperature(problem.temp_profile, time)
+    return -named_parameters.dissolution_coefficient *
+           exp(-named_parameters.activation_energy /
+               (problem.R_gas_constant * temperature_value)) *
+           driving_force^named_parameters.dissolution_order
+end
+
+@inline function _length_dissolution_size_factor_base(
+    dissolutionfunction::growth_dissolution_length,
+    named_parameters,
+    crystal_length::Real)
+    size_factor_base = one(crystal_length) +
+                       named_parameters.size_dependence_coefficient *
+                       (crystal_length / dissolutionfunction.Lref)
+    size_factor_base > zero(size_factor_base) ||
+        throw(DomainError(size_factor_base,
+                          "growth_dissolution_length size factor must be positive."))
+    return size_factor_base
+end
+
+@inline function _length_dissolution_rate_from_context(
+    dissolutionfunction::growth_dissolution_length,
+    named_parameters,
+    dissolution_prefactor,
+    crystal_length::Real)
+    size_factor_base = _length_dissolution_size_factor_base(
+        dissolutionfunction, named_parameters, crystal_length)
+    return dissolution_prefactor *
+           size_factor_base^named_parameters.size_dependence_exponent
+end
+
+function _add_length_dissolution_rates!(destination::AbstractVector,
+                                        dissolutionfunction::growth_dissolution_length,
+                                        parameters,
+                                        problem::CrystallisationProblem,
+                                        state,
+                                        time,
+                                        mesh::AbstractVector)
+    named_parameters, driving_force = _length_dissolution_context(
+        dissolutionfunction, parameters, problem, state, time)
+    driving_force == zero(driving_force) && return destination
+
+    dissolution_prefactor = _length_dissolution_prefactor(
+        named_parameters, driving_force, problem, time)
+    @inbounds for mesh_index in eachindex(destination, mesh)
+        destination[mesh_index] += _length_dissolution_rate_from_context(
+            dissolutionfunction, named_parameters, dissolution_prefactor,
+            mesh[mesh_index])
+    end
+    return destination
+end
+
+function _add_length_dissolution_rates!(destination::AbstractVector,
+                                        dissolutionfunction::AbstractFPLengthDissolutionFunction,
+                                        parameters,
+                                        problem::CrystallisationProblem,
+                                        state,
+                                        time,
+                                        mesh::AbstractVector)
+    @inbounds for mesh_index in eachindex(destination, mesh)
+        destination[mesh_index] += dissolutionrate_at_length(
+            dissolutionfunction, parameters, problem, state, time,
+            mesh[mesh_index])
+    end
+    return destination
+end
+
 @inline function _dissolution_rate(dissolution_coefficient, activation_energy,
                                    dissolution_order, supersaturation_ratio,
                                    temperature, gas_constant)
@@ -254,11 +337,9 @@ function net_growth_rate!(destination::AbstractVector,
     end
 
     if dissolutionfunction isa AbstractFPLengthDissolutionFunction
-        @inbounds for mesh_index in eachindex(destination, mesh)
-            destination[mesh_index] += dissolutionrate_at_length(
-                dissolutionfunction, dissolution_parameters, problem, state,
-                time, mesh[mesh_index])
-        end
+        _add_length_dissolution_rates!(destination, dissolutionfunction,
+                                       dissolution_parameters, problem, state,
+                                       time, mesh)
     else
         dissolution_value = dissolutionrate(dissolutionfunction,
                                             dissolution_parameters, problem,
@@ -406,6 +487,19 @@ Evaluate the empirical growth law with the length-dependent multiplier
 The returned rate is in metres per second.  The multiplier base must remain
 positive so non-integer exponents remain real-valued.
 """
+@inline function _growth_empirical_length_size_factor_base(
+    growthfunction::growth_empirical_length,
+    named_parameters,
+    crystal_length::Real)
+    size_factor_base = one(crystal_length) +
+                       named_parameters.size_dependence_coefficient *
+                       (crystal_length / growthfunction.Lref)
+    size_factor_base > zero(size_factor_base) ||
+        throw(DomainError(size_factor_base,
+                          "growth_empirical_length size factor must be positive."))
+    return size_factor_base
+end
+
 @inline function growthrate_at_length(gf::growth_empirical_length,
                                       parameters,
                                       prob::CrystallisationProblem,
@@ -421,12 +515,8 @@ positive so non-integer exponents remain real-valued.
                        CRISTOOL_DISSOLUTION_EQUILIBRIUM_TOLERANCE
     supersaturation_ratio > growth_threshold || return zero(zero_type)
 
-    size_factor_base = one(crystal_length) +
-                       named_parameters.size_dependence_coefficient *
-                       (crystal_length / gf.Lref)
-    size_factor_base > zero(size_factor_base) ||
-        throw(DomainError(size_factor_base,
-                          "growth_empirical_length size factor must be positive."))
+    size_factor_base = _growth_empirical_length_size_factor_base(
+        gf, named_parameters, crystal_length)
     return named_parameters.growth_coefficient *
            (supersaturation_ratio - one(supersaturation_ratio)) ^
            named_parameters.growth_order *
@@ -443,9 +533,31 @@ function growthrate!(destination::AbstractVector,
                      mesh::AbstractVector)
     length(destination) == length(mesh) ||
         throw(ArgumentError("growthrate! destination and mesh must have the same length."))
+    isempty(destination) && return destination
+
+    named_parameters = _named_params(gf, parameters)
+    supersaturation_ratio = supersaturation(prob, state, time)
+    growth_threshold = one(supersaturation_ratio) +
+                       CRISTOOL_DISSOLUTION_EQUILIBRIUM_TOLERANCE
+    if !(supersaturation_ratio > growth_threshold)
+        @inbounds for mesh_index in eachindex(destination, mesh)
+            zero_type = promote_type(typeof(supersaturation_ratio),
+                                     eltype(parameters),
+                                     typeof(mesh[mesh_index]))
+            destination[mesh_index] = zero(zero_type)
+        end
+        return destination
+    end
+
+    growth_prefactor = named_parameters.growth_coefficient *
+                       (supersaturation_ratio - one(supersaturation_ratio)) ^
+                       named_parameters.growth_order
     @inbounds for mesh_index in eachindex(destination, mesh)
-        destination[mesh_index] = growthrate_at_length(
-            gf, parameters, prob, state, time, mesh[mesh_index])
+        size_factor_base = _growth_empirical_length_size_factor_base(
+            gf, named_parameters, mesh[mesh_index])
+        destination[mesh_index] = growth_prefactor *
+                                  size_factor_base ^
+                                  named_parameters.size_dependence_exponent
     end
     return destination
 end
@@ -655,26 +767,18 @@ function dissolutionrate!(destination::AbstractVector,
     length(destination) == length(mesh) ||
         throw(ArgumentError("growthrate! destination and mesh must have the same length."))
 
-    pn = _named_params(gf, parameters)
-    supersaturation_ratio = supersaturation(prob, state, t)
-    driving_force = _dissolution_drive(supersaturation_ratio)
+    named_parameters, driving_force = _length_dissolution_context(
+        gf, parameters, prob, state, t)
     if driving_force == zero(driving_force)
         fill!(destination, zero(driving_force))
         return destination
     end
 
-    temp = temperature(prob.temp_profile, t)
-    dissolution_prefactor = -pn.dissolution_coefficient *
-                            exp(-pn.activation_energy / (prob.R_gas_constant * temp)) *
-                            driving_force^pn.dissolution_order
+    dissolution_prefactor = _length_dissolution_prefactor(
+        named_parameters, driving_force, prob, t)
     @inbounds for index in eachindex(destination, mesh)
-        size_factor_base = one(mesh[index]) +
-                           pn.size_dependence_coefficient * (mesh[index] / gf.Lref)
-        size_factor_base > zero(size_factor_base) ||
-            throw(DomainError(size_factor_base,
-                              "growth_dissolution_length size factor must be positive."))
-        destination[index] = dissolution_prefactor *
-                             size_factor_base^pn.size_dependence_exponent
+        destination[index] = _length_dissolution_rate_from_context(
+            gf, named_parameters, dissolution_prefactor, mesh[index])
     end
     return destination
 end
@@ -702,21 +806,14 @@ function dissolutionrate_at_length(gf::growth_dissolution_length,
                                    state,
                                    t,
                                    crystal_length::Real)
-    pn = _named_params(gf, parameters)
-    supersaturation_ratio = supersaturation(prob, state, t)
-    driving_force = _dissolution_drive(supersaturation_ratio)
+    named_parameters, driving_force = _length_dissolution_context(
+        gf, parameters, prob, state, t)
     driving_force == zero(driving_force) && return zero(driving_force)
 
-    temp = temperature(prob.temp_profile, t)
-    size_factor_base = one(crystal_length) +
-                       pn.size_dependence_coefficient * (crystal_length / gf.Lref)
-    size_factor_base > zero(size_factor_base) ||
-        throw(DomainError(size_factor_base,
-                          "growth_dissolution_length size factor must be positive."))
-    return -pn.dissolution_coefficient *
-           exp(-pn.activation_energy / (prob.R_gas_constant * temp)) *
-           driving_force^pn.dissolution_order *
-           size_factor_base^pn.size_dependence_exponent
+    dissolution_prefactor = _length_dissolution_prefactor(
+        named_parameters, driving_force, prob, t)
+    return _length_dissolution_rate_from_context(
+        gf, named_parameters, dissolution_prefactor, crystal_length)
 end
 
 growthrate_at_length(gf::growth_dissolution_length,
