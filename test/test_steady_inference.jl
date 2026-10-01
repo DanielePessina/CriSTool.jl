@@ -42,3 +42,37 @@
     @test !exhausted_predictions[1].diagnostics[1].convergence.converged
     @test_throws ArgumentError prediction_summary(exhausted_predictions[1], :d43)
 end
+
+@testset "Steady reconstruction failures remain candidate failures" begin
+    lower_boundary_problem = CriSTool._copy_crystallisation_problem(
+        steady_state_test_problem(nucleation_rate = 0.0, growth_rate = -2e-7);
+        solver = DQMOM(nquadrature = 2, coordinate_scale = 1e-6,
+            weight_scale = 1e12, minimum_size = 1e-6, reltol = 1e-10, abstol = 1e-12),
+        initial_state = [1e12, 1e12, 2e-6, 3e-6, 8.0])
+    lower_boundary_experiment = CrystallisationExperiment(;
+        observables = (; concentration = Observable(time = [6.0], mean = [2.0], variance = 0.01)),
+        temperature = 298.15, exp_id = 802)
+    lower_boundary_setup = prepare_loss([lower_boundary_problem], [lower_boundary_experiment];
+        mode = :steady, steady_options = (; relaxation_horizon = 6.0, autonomous = true))
+    lower_boundary_parameters = [0.0, -2e-7]
+    # Equal constant dissolution moves the two nodes from [2,3] to [0.8,1.8]
+    # micrometres in six seconds. The first is outside the declared support;
+    # the ODE is finite, but a physical DQMOM result cannot be reconstructed.
+    @test_throws DomainError solve_steadystate(lower_boundary_problem;
+        relaxation_horizon = 6.0, autonomous = true)
+    @test loss(mae(), lower_boundary_setup, lower_boundary_parameters) == 1_000_000.0
+    failed_candidate = CriSTool._solve_prepared(
+        only(lower_boundary_setup.prepared), lower_boundary_parameters)
+    @test !failed_candidate.success
+    @test failed_candidate.reason isa DomainError
+    @test failed_candidate.reason.val ≈ 0.8e-6 atol = 1e-15
+    failed_prediction = only(run_ensemble(reshape(lower_boundary_parameters, 2, 1),
+        lower_boundary_setup; verbosity = 0))
+    @test failed_prediction.success == [false]
+    @test failed_prediction.diagnostics[1].reason isa DomainError
+
+    callback_error_setup = prepare_loss([steady_state_test_problem()], [lower_boundary_experiment];
+        mode = :steady, steady_options = (; relaxation_horizon = 6.0, autonomous = true),
+        callback_factory = callback_problem -> throw(DomainError(0.0, "user callback failure")))
+    @test_throws DomainError loss(mae(), callback_error_setup, [0.0, 0.0])
+end

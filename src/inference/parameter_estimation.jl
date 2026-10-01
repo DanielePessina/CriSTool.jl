@@ -736,7 +736,9 @@ function _solve_prepared(prep::PreparedExperiment, params)
     if prep.mode === :steady
         return _solve_steadystate_ode(prep.problem, remade, prep.algorithm;
             steady_options = prep.steady_options, solve_options = prep.solve_options,
-            callback_factory = prep.callback_factory)
+            callback_factory = prep.callback_factory,
+            reconstruction_failure_handler = (raw_solution, reconstruction_error) ->
+                _failed_prepared_simulation(prep, raw_solution, reconstruction_error))
     end
     sol = _solve_crystallisation_ode(prep.problem, remade, prep.algorithm, prep.saveat;
                                      solve_options = prep.solve_options,

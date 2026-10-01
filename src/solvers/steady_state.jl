@@ -327,7 +327,8 @@ function _solve_steadystate_ode(problem::CrystallisationProblem, ode_problem,
                                 algorithm;
                                 steady_options::NamedTuple = (;),
                                 solve_options::NamedTuple = (;),
-                                callback_factory = nothing)
+                                callback_factory = nothing,
+                                reconstruction_failure_handler = nothing)
     allowed_options = (:relaxation_horizon, :minimum_relaxation,
                        :residual_reltol, :residual_abstol, :residual_scales,
                        :autonomous, :balance_reltol)
@@ -405,7 +406,15 @@ function _solve_steadystate_ode(problem::CrystallisationProblem, ode_problem,
 
     applicable(_wrap_solution, problem, raw_solution) ||
         throw(ArgumentError("No physical result wrapper is available for $(typeof(problem.solver)) with the selected kinetics."))
-    physical_result = _wrap_solution(problem, raw_solution)
+    physical_result = try
+        _wrap_solution(problem, raw_solution)
+    catch reconstruction_error
+        # Classify package reconstruction failures without catching errors from
+        # the user's RHS or callbacks, which ran before this wrapper boundary.
+        reconstruction_error isa DomainError || rethrow()
+        reconstruction_failure_handler === nothing && rethrow()
+        return reconstruction_failure_handler(raw_solution, reconstruction_error)
+    end
     physical_valid, physical_status = _steady_physical_constraints(
         problem, raw_state, physical_result)
     hydraulics, product, balance = _steady_product_diagnostics(
