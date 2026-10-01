@@ -7,6 +7,10 @@ same names as a transient solution while each trajectory contains one value.
 is retained in diagnostics. `residual` is the native ODE right-hand side;
 `scaled_residual` multiplies each component by the residence time and divides
 by its characteristic state scale.
+For discretized solvers, `diagnostics.population_density_diagnostics` records
+the raw density minimum, peak scale, negative-cell count, and machine-roundoff
+tolerance. Accepted undershoots remain in the raw state and are labeled in
+`diagnostics.physical_state_status`.
 """
 @concrete struct CrystallisationSteadyStateSolution <: AbstractSolution
     physical_result
@@ -235,14 +239,38 @@ function _steady_feed_moment3(problem, feed_population)
     return feed_population[4]
 end
 
+function _steady_population_density_diagnostics(problem, raw_state)
+    problem.solver isa AbstractDiscretisedSolver || return nothing
+
+    population_density = @view raw_state[_population_state_range(problem)]
+    minimum_density = minimum(population_density)
+    density_scale = maximum(abs, population_density)
+    # Density can span many orders of magnitude at the finite-domain tail. Allow
+    # only 128 machine epsilons relative to its peak; preserve the raw state and
+    # report any accepted undershoot instead of clipping it or using solve tol.
+    scalar_type = eltype(raw_state) <: AbstractFloat ? eltype(raw_state) : Float64
+    roundoff_tolerance = 128 * eps(scalar_type) *
+                         max(density_scale, floatmin(scalar_type))
+    negative_count = count(value -> value < zero(value), population_density)
+
+    return (; minimum = minimum_density,
+              scale = density_scale,
+              roundoff_tolerance,
+              negative_count)
+end
+
 function _steady_physical_constraints(problem, raw_state, physical_result)
     all(isfinite, raw_state) || return false, :nonfinite_state
     concentration = raw_state[_solvent_state_index(problem, :concentration)]
     concentration >= 0.0 || return false, :negative_concentration
 
     if problem.solver isa AbstractDiscretisedSolver
-        all(value -> value >= 0.0, @view raw_state[_population_state_range(problem)]) ||
-            return false, :negative_number_density
+        density_diagnostics = _steady_population_density_diagnostics(problem, raw_state)
+        if density_diagnostics.negative_count > 0
+            density_diagnostics.minimum >= -density_diagnostics.roundoff_tolerance ||
+                return false, :negative_number_density
+            return true, :roundoff_negative_number_density
+        end
     elseif problem.solver isa DQMOM
         all(value -> isfinite(value) && value > 0.0, physical_result.weights) ||
             return false, :nonpositive_quadrature_weight
@@ -421,11 +449,14 @@ function _solve_steadystate_ode(problem::CrystallisationProblem, ode_problem,
         problem, raw_state, physical_result, final_time)
     balance_valid = balance.relative_error <= balance_reltol
     successful = solver_success && converged && physical_valid && balance_valid
+    population_density_diagnostics = _steady_population_density_diagnostics(problem,
+                                                                             raw_state)
     diagnostics = (; converged, residual_norm, scaled_residual_norm, residual_limit,
                     residual_scales = reference_scales,
                     population_scaling = shared_population_scale ? :density_peak : :per_component,
                     physical_state_valid = physical_valid,
                     physical_state_status = physical_status,
+                    population_density_diagnostics,
                     total_api_balance = balance,
                     balance_reltol,
                     balance_valid,
