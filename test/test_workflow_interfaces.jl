@@ -163,9 +163,17 @@ end
         reshape(frozen_concentration, 1, :) atol = 1e-8
     mass_oracle_model = nuts_model(mass_oracle_setup, [Uniform(0.5, 1.5)]; lossfunction = logMLE())
     @test mass_oracle_model isa CriSTool.Turing.DynamicPPL.Model
-    # Uniform(0.5,1.5) contributes log density zero. Three exact Gaussian
-    # measurements with variance 1e-4 have the frozen log joint below.
+    # Uniform(0.5,1.5) contributes log density zero. Conditioning includes
+    # that prior term and fixing omits it, so both retain this frozen likelihood.
     @test CriSTool.Turing.DynamicPPL.logjoint(mass_oracle_model, (; θ = [1.0])) ≈
+        11.058694958350254 atol = 1e-8
+    conditioned_mass_model = CriSTool.Turing.DynamicPPL.condition(
+        mass_oracle_model; θ = [1.0])
+    fixed_mass_model = CriSTool.Turing.DynamicPPL.fix(
+        mass_oracle_model; θ = [1.0])
+    @test CriSTool.Turing.DynamicPPL.logjoint(conditioned_mass_model, NamedTuple()) ≈
+        11.058694958350254 atol = 1e-8
+    @test CriSTool.Turing.DynamicPPL.logjoint(fixed_mass_model, NamedTuple()) ≈
         11.058694958350254 atol = 1e-8
     @test_throws ArgumentError nuts_model(mass_oracle_setup, [Uniform(0.5, 1.5), Uniform(0.5, 1.5)])
     gradient_fit = PE_Routine_Optimisation(logMLE(), mass_oracle_setup, [0.5], [1.5];
