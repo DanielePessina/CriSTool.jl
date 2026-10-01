@@ -42,10 +42,8 @@ operation_flows
 
 The reactor volume is a named observable for flow operations:
 `observable_values(solution, :volume)`. The steady-state runner for autonomous
-fixed-flow MSMPR (`solve_steadystate(problem; ...)`) and its scaled residual /
-flow-and-conservation diagnostics result are part of the release backend and
-are documented in the [Reactor operations and steady state](../operations.md)
-guide.
+fixed-flow MSMPR is `solve_steadystate` (see the *Steady MSMPR solves* section
+below and the [Reactor operations and steady state](../operations.md) guide).
 
 ## Solvent dynamics
 
