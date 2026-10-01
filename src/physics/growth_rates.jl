@@ -477,16 +477,6 @@ function growthrate(gf::growth_empirical, parameters::T, prob::CrystallisationPr
     return S > 1.001 ? p.growth_coefficient * (S - 1)^p.growth_order : 0.0
 end
 
-"""
-    growthrate_at_length(gf::growth_empirical_length, parameters,
-                         problem, state, time, crystal_length)
-
-Evaluate the empirical growth law with the length-dependent multiplier
-
-`(1 + size_dependence_coefficient * crystal_length / Lref)^size_dependence_exponent`.
-The returned rate is in metres per second.  The multiplier base must remain
-positive so non-integer exponents remain real-valued.
-"""
 @inline function _growth_empirical_length_size_factor_base(
     growthfunction::growth_empirical_length,
     named_parameters,
@@ -500,6 +490,16 @@ positive so non-integer exponents remain real-valued.
     return size_factor_base
 end
 
+"""
+    growthrate_at_length(gf::growth_empirical_length, parameters,
+                         problem, state, time, crystal_length)
+
+Evaluate the empirical growth law with the length-dependent multiplier
+
+`(1 + size_dependence_coefficient * crystal_length / Lref)^size_dependence_exponent`.
+The returned rate is in metres per second.  The multiplier base must remain
+positive so non-integer exponents remain real-valued.
+"""
 @inline function growthrate_at_length(gf::growth_empirical_length,
                                       parameters,
                                       prob::CrystallisationProblem,
