@@ -618,10 +618,6 @@ function _wrap_solution(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF
                                                                             AbstractVector{<:Real},
                                                                             TP <:
                                                                             AbstractTemperature}
-    # Pre-allocate caches using DiffCache for ForwardDiff compatibility
-    _flux_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 1))
-    _ndens_pad_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 4))
-
     nd_matrix = sol[_population_state_range(CryProblem), :]
     vol_weighted_dens = volumeweighteddensity(CryProblem.solver.cell_centre, nd_matrix,
                                               CryProblem.volume_shape_factor)
@@ -673,10 +669,6 @@ function _simulatecrystallisation(CryProblem::CrystallisationProblem{NuclF, GrF,
                                                                             AbstractVector{<:Real},
                                                                             TP <:
                                                                             AbstractTemperature}
-    # Pre-allocate caches using DiffCache for ForwardDiff compatibility
-    _flux_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 1))
-    _ndens_pad_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 4))
-
     ODEprob, tstep_solver = crystallisation_odeproblem(CryProblem, saveat)
     ODEsol = _solve_crystallisation_ode(CryProblem, ODEprob,
                                           algorithm === nothing ? tstep_solver : algorithm,
