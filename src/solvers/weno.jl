@@ -343,7 +343,7 @@ end
     return flux
 end
 
-"""Boundary solid-mass flow samples using the exact WENO face fluxes.
+"""Boundary solid-mass flow samples using the exact WENO boundary fluxes.
 
 The signed lower and upper flows are positive out of the size domain and use
 kg/s. Batch operation volume is the explicit reactor volume; the default
@@ -354,8 +354,6 @@ function _mesh_boundary_flow_state(solver::WENO, problem, ode_solution)
     sample_state = first(ode_solution.u)
     lower_mass_flow = Vector{typeof(zero(eltype(sample_state)))}(undef, length(saved_times))
     upper_mass_flow = similar(lower_mass_flow)
-    flux_cache = similar(sample_state, solver.meshsize + 1)
-    ndens_pad_cache = similar(sample_state, solver.meshsize + 4)
     growth_rate_cache = similar(sample_state, solver.meshsize)
     parameters = (; nucl = problem.parameterset_nucleation,
                   gr = problem.parameterset_growth,
@@ -380,34 +378,59 @@ function _mesh_boundary_flow_state(solver::WENO, problem, ode_solution)
                 problem.kinetics_dissolutionfunction, parameters.diss,
                 problem, numerical_state, simulation_time)
             if scalar_growth_rate > zero(scalar_growth_rate)
-                _fill_positive_weno_flux!(flux_cache, numberdensity,
-                                          scalar_growth_rate,
-                                          nucleation_rate_value,
-                                          ndens_pad_cache)
+                # Only the boundary values are reported. The positive scalar
+                # path's lower flux is the nucleation inflow, and its upper
+                # flux uses the same second-order outflow trace as the RHS.
+                lower_boundary_flux = nucleation_rate_value
+                upwind_state = numberdensity[end]
+                high_order_state = upwind_state +
+                                   0.5 * (upwind_state - numberdensity[end - 1])
+                upper_boundary_flux = scalar_growth_rate *
+                    _weno_nonnegative_state(high_order_state, upwind_state)
             elseif scalar_growth_rate < zero(scalar_growth_rate)
-                _fill_signed_weno_flux!(flux_cache, numberdensity,
-                                        scalar_growth_rate,
-                                        nucleation_rate_value,
-                                        ndens_pad_cache)
+                # Signed scalar dissolution exits through lmin and has no
+                # incoming population at lmax.
+                lower_boundary_flux = scalar_growth_rate * first(numberdensity)
+                upper_boundary_flux = zero(scalar_growth_rate)
             else
-                fill!(flux_cache, zero(scalar_growth_rate))
+                lower_boundary_flux = zero(scalar_growth_rate)
+                upper_boundary_flux = zero(scalar_growth_rate)
             end
         else
+            # Preserve the model's full mesh, state, and time context. Custom
+            # length-dependent laws need not support pointwise endpoint calls.
             net_growth_rate!(growth_rate_cache,
                              problem.kinetics_growthfunction, parameters.gr,
                              problem.kinetics_dissolutionfunction, parameters.diss,
                              problem, numerical_state, simulation_time,
                              solver.cell_centre)
-            _fill_signed_weno_flux!(flux_cache, numberdensity,
-                                    growth_rate_cache,
-                                    nucleation_rate_value,
-                                    ndens_pad_cache)
+
+            lower_growth_rate = first(growth_rate_cache)
+            lower_boundary_flux = lower_growth_rate > zero(lower_growth_rate) ?
+                nucleation_rate_value :
+                lower_growth_rate < zero(lower_growth_rate) ?
+                lower_growth_rate * first(numberdensity) : zero(lower_growth_rate)
+
+            upper_growth_rate = last(growth_rate_cache)
+            if upper_growth_rate > zero(upper_growth_rate)
+                upwind_state = last(numberdensity)
+                high_order_state = length(numberdensity) == 1 ? upwind_state :
+                    upwind_state + 0.5 * (upwind_state - numberdensity[end - 1])
+                upper_boundary_flux = upper_growth_rate *
+                    _weno_nonnegative_state(high_order_state, upwind_state)
+            else
+                upper_boundary_flux = zero(upper_growth_rate)
+            end
         end
 
         reactor_volume_value = _mesh_reactor_volume(problem, numerical_state)
-        lower_mass_flow[time_index] = -flux_cache[1] * lower_length^3 *
+        # The old full flux buffer converted each face value to the solution
+        # element type before applying the physical mass-flow scaling.
+        lower_boundary_flux = convert(eltype(sample_state), lower_boundary_flux)
+        upper_boundary_flux = convert(eltype(sample_state), upper_boundary_flux)
+        lower_mass_flow[time_index] = -lower_boundary_flux * lower_length^3 *
                                       mass_scale * reactor_volume_value
-        upper_mass_flow[time_index] = flux_cache[end] * upper_length^3 *
+        upper_mass_flow[time_index] = upper_boundary_flux * upper_length^3 *
                                       mass_scale * reactor_volume_value
     end
 

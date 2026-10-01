@@ -159,17 +159,49 @@ function _safe_moment_size_ratio(numerator, denominator, particle_count)
 end
 
 function _momentsizes(mesh::AbstractVector, numberdensity::AbstractMatrix)
-    mu0 = momentcalculator(mesh, numberdensity, 0)
-    mu1 = momentcalculator(mesh, numberdensity, 1)
-    moment2 = momentcalculator(mesh, numberdensity, 2)
-    mu3 = momentcalculator(mesh, numberdensity, 3)
-    mu4 = momentcalculator(mesh, numberdensity, 4)
-    d10 = [_safe_moment_size_ratio(mu1[index], mu0[index], mu0[index])
-           for index in eachindex(mu0)]
-    d32 = [_safe_moment_size_ratio(mu3[index], moment2[index], mu0[index])
-           for index in eachindex(mu0)]
-    d43 = [_safe_moment_size_ratio(mu4[index], mu3[index], mu0[index])
-           for index in eachindex(mu0)]
+    step_size = Base.step(mesh)
+    n_columns = size(numberdensity, 2)
+    d10 = Vector{eltype(numberdensity)}(undef, n_columns)
+    d32 = similar(d10)
+    d43 = similar(d10)
+    moment2 = similar(d10)
+
+    # The mesh is shared by every saved time.  Hoist its powers once, then
+    # traverse each contiguous density column once to accumulate μ₀…μ₄.
+    mesh_squared = Vector{eltype(mesh)}(undef, length(mesh))
+    mesh_cubed = similar(mesh_squared)
+    mesh_fourth = similar(mesh_squared)
+    @inbounds for (mesh_slot, mesh_index) in enumerate(eachindex(mesh))
+        mesh_value = mesh[mesh_index]
+        mesh_squared[mesh_slot] = mesh_value^2
+        mesh_cubed[mesh_slot] = mesh_value^3
+        mesh_fourth[mesh_slot] = mesh_value^4
+    end
+
+    density_type = eltype(numberdensity)
+    @inbounds for column_index in 1:n_columns
+        mu0 = zero(density_type)
+        mu1 = zero(density_type)
+        mu2 = zero(density_type)
+        mu3 = zero(density_type)
+        mu4 = zero(density_type)
+        mesh_slot = 1
+        for mesh_index in eachindex(mesh)
+            weighted_density = step_size * numberdensity[mesh_index, column_index]
+            mesh_value = mesh[mesh_index]
+            mu0 += weighted_density
+            mu1 += weighted_density * mesh_value
+            mu2 += weighted_density * mesh_squared[mesh_slot]
+            mu3 += weighted_density * mesh_cubed[mesh_slot]
+            mu4 += weighted_density * mesh_fourth[mesh_slot]
+            mesh_slot += 1
+        end
+
+        moment2[column_index] = mu2
+        d10[column_index] = _safe_moment_size_ratio(mu1, mu0, mu0)
+        d32[column_index] = _safe_moment_size_ratio(mu3, mu2, mu0)
+        d43[column_index] = _safe_moment_size_ratio(mu4, mu3, mu0)
+    end
     return (; d10, d32, d43, moment2)
 end
 
