@@ -11,6 +11,9 @@
   parameter estimation, ABC, NUTS/MCMC and posterior prediction.
 - Named observables and weights, pooled objectives across irregular experiment
   subsets, local observable projections and retained failed-sample diagnostics.
+- Convenience preparation rejects late concentration samples used as initial
+  conditions; projections cannot shadow built-in outputs or configured solvent
+  fields from any experiment.
 - Preserved initial populations, independent initial concentration, temperature
   profiles and reactor configuration during prepared simulation.
 - Public conversion of package-generated SciML solutions into physical results.
@@ -20,6 +23,9 @@
   including derivative-safe AutoAbstol and dimensional QMOM tolerances.
 - Captured-data NUTS models avoid DynamicPPL's generated argument-conversion
   failure on Julia 1.12/1.13 while preserving conditioning and task-local setups.
+- Steady reconstruction failures become failed candidates during inference.
+  Mesh steady results preserve and report machine-roundoff undershoots while
+  rejecting larger negative populations.
 - ABC thresholds selected for the discrepancy, with explicit targets for custom
   discrepancies; supplied optimizer configuration is preserved.
 - New reactor guides, dynamic-versus-steady MSMPR and fed-batch tutorials, and

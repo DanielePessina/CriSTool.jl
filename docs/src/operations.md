@@ -122,6 +122,14 @@ result in its `solution` field (`success = false`). Keyword options include
 default relaxation horizon is `100 × residence time`; residual tolerances
 default to `1e-10`/`1e-12`.
 
+Mesh density checks allow undershoots within 128 machine epsilons of the
+population peak. The raw values are preserved; accepted undershoots have status
+`:roundoff_negative_number_density`, with their minimum, peak, tolerance and
+count in `diagnostics.population_density_diagnostics`. Larger negatives fail
+the physical check. Quadrature states that cannot be reconstructed raise a
+`DomainError` directly; prepared inference records these as failed candidates
+and retains the reason in prediction diagnostics.
+
 Opaque time profiles and user-defined kinetics require `autonomous = true` as
 an explicit declaration that they are time invariant; the declaration is the
 caller's responsibility. Batch and fed-batch problems remain transient
