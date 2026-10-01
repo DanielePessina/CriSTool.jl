@@ -194,7 +194,7 @@ function _steady_scaled_residual(problem, ode_problem, state, parameters,
     population_range = _population_state_range(problem)
     population_scale = shared_population_scale ?
         max(maximum(abs, view(state, population_range)),
-            maximum(reference_scales[population_range]), floatmin(Float64)) : zero(eltype(reference_scales))
+            maximum(view(reference_scales, population_range)), floatmin(Float64)) : zero(eltype(reference_scales))
     @inbounds for state_index in eachindex(residual, state, reference_scales)
         scale = shared_population_scale && state_index in population_range ? population_scale :
             max(abs(state[state_index]), reference_scales[state_index], floatmin(Float64))
