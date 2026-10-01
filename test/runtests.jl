@@ -12,6 +12,7 @@ import StaticArrays
     include("test_initial_state.jl")
     include("test_operations.jl")
     include("test_mesh_operations.jl")
+    include("test_mesh_output_performance.jl")
     include("test_fv_reconstruction.jl")
     include("test_steady_state.jl")
     include("test_steady_inference.jl")
