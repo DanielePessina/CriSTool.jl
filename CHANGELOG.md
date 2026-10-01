@@ -21,6 +21,11 @@
   reconstruction, and positive WENO smoothness indicators and boundary units.
 - Consistent direct/prepared solver tolerances and solve-local callback ownership,
   including derivative-safe AutoAbstol and dimensional QMOM tolerances.
+- WENO enforces a solve-local CFL step bound while preserving a caller's
+  smaller timestep cap. Length-dependent rate calculations and mesh output
+  construction avoid repeated work; unused WENO caches are removed.
+- Prepared finite-volume and WENO losses validate the number of scalar kinetic
+  parameters, including empty parameter blocks.
 - Captured-data NUTS models avoid DynamicPPL's generated argument-conversion
   failure on Julia 1.12/1.13 while preserving conditioning and task-local setups.
 - Steady reconstruction failures become failed candidates during inference.
