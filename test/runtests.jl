@@ -19,6 +19,7 @@ import StaticArrays
     include("test_saturation.jl")
     include("test_kinetics.jl")
     include("test_dissolution.jl")
+    include("test_vector_rate_performance.jl")
     include("test_weno_signed.jl")
     include("test_weno_reconstruction.jl")
     include("test_weno_cfl.jl")
