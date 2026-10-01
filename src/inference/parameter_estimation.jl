@@ -482,8 +482,18 @@ function prepare_loss(configured_problems::AbstractVector{<:CrystallisationProbl
         end
         _validate_crystallisation_problem(configured)
         _validate_save_times(saveat)
-        integration_times = mode === :steady ?
-            [0.0, Float64(get(steady_options, :relaxation_horizon, 1e6))] : saveat
+        integration_times = if mode === :steady
+            declared_autonomous = _steady_option(steady_options, :autonomous, false)
+            declared_autonomous isa Bool ||
+                throw(ArgumentError("steady_options.autonomous must be Bool."))
+            _validate_steadystate_problem(configured; autonomous = declared_autonomous)
+            requested_horizon = _steady_option(steady_options, :relaxation_horizon, nothing)
+            relaxation_horizon = isnothing(requested_horizon) ?
+                _default_steady_relaxation_horizon(configured) : requested_horizon
+            [0.0, Float64(relaxation_horizon)]
+        else
+            saveat
+        end
         _validate_save_times(integration_times)
         odeproblem, default_algorithm = crystallisation_odeproblem(configured, integration_times)
         PreparedExperiment(configured, odeproblem,

@@ -341,6 +341,9 @@ function _steady_option(options::NamedTuple, name::Symbol, default)
     return hasproperty(options, name) ? getproperty(options, name) : default
 end
 
+_default_steady_relaxation_horizon(problem) =
+    100.0 * (problem.operation.volume / operation_flows(problem.operation, 0.0).inflow)
+
 """
     _solve_steadystate_ode(problem, ode_problem, algorithm;
                            steady_options=(;), solve_options=(;),
@@ -513,9 +516,7 @@ function solve_steadystate(problem::CrystallisationProblem;
                            autonomous::Bool = false,
                            balance_reltol::Real = 1e-5)
     _validate_steadystate_problem(problem; autonomous)
-    flow = operation_flows(problem.operation, 0.0).inflow
-    residence_time = problem.operation.volume / flow
-    horizon = isnothing(relaxation_horizon) ? 100.0 * residence_time :
+    horizon = isnothing(relaxation_horizon) ? _default_steady_relaxation_horizon(problem) :
               relaxation_horizon
     horizon isa Real && isfinite(horizon) && horizon > 0.0 ||
         throw(ArgumentError("relaxation_horizon must be finite and strictly positive."))

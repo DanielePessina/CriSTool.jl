@@ -119,7 +119,8 @@ the call throws `SteadyStateConvergenceError`, which carries the unsuccessful
 result in its `solution` field (`success = false`). Keyword options include
 `relaxation_horizon`, `minimum_relaxation`, `residual_reltol`,
 `residual_abstol`, `residual_scales`, `initial_guess`, and `autonomous`. The
-default relaxation horizon is `100 × residence time`; residual tolerances
+default relaxation horizon is `100 × residence time` for direct solving and
+prepared steady inference; residual tolerances
 default to `1e-10`/`1e-12`.
 
 Mesh density checks allow undershoots within 128 machine epsilons of the

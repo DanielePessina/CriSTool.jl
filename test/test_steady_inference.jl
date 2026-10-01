@@ -13,6 +13,15 @@
     @test prepared_steady_setup.prepared[1].saveat == [300.0]
     @test prepared_steady_setup.included_observations[1][:concentration] == [1]
     @test prepared_steady_setup.prepared[1].odeproblem.tspan == (0.0, 1_000.0)
+    default_horizon_setup = prepare_loss([prepared_steady_problem], [prepared_steady_experiment];
+        mode = :steady, steady_options = (; autonomous = true))
+    # V=2 m³ and Q=0.2 m³/s give tau=10 s and the shared 100-tau budget.
+    @test only(default_horizon_setup.prepared).odeproblem.tspan == (0.0, 1_000.0)
+    @test loss(logMLE(), default_horizon_setup, [3e5, 2e-7]) ≈
+        -11.780215388611698 atol = 1e-6
+    @test_throws ArgumentError prepare_loss([CriSTool._copy_crystallisation_problem(
+        prepared_steady_problem; operation = BatchOperation())], [prepared_steady_experiment];
+        mode = :steady, steady_options = (; autonomous = true))
     # Frozen Gaussian NLL for C*=0.9999998402032, d43*=8e-6 and the targets above.
     @test loss(logMLE(), prepared_steady_setup, [3e5, 2e-7]) ≈ -11.780215388611698 atol = 1e-6
     steady_samples = [3e5 3e5; 2e-7 2e-7]

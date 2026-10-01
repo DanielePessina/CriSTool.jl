@@ -26,6 +26,8 @@
 - Steady reconstruction failures become failed candidates during inference.
   Mesh steady results preserve and report machine-roundoff undershoots while
   rejecting larger negative populations.
+- Direct and prepared steady workflows share the 100-residence-time relaxation
+  budget; unsupported steady reactor configurations reject during preparation.
 - ABC thresholds selected for the discrepancy, with explicit targets for custom
   discrepancies; supplied optimizer configuration is preserved.
 - New reactor guides, dynamic-versus-steady MSMPR and fed-batch tutorials, and
