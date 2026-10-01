@@ -21,6 +21,7 @@ import StaticArrays
     include("test_dissolution.jl")
     include("test_weno_signed.jl")
     include("test_weno_reconstruction.jl")
+    include("test_weno_cfl.jl")
     include("test_qmom.jl")
     include("test_dqmom.jl")
     include("test_dqmom_operations.jl")

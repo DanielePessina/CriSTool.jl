@@ -540,36 +540,31 @@ function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, Gr
 
     ET = eltype(CryProblem.parameterset_nucleation)
     utyped = ET.(_get_initial_state(CryProblem))
-    ODEprob = ODEProblem(WENO_Model,
-                         utyped,
-                         (saveat[1], saveat[end]),
-                         θ)
-
-    function CFLcallback!(u, integrator, p, t)
+    function weno_cfl_bound(numerical_state, kinetic_parameters, simulation_time)
         growthfunction = CryProblem.kinetics_growthfunction
         if growthfunction isa Union{AbstractFPLengthGrowthFunction,
                                     AbstractFPLengthDissolutionFunction} ||
            CryProblem.kinetics_dissolutionfunction isa AbstractFPLengthDissolutionFunction
-            net_growth_rates = get_tmp(_growth_rate_cache_dc, u)
+            net_growth_rates = get_tmp(_growth_rate_cache_dc, numerical_state)
             net_growth_rate!(net_growth_rates,
                                    growthfunction,
-                                   p.gr,
+                                   kinetic_parameters.gr,
                                    CryProblem.kinetics_dissolutionfunction,
-                                   p.diss,
+                                   kinetic_parameters.diss,
                                    CryProblem,
-                                   u,
-                                   t,
+                                   numerical_state,
+                                   simulation_time,
                                    CryProblem.solver.cell_centre)
             return _signed_cfl(CryProblem.solver.cell_dL, net_growth_rates; courant = 0.9)
         end
         return _signed_cfl(CryProblem.solver.cell_dL,
                            net_growth_rate(growthfunction,
-                                                  p.gr,
+                                                  kinetic_parameters.gr,
                                                   CryProblem.kinetics_dissolutionfunction,
-                                                  p.diss,
+                                                  kinetic_parameters.diss,
                                                   CryProblem,
-                                                  u,
-                                                  t);
+                                                  numerical_state,
+                                                  simulation_time);
                            courant = 0.9)
     end
     signed_growth_transport =
@@ -577,20 +572,29 @@ function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, Gr
         (CryProblem.kinetics_growthfunction isa AbstractFPScalarDissolutionFunction) ||
         (CryProblem.kinetics_growthfunction isa AbstractFPLengthDissolutionFunction)
     default_algorithm = signed_growth_transport ? :ssprk43 : :tsit5
-    # The legacy positive-growth scalar path historically passed its CFL
-    # callback as a stage limiter; retain that path (and its warm benchmark)
-    # byte-for-byte.  Signed transport needs the callback as a true step
-    # limiter so SSPRK stages obey the conservative CFL bound used by the
-    # positivity-preserving flux correction above.
-    if signed_growth_transport
-        tstep_solver = _resolve_timestepping_algorithm(CryProblem.solver,
-                                                       default_algorithm;
-                                                       step_limiter = CFLcallback!)
-    else
-        tstep_solver = _resolve_timestepping_algorithm(CryProblem.solver,
-                                                       default_algorithm;
-                                                       stage_limiter = CFLcallback!)
+    # Stage/step limiter hooks discard returned values.  A solve-local
+    # callback instead caps the next step from the accepted-state transport
+    # rate, including initialization.  For varying rates this is a local
+    # CFL estimate, not a guarantee about every intermediate stage.
+    time_scalar_type = typeof(float(saveat[1]))
+    configured_dtmax = Ref(time_scalar_type(Inf))
+    bounded_weno_cfl = (numerical_state, kinetic_parameters, simulation_time) ->
+        min(configured_dtmax[], OrdinaryDiffEq.SciMLBase.value(
+            weno_cfl_bound(numerical_state, kinetic_parameters, simulation_time)))
+    cfl_step_callback = StepsizeLimiter(bounded_weno_cfl;
+        safety_factor = one(time_scalar_type), cached_dtcache = zero(time_scalar_type))
+    initialize_weno_cfl = (callback, numerical_state, simulation_time, integrator) -> begin
+        # Preserve an explicit solve_options.dtmax, even when a slower rate
+        # would permit a larger CFL step later in the simulation.
+        configured_dtmax[] = integrator.opts.dtmax
+        cfl_step_callback.initialize(callback, numerical_state, simulation_time, integrator)
     end
+    solve_cfl_callback = DiscreteCallback(cfl_step_callback.condition,
+        cfl_step_callback.affect!; initialize = initialize_weno_cfl,
+        save_positions = (false, false))
+    ODEprob = ODEProblem(WENO_Model, utyped, (saveat[1], saveat[end]), θ;
+                         callback = solve_cfl_callback)
+    tstep_solver = _resolve_timestepping_algorithm(CryProblem.solver, default_algorithm)
     return (ODEprob, tstep_solver)
 end
 function _wrap_solution(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
