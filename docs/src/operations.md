@@ -9,7 +9,7 @@ flows are reported separately from the physical outlet and included in the
 steady total-inventory balance. `balance_reltol` controls the accepted relative
 balance error; mesh/domain refinement remains necessary for resolved solvers.
 
-CriSTool v1 models **one well-mixed vessel with at most one inlet** and a
+CriSTool models **one well-mixed vessel with at most one inlet** and a
 one-dimensional crystal population. Three hydraulic operations are supported
 for *dynamic* simulation; a dedicated steady-state runner is described below.
 
@@ -81,8 +81,9 @@ exposes the configured tank input, distinct from the feed concentration.
 ## Volume, flows and dilution
 
 - Volume is a **separate reactor state**, not a solvent variable. Read it with
-  `reactor_vars(solution)` (a `(; volume = ...)` NamedTuple for MSMPR and
-  fed-batch, empty for batch) or `observable_values(solution, :volume)`.
+  `reactor_vars(solution)` (including `volume` for MSMPR and fed-batch) or
+  `observable_values(solution, :volume)`. Mesh results also report size-domain
+  boundary flows, including for batch operation.
   `reactor_volume(problem, state)` returns the current volume from a numerical
   state; `operation_flows(problem, time)` returns `(; inflow, outflow)` in m³/s.
 - A fed-batch dilutes: every intensive density (moments, number density,
@@ -109,7 +110,7 @@ steady = solve_steadystate(problem)    # autonomous fixed-flow MSMPR only
 
 `solve_steadystate` relaxes the generated dynamics until the scaled full-state
 RHS residual is within tolerance, then returns a
-`CrystallisationSteadyStateSolution` with **one value per observable**, the
+`CrystallisationSteadyStateSolution` with **one value per scalar observable**, the
 product flows, the raw and scaled residual and their norms, the solver retcode,
 and physical and mass-balance diagnostics (`diagnostics`, `hydraulics`,
 `product_dissolved_solute_flow`, `product_solid_mass_flow`). If a finite
@@ -129,18 +130,19 @@ caller's responsibility. Batch and fed-batch problems remain transient
 for a dynamic-vs-steady comparison, and the [API reference](api/simulation.md)
 for the result type.
 
-At steady state the tank condition is the feed condition: concentration tends
-to the feed concentration and the population tends to the feed crystal load.
-With a **clear feed** (`crystals = nothing`) the steady population is empty,
-so moment-derived sizes such as `d43` are undefined at equilibrium; use a
-crystal-bearing feed when the steady size distribution is the quantity of
-interest.
+Without internal kinetics, pure mixing approaches the feed concentration and
+feed population. With nucleation, growth, dissolution or binary sources, the
+steady tank condition follows their balance with feed and withdrawal.
+A **clear feed** (`crystals = nothing`) can therefore produce a nonempty steady
+population through nucleation. With neither crystal feed nor nucleation, complete
+washout has no meaningful equilibrium size. DQMOM still requires a positive
+seeded startup; the other solvers support unseeded MSMPR nucleation.
 
 ## Scope of this release
 
-Dynamic and steady modelling cover a batch, an ideal MSMPR, and a fed-batch,
-each with one well-mixed vessel and one inlet, and a one-dimensional crystal
-population. This release does **not** include two-dimensional population
+Dynamic modelling covers batch, ideal MSMPR and fed-batch; the explicit steady
+runner covers autonomous MSMPR. Each uses one well-mixed vessel, at most one
+inlet, and a one-dimensional crystal population. This release does **not** include two-dimensional population
 balances, multiple vessels/streams, recycle, classified product withdrawal,
 energy balances, or anti-solvent composition models. DQMOM retains its seeded
 positive-node limitations (see [Solvers](solvers.md)).
