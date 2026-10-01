@@ -3,8 +3,10 @@
 `physical_result` is the solver-specific result wrapper at the final saved
 state. Thus `observable_values`, `state_vars`, and `size_metrics` retain the
 same names as a transient solution while each trajectory contains one value.
-`residual` is the full raw ODE right-hand side; `scaled_residual` divides each
-component by its characteristic state scale and the hydraulic residence time.
+`final_state` uses the public physical solver coordinates; the native ODE state
+is retained in diagnostics. `residual` is the native ODE right-hand side;
+`scaled_residual` multiplies each component by the residence time and divides
+by its characteristic state scale.
 """
 @concrete struct CrystallisationSteadyStateSolution <: AbstractSolution
     physical_result
@@ -58,13 +60,6 @@ function state_vars(solution::CrystallisationSteadyStateSolution)
                   state_vars(result) :
                   merge(result.solvent_state, reactor_vars(result))
     named_state = merge(named_state, reactor_vars(solution))
-    if result isa CrystallisationQMOMSolution
-        return merge(named_state, (; moments = vec(result.moments[:, end])))
-    elseif result isa CrystallisationDQMOMSolution
-        return merge(named_state,
-                     (; weights = vec(result.weights[:, end]),
-                        nodes = vec(result.nodes[:, end])))
-    end
     return named_state
 end
 
@@ -87,7 +82,8 @@ end
 """
     observable_values(solution::CrystallisationSteadyStateSolution, name::Symbol)
 
-Return a one-element vector for each built-in state or size observable.
+Return a one-element trajectory for scalar state or size observables. Resolved
+population fields retain their population-by-time matrix representation.
 """
 function observable_values(solution::CrystallisationSteadyStateSolution,
                            name::Symbol)
@@ -187,11 +183,17 @@ function _steady_state_reference_scales(problem, ode_problem, user_scales)
 end
 
 function _steady_scaled_residual(problem, ode_problem, state, parameters,
-                                 simulation_time, residence_time, reference_scales)
+                                 simulation_time, residence_time, reference_scales;
+                                 shared_population_scale::Bool = false)
     residual = _steady_rhs(ode_problem, state, parameters, simulation_time)
     scaled = similar(residual)
+    population_range = _population_state_range(problem)
+    population_scale = shared_population_scale ?
+        max(maximum(abs, view(state, population_range)),
+            maximum(reference_scales[population_range]), floatmin(Float64)) : zero(eltype(reference_scales))
     @inbounds for state_index in eachindex(residual, state, reference_scales)
-        scale = max(abs(state[state_index]), reference_scales[state_index], floatmin(Float64))
+        scale = shared_population_scale && state_index in population_range ? population_scale :
+            max(abs(state[state_index]), reference_scales[state_index], floatmin(Float64))
         scaled[state_index] = abs(residual[state_index]) * residence_time / scale
     end
     return residual, scaled
@@ -199,7 +201,8 @@ end
 
 function _steady_autostop_callback(problem, ode_problem, reference_scales,
                                    residence_time, minimum_relaxation,
-                                   residual_reltol, residual_abstol)
+                                   residual_reltol, residual_abstol;
+                                   shared_population_scale::Bool = false)
     start_time = ode_problem.tspan[1]
     tolerance = residual_reltol + residual_abstol
     condition = (state, simulation_time, integrator) -> begin
@@ -207,7 +210,7 @@ function _steady_autostop_callback(problem, ode_problem, reference_scales,
         simulation_time > start_time || return false
         _, scaled = _steady_scaled_residual(problem, ode_problem, state,
                                             integrator.p, simulation_time,
-                                            residence_time, reference_scales)
+                                            residence_time, reference_scales; shared_population_scale)
         return all(isfinite, scaled) && maximum(scaled) <= tolerance
     end
     return DiscreteCallback(condition,
@@ -280,8 +283,14 @@ function _steady_product_diagnostics(problem, raw_state, physical_result,
     outlet_solid_flow = flows.outflow * density * moment3
     total_inlet_flow = inlet_dissolved_flow + inlet_solid_flow
     total_outlet_flow = outlet_dissolved_flow + outlet_solid_flow
-    balance_residual = total_inlet_flow - total_outlet_flow
-    balance_scale = max(abs(total_inlet_flow), abs(total_outlet_flow), floatmin(Float64))
+    boundary_values = reactor_vars(physical_result)
+    lower_boundary_flow = hasproperty(boundary_values, :size_boundary_lower_solid_mass_flow) ?
+        last(boundary_values.size_boundary_lower_solid_mass_flow) : zero(total_outlet_flow)
+    upper_boundary_flow = hasproperty(boundary_values, :size_boundary_upper_solid_mass_flow) ?
+        last(boundary_values.size_boundary_upper_solid_mass_flow) : zero(total_outlet_flow)
+    size_boundary_flow = lower_boundary_flow + upper_boundary_flow
+    balance_residual = total_inlet_flow - total_outlet_flow - size_boundary_flow
+    balance_scale = max(abs(total_inlet_flow), abs(total_outlet_flow), abs(size_boundary_flow), floatmin(Float64))
     relative_balance_error = abs(balance_residual) / balance_scale
     hydraulics = (; volume, inflow = flows.inflow, outflow = flows.outflow,
                     residence_time)
@@ -293,6 +302,8 @@ function _steady_product_diagnostics(problem, raw_state, physical_result,
                  outlet_solid_mass = outlet_solid_flow,
                  total_inlet_api = total_inlet_flow,
                  total_outlet_api = total_outlet_flow,
+                 size_boundary_lower_solid_mass_flow = lower_boundary_flow,
+                 size_boundary_upper_solid_mass_flow = upper_boundary_flow,
                  total_api_residual = balance_residual,
                  relative_error = relative_balance_error)
     return hydraulics, product, balance
@@ -355,20 +366,27 @@ function _solve_steadystate_ode(problem::CrystallisationProblem, ode_problem,
     flow = operation_flows(problem.operation, start_time).inflow
     volume = problem.operation.volume
     residence_time = volume / flow
-    reference_scales = _steady_state_reference_scales(
-        problem, active_ode_problem,
-        _steady_option(steady_options, :residual_scales, nothing))
+    supplied_residual_scales = _steady_option(steady_options, :residual_scales, nothing)
+    reference_scales = _steady_state_reference_scales(problem, active_ode_problem, supplied_residual_scales)
+    shared_population_scale = problem.solver isa AbstractDiscretisedSolver && supplied_residual_scales === nothing
     convergence_callback = _steady_autostop_callback(
         problem, active_ode_problem, reference_scales, residence_time,
-        minimum_relaxation, residual_reltol, residual_abstol)
+        minimum_relaxation, residual_reltol, residual_abstol; shared_population_scale)
 
     combined_callback_factory = ode_problem_for_solve -> begin
         custom_callback = callback_factory === nothing ? nothing :
                           callback_factory(ode_problem_for_solve)
         CallbackSet(convergence_callback, custom_callback)
     end
+    # A transient solver tolerance can be much looser than the requested
+    # equilibrium residual. Steady relaxation defaults to consistent precision
+    # and a hydraulic step bound; explicit caller solve options still win.
+    steady_solve_options = merge((;
+        reltol = min(problem.solver.reltol,
+            (residual_reltol + residual_abstol) / (100 * sqrt(length(ode_problem.u0)))),
+        dtmax = residence_time / 4), solve_options)
     raw_solution = _solve_crystallisation_ode(
-        problem, active_ode_problem, algorithm, [end_time]; solve_options,
+        problem, active_ode_problem, algorithm, [end_time]; solve_options = steady_solve_options,
         callback_factory = combined_callback_factory)
 
     final_ode_state = raw_solution.u[end]
@@ -377,7 +395,7 @@ function _solve_steadystate_ode(problem::CrystallisationProblem, ode_problem,
     actual_parameters = raw_solution.prob.p
     residual, scaled_residual = _steady_scaled_residual(
         problem, active_ode_problem, final_ode_state, actual_parameters, final_time,
-        residence_time, reference_scales)
+        residence_time, reference_scales; shared_population_scale)
     residual_norm = norm(residual, Inf)
     scaled_residual_norm = maximum(scaled_residual)
     solver_success = OrdinaryDiffEq.SciMLBase.successful_retcode(raw_solution.retcode)
@@ -394,17 +412,20 @@ function _solve_steadystate_ode(problem::CrystallisationProblem, ode_problem,
         problem, raw_state, physical_result, final_time)
     balance_valid = balance.relative_error <= balance_reltol
     successful = solver_success && converged && physical_valid && balance_valid
-    diagnostics = (; residual_norm, scaled_residual_norm, residual_limit,
+    diagnostics = (; converged, residual_norm, scaled_residual_norm, residual_limit,
                     residual_scales = reference_scales,
+                    population_scaling = shared_population_scale ? :density_peak : :per_component,
                     physical_state_valid = physical_valid,
                     physical_state_status = physical_status,
                     total_api_balance = balance,
                     balance_reltol,
                     balance_valid,
                     equilibrium_time = final_time,
+                    ode_final_state = raw_state,
+                    integration_options = steady_solve_options,
                     solver_success)
 
-    return CrystallisationSteadyStateSolution(physical_result, raw_state,
+    return CrystallisationSteadyStateSolution(physical_result, physical_result.final_state,
                                                residual, scaled_residual,
                                                residual_norm,
                                                scaled_residual_norm,
@@ -449,7 +470,8 @@ function solve_steadystate(problem::CrystallisationProblem;
                            solve_options::NamedTuple = (;),
                            algorithm = nothing,
                            callback_factory = nothing,
-                           autonomous::Bool = false)
+                           autonomous::Bool = false,
+                           balance_reltol::Real = 1e-5)
     _validate_steadystate_problem(problem; autonomous)
     flow = operation_flows(problem.operation, 0.0).inflow
     residence_time = problem.operation.volume / flow
@@ -476,7 +498,7 @@ function solve_steadystate(problem::CrystallisationProblem;
                        residual_abstol,
                        residual_scales,
                        autonomous,
-                       balance_reltol = 1e-5)
+                       balance_reltol)
     solution = _solve_steadystate_ode(
         solve_problem, ode_problem,
         algorithm === nothing ? default_algorithm : algorithm;

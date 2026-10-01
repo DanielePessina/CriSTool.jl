@@ -310,8 +310,9 @@ end
                                            nucleation_rate,
                                            ndens_pad_cache::AbstractVector)
     @inbounds begin
-        ndens_pad_cache[1] = nucleation_rate
-        ndens_pad_cache[2] = nucleation_rate
+        # Boundary flux B=G*n has density B/G, not the units of B itself.
+        ndens_pad_cache[1] = nucleation_rate / scalar_growth_rate
+        ndens_pad_cache[2] = nucleation_rate / scalar_growth_rate
         ndens_pad_cache[3:(end - 2)] .= numberdensity
         ndens_pad_cache[end - 1] = zero(eltype(ndens_pad_cache))
         ndens_pad_cache[end] = zero(eltype(ndens_pad_cache))
@@ -320,12 +321,14 @@ end
         flux[2] = scalar_growth_rate *
                   0.5 * (numberdensity[1] + numberdensity[2])
         for cell_index in 3:length(numberdensity)
+            reconstructed_state = weno_flux(ndens_pad_cache, cell_index + 1)
             flux[cell_index] = scalar_growth_rate *
-                               weno_flux(ndens_pad_cache, cell_index + 1)
+                _weno_nonnegative_state(reconstructed_state, numberdensity[cell_index - 1])
         end
         high_order_state = numberdensity[end] +
                            0.5 * (numberdensity[end] - numberdensity[end - 1])
-        flux[end] = scalar_growth_rate * high_order_state
+        flux[end] = scalar_growth_rate *
+            _weno_nonnegative_state(high_order_state, numberdensity[end])
     end
     return flux
 end

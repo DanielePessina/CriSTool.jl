@@ -15,45 +15,8 @@ oscillations near discontinuities.
 # Returns
 - Reconstructed value at cell interface i+1/2
 """
-function weno_flux(y::AbstractArray{T}, i::Integer) where {T <: Real}
-    # Constants for WENO scheme
-    ε = T(CRISTOOL_WENO_EPSILON)
-    γ₁, γ₂, γ₃ = T(0.3), T(0.6), T(0.1)
-    c13_12 = T(13 / 12)
-    c1_4 = T(1 / 4)
-
-    # Precompute commonly used differences to avoid redundant calculations
-    @inbounds begin
-        d1 = y[i + 2] - y[i + 1]
-        d2 = y[i + 1] - y[i]
-        d3 = y[i] - y[i - 1]
-        d4 = y[i - 1] - y[i - 2]
-
-        # Calculate candidate stencils (q values)
-        q₁ = muladd(T(5 / 6), y[i + 1], muladd(T(1 / 3), y[i], -T(1 / 6) * y[i + 2]))
-        q₂ = muladd(T(5 / 6), y[i], muladd(T(1 / 3), y[i + 1], -T(1 / 6) * y[i - 1]))
-        q₃ = muladd(T(11 / 6), y[i], muladd(-T(7 / 6), y[i - 1], T(1 / 3) * y[i - 2]))
-
-        # Calculate smoothness indicators (β values)
-        β₁ = muladd(c13_12, (d1 - d2)^2, c1_4 * (d1 + d2)^2)
-        β₂ = muladd(c13_12, d2^2, c1_4 * (d3 + d1)^2)
-        β₃ = muladd(c13_12, d4^2, c1_4 * (3d3 + d4)^2)
-
-        # Calculate non-linear weights
-        α₁ = γ₁ / (ε + β₁)^2
-        α₂ = γ₂ / (ε + β₂)^2
-        α₃ = γ₃ / (ε + β₃)^2
-
-        # Normalize weights
-        α_sum_inv = 1 / (α₁ + α₂ + α₃)
-        ω₁ = α₁ * α_sum_inv
-        ω₂ = α₂ * α_sum_inv
-        ω₃ = α₃ * α_sum_inv
-
-        # Compute final reconstruction
-        return muladd(ω₁, q₁, muladd(ω₂, q₂, ω₃ * q₃))
-    end
-end
+weno_flux(cell_averages::AbstractArray{<:Real}, left_cell_index::Integer) =
+    _weno_flux_left(cell_averages, left_cell_index)
 
 """
     _get_initial_state(CryProblem) -> Vector
@@ -362,12 +325,13 @@ function _auto_abstol_opts(solver::AbstractSolver, u0::AbstractVector,
     return absolute_floor isa AbstractVector ? copy(absolute_floor) : absolute_floor, nothing
 end
 
-_solver_absolute_floor(problem::CrystallisationProblem, odeproblem) = problem.solver.abstol
+_solver_absolute_floor(configured_problem::CrystallisationProblem, odeproblem) =
+    _solver_absolute_floor(configured_problem, odeproblem, configured_problem.solver)
 
-function _solver_absolute_floor(problem::CrystallisationProblem{NuclF, GrF, BrF,
-                                                                 AggF, QMOM},
-                                 odeproblem) where {NuclF, GrF, BrF, AggF}
-    qmom_solver = problem.solver
+_solver_absolute_floor(configured_problem, odeproblem, configured_solver::AbstractSolver) =
+    configured_solver.abstol
+
+function _solver_absolute_floor(configured_problem, odeproblem, qmom_solver::QMOM)
     n_moments = moment_count(qmom_solver)
     moment_zero = abs(odeproblem.u0[1])
     # A scalar tolerance cannot resolve SI raw moments with disparate dimensions.

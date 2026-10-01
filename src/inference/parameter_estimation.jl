@@ -370,7 +370,9 @@ function prepare_loss(problem::CrystallisationProblem,
                       mode::Symbol = :transient, steady_options::NamedTuple = (;))
     mode in (:transient, :steady) || throw(ArgumentError("mode must be :transient or :steady."))
     if mode === :steady
-        return prepare_loss([problem for _ in experiments], experiments;
+        steady_problems = [_experiment_problem(problem, expt;
+            use_measurement_concentration = false) for expt in experiments]
+        return prepare_loss(steady_problems, experiments;
             observable_order, exclude_initial_concentration = false, algorithm,
             solve_options, callback_factory, observable_projections, mode, steady_options)
     end
@@ -440,12 +442,14 @@ function prepare_loss(configured_problems::AbstractVector{<:CrystallisationProbl
     prepared = map(zip(configured_problems, experiments)) do (configured, expt)
         if !isnothing(expt.initial_crystals)
             declared = initial_state_from_characteristics(configured, expt.initial_crystals)
-            declared == _get_initial_state(configured) || throw(ArgumentError(
+            population_range = _population_state_range(configured)
+            all(isapprox(declared[population_index], _get_initial_state(configured)[population_index];
+                         rtol = 1e-12, atol = 0.0) for population_index in population_range) || throw(ArgumentError(
                 "Experiment $(expt.exp_id) declares seeds conflicting with its configured problem."))
         end
         observation_times = _loss_saveat(expt, configured.solver; require_multiple = false)
         saveat = if mode === :steady
-            [0.0]
+            observation_times
         else
             isfinite(initial_time) && 0 <= initial_time <= first(observation_times) ||
                 throw(ArgumentError("initial_time must be finite, nonnegative and no later than the observations."))
@@ -665,11 +669,13 @@ from the base problem. Explicit experiment crystal characteristics override that
 population. The base problem is never mutated.
 """
 function _experiment_problem(problem::CrystallisationProblem,
-                             expt::CrystallisationExperiment)
+                             expt::CrystallisationExperiment;
+                             use_measurement_concentration::Bool = true)
     template_solvent = isnothing(problem.initial_state) ?
                        problem.initial_solvent_state : solvent_state(problem, problem.initial_state)
-    experiment_solvent = merge(template_solvent,
-                               (; concentration = initial_concentration(expt)))
+    applied_concentration = use_measurement_concentration ?
+        initial_concentration(expt) : initial_concentration(problem)
+    experiment_solvent = merge(template_solvent, (; concentration = applied_concentration))
     experiment_state = if isnothing(problem.initial_state)
         nothing
     else
@@ -681,7 +687,7 @@ function _experiment_problem(problem::CrystallisationProblem,
     end
     experiment_problem = _copy_crystallisation_problem(problem;
         temp_profile = ConstantTemperature(expt.temperature),
-        initial_concentration = initial_concentration(expt),
+        initial_concentration = applied_concentration,
         initial_solvent_state = experiment_solvent,
         initial_state = experiment_state)
     isnothing(expt.initial_crystals) && return experiment_problem
@@ -706,6 +712,12 @@ the template's `p` exactly for the same parameter element type, so `remake`
 keeps the problem type stable across evaluations.
 """
 function _params_to_p(prob::CrystallisationProblem, params)
+    params isa AbstractVector || throw(ArgumentError("Kinetic parameters must be a vector."))
+    expected_parameters = _total_nparams(prob.kinetics_nucleationfunction,
+        prob.kinetics_growthfunction, prob.kinetics_aggregationfunction,
+        prob.kinetics_breakagefunction; diss = prob.kinetics_dissolutionfunction)
+    length(params) == expected_parameters ||
+        throw(ArgumentError("Expected $expected_parameters kinetic parameters, received $(length(params))."))
     # ComponentArray with the composite kinetic axis: `p.nucl`/`p.gr` are
     # views, so the rate functions' `_named_params` short-circuits without
     # rebuilding the parameter container on every ODE step.
@@ -951,10 +963,12 @@ function _loss_objectives(lf::AbstractPELossFunction, setup::LossSetup, params)
         solution = _solve_prepared(prep, params)
         # Numerical failures have a definite penalty. Exceptions from data,
         # kinetics and custom observables propagate, including DomainError.
-        solution.success || return fill(zero(eltype(params)) + CRISTOOL_FAILED_SIMULATION_PENALTY,
-                                        length(setup.observable_names))
+        solution.success || return [zero(eltype(params)) +
+            _observable_weight(lf, objective_index, name) * CRISTOOL_FAILED_SIMULATION_PENALTY
+            for (objective_index, name) in enumerate(setup.observable_names)]
         for (objective_index, name) in enumerate(setup.observable_names)
             hasproperty(expt.observables, name) || continue
+            iszero(_observable_weight(lf, objective_index, name)) && continue
             measured = getproperty(expt.observables, name)
             included_indices = _included_observation_indices(setup, experiment_index, name)
             predicted = prep.mode === :steady ?

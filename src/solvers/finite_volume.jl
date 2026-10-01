@@ -38,8 +38,11 @@
         @inbounds for cell_index in 3:length(numberdensity)
             gradient_upstream = numberdensity[cell_index - 1] - numberdensity[cell_index - 2]
             gradient_downstream = numberdensity[cell_index] - numberdensity[cell_index - 1]
-            gradient_ratio = gradient_upstream /
-                             max(eps(eltype(numberdensity)), gradient_downstream)
+            gradient_floor = eps(eltype(numberdensity))
+            gradient_denominator = abs(gradient_downstream) > gradient_floor ?
+                gradient_downstream :
+                (gradient_downstream < zero(gradient_downstream) ? -gradient_floor : gradient_floor)
+            gradient_ratio = gradient_upstream / gradient_denominator
             flux[cell_index] = scalar_growth_rate *
                                (numberdensity[cell_index - 1] +
                                 0.5 * fluxlimiter_ospre(gradient_ratio) *

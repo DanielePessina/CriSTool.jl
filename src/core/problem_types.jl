@@ -260,6 +260,8 @@ function _validate_crystallisation_problem(problem::CrystallisationProblem)
                                 "expected $expected_state_count for $(typeof(problem.solver))."))
         all(isfinite, problem.initial_state) ||
             throw(ArgumentError("initial_state must contain only finite values."))
+        initial_concentration(problem) >= 0 ||
+            throw(ArgumentError("Explicit initial-state concentration must be nonnegative."))
         if problem.solver isa AbstractDiscretisedSolver
             any(value -> value < 0.0, @view problem.initial_state[1:population_state_count]) &&
                 throw(ArgumentError("initial number density must be nonnegative."))

@@ -214,6 +214,23 @@ for workflow_name in (:nuts_model, :MCMC_Routine)
     end
 end
 
+function run_abc(lossfunction::AbstractPELossFunction,
+                 configured_problem::CrystallisationProblem, experiments,
+                 reference_parameters::AbstractVector, prior;
+                 preparation_options = (;), kwargs...)
+    prepared_setup = prepare_loss([configured_problem for _ in experiments], experiments;
+        preparation_options...)
+    return run_abc(lossfunction, prepared_setup, reference_parameters, prior; kwargs...)
+end
+
+function run_ensemble(parameter_source::Union{AbstractMatrix, Distributions.Distribution},
+                      configured_problem::CrystallisationProblem, experiments;
+                      preparation_options = (;), kwargs...)
+    prepared_setup = prepare_loss([configured_problem for _ in experiments], experiments;
+        preparation_options...)
+    return run_ensemble(parameter_source, prepared_setup; kwargs...)
+end
+
 """
     PredictionEnsemble
 
@@ -296,13 +313,20 @@ function run_ensemble(parameter_samples::AbstractMatrix, setup::LossSetup;
             sample_solutions[sample_index] = _solve_prepared(private_preparation,
                 collect(view(parameter_samples, :, sample_index)))
         end
-        reference_solution = first(sample_solutions)
-        named_physical_values = merge(state_vars(reference_solution), size_metrics(reference_solution))
+        successful_reference_index = findfirst(sample_solution -> sample_solution.success, sample_solutions)
+        reference_solution = successful_reference_index === nothing ? first(sample_solutions) :
+            sample_solutions[successful_reference_index]
+        named_physical_values = merge(state_vars(reference_solution), reactor_vars(reference_solution),
+            size_metrics(reference_solution))
         builtin_names = Tuple(observable_name for observable_name in propertynames(named_physical_values)
             if getproperty(named_physical_values, observable_name) isa AbstractVector &&
                length(getproperty(named_physical_values, observable_name)) == length(reference_solution.time))
         prediction_names = observables === nothing ?
-            (builtin_names..., propertynames(setup.observable_projections)...) : Tuple(Symbol.(observables))
+            Tuple(unique((builtin_names...,
+                propertynames(prepared_experiment.problem.initial_solvent_state)...,
+                setup.observable_names..., propertynames(setup.observable_projections)...,
+                (prepared_experiment.problem.operation isa BatchOperation ? () : (:volume,))...))) :
+            Tuple(Symbol.(observables))
         saved_times = collect(Float64, prepared_experiment.saveat)
         covers_prediction_times(sample_solution) = sample_solution.success &&
             first(sample_solution.time) <= first(saved_times) &&
@@ -311,8 +335,11 @@ function run_ensemble(parameter_samples::AbstractMatrix, setup::LossSetup;
             prediction_matrix = fill(NaN, sample_count, length(saved_times))
             for sample_index in 1:sample_count
                 sample_solution = sample_solutions[sample_index]
-                if covers_prediction_times(sample_solution)
-                    sample_values = _simulated_at(setup, sample_solution, observable_name, saved_times)
+                if sample_solution.success &&
+                   (prepared_experiment.mode === :steady || covers_prediction_times(sample_solution))
+                    sample_values = prepared_experiment.mode === :steady ?
+                        fill(only(_setup_observable_values(setup, sample_solution, observable_name)), length(saved_times)) :
+                        _simulated_at(setup, sample_solution, observable_name, saved_times)
                     length(sample_values) == length(saved_times) ||
                         throw(ArgumentError("Observable :$observable_name does not match saved times."))
                     prediction_matrix[sample_index, :] .= sample_values
@@ -327,8 +354,11 @@ function run_ensemble(parameter_samples::AbstractMatrix, setup::LossSetup;
             prediction_matrix = fill(NaN, length(saved_times), sample_count)
             for sample_index in 1:sample_count
                 sample_solution = sample_solutions[sample_index]
-                covers_prediction_times(sample_solution) || continue
-                prediction_matrix[:, sample_index] .= _simulated_at(sample_solution, observable_name, saved_times)
+                sample_solution.success &&
+                    (prepared_experiment.mode === :steady || covers_prediction_times(sample_solution)) || continue
+                prediction_matrix[:, sample_index] .= prepared_experiment.mode === :steady ?
+                    fill(only(observable_values(sample_solution, observable_name)), length(saved_times)) :
+                    _simulated_at(sample_solution, observable_name, saved_times)
             end
             return prediction_matrix
         end
@@ -337,10 +367,17 @@ function run_ensemble(parameter_samples::AbstractMatrix, setup::LossSetup;
             legacy_samples(:d43), legacy_samples(:d32),
             configured_solver isa AbstractMomentSolver ? nothing : legacy_samples(:d50q),
             configured_solver)
-        sample_success = [covers_prediction_times(sample_solution)
+        sample_success = [sample_solution.success &&
+            (prepared_experiment.mode === :steady || covers_prediction_times(sample_solution))
             for sample_solution in sample_solutions]
         sample_diagnostics = [(; success = sample_success[sample_index],
             ode_stats = sample_solutions[sample_index].ode_stats,
+            initial_conditions = solvent_state(prepared_experiment.problem,
+                _get_initial_state(prepared_experiment.problem)),
+            retcode = hasproperty(sample_solutions[sample_index], :retcode) ?
+                sample_solutions[sample_index].retcode : nothing,
+            convergence = hasproperty(sample_solutions[sample_index], :diagnostics) ?
+                sample_solutions[sample_index].diagnostics : nothing,
             reason = hasproperty(sample_solutions[sample_index], :reason) ?
                 sample_solutions[sample_index].reason : nothing)
             for sample_index in 1:sample_count]

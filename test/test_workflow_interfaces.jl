@@ -48,7 +48,10 @@ CriSTool.growthrate(::WorkflowConstantGrowth, kinetic_parameters, configured_pro
     @test pH_summary.sample_count == 2
     @test pH_summary.failed_count == 0
     @test predictions[1].concentration ≈ [20.0 18.0; 20.0 18.0]
+    problem_predictions = run_ensemble(zeros(0, 1), workflow_problem, [workflow_experiment]; verbosity = 0)
+    @test observable_values(problem_predictions[1], :pH) ≈ [7.0 8.0]
     @test_throws ArgumentError run_ensemble(zeros(1, 2), workflow_setup; verbosity = 0)
+    @test_throws ArgumentError runsimulation([1.0], workflow_problem; save_idx = workflow_times)
 
     late_experiment = CrystallisationExperiment(;
         observables = (; concentration = Observable(time = [1.0], mean = [18.0], variance = 1.0)),
@@ -73,6 +76,68 @@ CriSTool.growthrate(::WorkflowConstantGrowth, kinetic_parameters, configured_pro
     @test observable_values(signal_predictions[1], :optical_signal) ≈ [40.0 36.0]
     @test_throws ArgumentError prepare_loss([workflow_problem], [workflow_experiment];
         observable_projections = (; concentration = physical_solution -> physical_solution.concentration))
+
+    failed_setup = prepare_loss([workflow_problem], [workflow_experiment];
+        algorithm = CriSTool.OrdinaryDiffEq.Euler(),
+        solve_options = (; dt = 0.1, adaptive = false, maxiters = 2))
+    @test loss(mae(), failed_setup, Float64[]) == 2_000_000.0
+    failed_predictions = run_ensemble(zeros(0, 1), failed_setup; verbosity = 0)
+    @test failed_predictions[1].success == [false]
+    @test failed_predictions[1].diagnostics[1].reason ==
+        CriSTool.OrdinaryDiffEq.SciMLBase.ReturnCode.MaxIters
+    @test_throws ArgumentError prediction_summary(failed_predictions[1], :concentration)
+    @test_throws ArgumentError prediction_summary(failed_predictions[1], :concentration; skip_failed = true)
+    inactive_size_experiment = CrystallisationExperiment(;
+        observables = merge(workflow_experiment.observables,
+            (; d50q = Observable(time = [1.0], mean = [1e-6], variance = 1e-12))),
+        temperature = 300.0, exp_id = 705)
+    inactive_size_setup = prepare_loss([workflow_problem], [inactive_size_experiment])
+    @test loss(mae(weighting = (; concentration = 1.0, pH = 1.0, d50q = 0.0)),
+        inactive_size_setup, Float64[]) ≈ 0.0 atol = 1e-10
+end
+
+@testset "Explicit seed declaration preserves independent solvent input" begin
+    matching_seed = LogNormalInitialCrystals(mass_concentration = 0.25,
+        d43 = 10e-6, geometric_std = 1.2)
+    seed_configuration = CrystallisationProblem(;
+        kinetics_nucleationfunction = nucl_empirical_fixed(log10_nucleation_prefactor = -Inf,
+            nucleation_order = 1.0), parameterset_nucleation = Float64[],
+        kinetics_growthfunction = growth_empirical_fixed([0.0, 1.0]),
+        parameterset_growth = Float64[], initial_concentration = 20.0,
+        saturation_model = ConstantSolubility(20.0), solver = MoM())
+    physical_seed_state = initial_state_from_characteristics(seed_configuration, matching_seed)
+    physical_seed_state[end] = 12.0
+    configured_seed = CriSTool._copy_crystallisation_problem(seed_configuration;
+        initial_state = physical_seed_state)
+    seed_experiment = CrystallisationExperiment(;
+        observables = (; concentration = Observable(time = [0.0, 1.0],
+            mean = [12.0, 12.0], variance = 1.0)), initial_crystals = matching_seed,
+        temperature = 300.0, exp_id = 706)
+    seed_setup = prepare_loss([configured_seed], [seed_experiment])
+    @test initial_concentration(seed_setup.prepared[1].problem) == 12.0
+    @test loss(mae(), seed_setup, Float64[]) ≈ 0.0 atol = 1e-10
+    negative_solvent_state = copy(physical_seed_state)
+    negative_solvent_state[end] = -1.0
+    @test_throws ArgumentError runsimulation(CriSTool._copy_crystallisation_problem(configured_seed;
+        initial_state = negative_solvent_state); save_idx = [0.0, 1.0])
+end
+
+@testset "Configured mesh predictions retain volume" begin
+    volume_operation = FedBatchOperation(initial_volume = 2.0, inflow = 0.5,
+        feed = CrystallisationFeed(concentration = 2.0))
+    volume_experiment = CrystallisationExperiment(;
+        observables = (; concentration = Observable(time = [0.0, 4.0],
+            mean = [8.0, 5.0], variance = 1.0)), temperature = 293.15, exp_id = 707)
+    for mesh_solver in (FiniteVol(meshsize = 20, lmax = 50e-6), WENO(meshsize = 20, lmax = 50e-6))
+        volume_problem = CrystallisationProblem(; operation = volume_operation, solver = mesh_solver,
+            kinetics_nucleationfunction = nucl_empirical_fixed(log10_nucleation_prefactor = -Inf,
+                nucleation_order = 1.0), parameterset_nucleation = Float64[],
+            kinetics_growthfunction = growth_empirical_fixed([0.0, 1.0]),
+            parameterset_growth = Float64[], initial_concentration = 8.0)
+        volume_predictions = run_ensemble(zeros(0, 1), volume_problem, [volume_experiment]; verbosity = 0)
+        @test volume_predictions[1].volume ≈ [2.0 4.0]
+        @test observable_values(volume_predictions[1], :volume) ≈ [2.0 4.0]
+    end
 end
 
 @testset "Configured inference physical mass oracle" begin

@@ -10,7 +10,9 @@ population-balance implementations.
 Ospre flux limiter for high-resolution schemes.
 Computes a smoothness-based limiter value for numerical flux reconstruction.
 """
-fluxlimiter_ospre(r) = (1.5 * (r^2) + r) / (r^2 + r + 1)
+fluxlimiter_ospre(gradient_ratio) = gradient_ratio <= zero(gradient_ratio) ?
+    zero(gradient_ratio) :
+    1.5 * (gradient_ratio^2 + gradient_ratio) / (gradient_ratio^2 + gradient_ratio + 1)
 
 @inline _named_params(model, p::AbstractVector) = ComponentArray(p, paramaxis(model))
 @inline _named_params(_, p::ComponentArrays.ComponentArray) = p

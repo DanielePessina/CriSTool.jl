@@ -242,7 +242,7 @@ state_vars(sol::CrystallisationMoMSolution) = merge(sol.solvent_state, reactor_v
 Named solvent-state variables of a discretised solution, plus `numberdensity`
  (mesh × time) and `voldensity` (mesh × time).
 """
-state_vars(sol::CrystallisationFVSolution) = merge(sol.solvent_state,
+state_vars(sol::CrystallisationFVSolution) = merge(sol.solvent_state, reactor_vars(sol),
                                                    (; numberdensity = sol.numberdensity,
                                                       voldensity = sol.voldensity))
 

@@ -1,5 +1,14 @@
 # Reactor operations and steady state
 
+Steady relaxation uses solve precision consistent with the requested residual
+and a hydraulic step bound. For mesh solvers, population residuals use a common
+density scale across cells; tiny tail cells do not define a separate relative
+precision requirement. Every cell still contributes to the full-state residual.
+Supply `residual_scales` to select explicit component scales. Size-domain boundary
+flows are reported separately from the physical outlet and included in the
+steady total-inventory balance. `balance_reltol` controls the accepted relative
+balance error; mesh/domain refinement remains necessary for resolved solvers.
+
 CriSTool v1 models **one well-mixed vessel with at most one inlet** and a
 one-dimensional crystal population. Three hydraulic operations are supported
 for *dynamic* simulation; a dedicated steady-state runner is described below.
