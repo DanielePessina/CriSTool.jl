@@ -1,6 +1,6 @@
 # Bringing your own system
 
-CriSTool's v1 API is system-agnostic: the lysozyme assumptions live in the
+CriSTool's public interface is system-agnostic: the lysozyme assumptions live in the
 defaults (`lysozyme_solubility()`, the default density/shape-factor
 constants), not in the machinery. This guide walks a minimal non-lysozyme
 system end-to-end — custom solubility, custom kinetics, a custom observable —
@@ -146,5 +146,29 @@ setup = prepare_loss(custom_problem, [fit_experiment])
 L  = loss(logMLE(), setup, custom_parameters)
 ```
 
-`PE_Routine`, `run_abc` and the MCMC tutorials consume the same types — swap
-in your system without touching the package.
+Use the configured-problem vector form when temperature profiles, initial
+conditions and other system properties must remain authoritative:
+
+```julia
+setup = prepare_loss([custom_problem], [fit_experiment])
+```
+
+`PE_Routine(lossfn, setup, lower_bounds, upper_bounds)`,
+`PE_Routine_Optimisation(lossfn, setup, lower_bounds, upper_bounds; searchalgo)`,
+`run_abc(lossfn, setup, reference_parameters, prior)`,
+`nuts_model(setup, prior; lossfunction=lossfn)` and `run_ensemble(samples, setup)`
+all use that same prepared physical system. Set `mode=:steady` and appropriate
+`steady_options` for one-point autonomous MSMPR observations; measured steady
+concentration supplies a target rather than the tank or feed initial condition.
+
+Custom derived signals can be local to a setup without adding global methods:
+
+```julia
+setup = prepare_loss([custom_problem], [fit_experiment];
+    observable_projections=(; optical_signal = solution -> 2 .* solution.concentration))
+```
+
+The projection returns a numeric trajectory aligned with the physical solution
+times. Existing `observable_values` extensions continue to work. Named prediction
+results retain reactor volume and additional solvent signals; failed samples are
+recorded and require explicit exclusion when summarizing uncertainty.
