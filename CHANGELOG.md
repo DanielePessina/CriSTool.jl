@@ -18,6 +18,8 @@
   reconstruction, and positive WENO smoothness indicators and boundary units.
 - Consistent direct/prepared solver tolerances and solve-local callback ownership,
   including derivative-safe AutoAbstol and dimensional QMOM tolerances.
+- Captured-data NUTS models avoid DynamicPPL's generated argument-conversion
+  failure on Julia 1.12/1.13 while preserving conditioning and task-local setups.
 - ABC thresholds selected for the discrepancy, with explicit targets for custom
   discrepancies; supplied optimizer configuration is preserved.
 - New reactor guides, dynamic-versus-steady MSMPR and fed-batch tutorials, and
