@@ -991,7 +991,10 @@ initial condition; all points of every other observable contribute.
 """
 function _loss_objectives(lf::AbstractPELossFunction, setup::LossSetup, params)
     _validate_loss_weights(lf, setup)
-    expected_count = length(setup.prepared[1].odeproblem.p)
+    # ODE parameter containers differ by backend; discretised solvers keep
+    # empty kinetic blocks in a fixed-width NamedTuple. Count the kinetic axis,
+    # not the number of fields in the prepared ODE parameter container.
+    expected_count = _setup_parameter_count(setup)
     length(params) == expected_count || throw(DimensionMismatch(
         "Expected $expected_count kinetic parameters, received $(length(params))."))
     objective_sums = [zero(eltype(params)) for _ in setup.observable_names]

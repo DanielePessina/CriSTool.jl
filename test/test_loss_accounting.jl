@@ -159,3 +159,55 @@ end
     @test_throws DomainError CriSTool.batchLF_procSO(mae(), broken_setup, Float64[])
     @test_throws DomainError CriSTool.batchLF_procMO(mae(), broken_setup, Float64[])
 end
+
+@testset "Prepared FV and WENO losses count kinetic parameters" begin
+    mesh_loss_experiment = CrystallisationExperiment(; temperature = 293.15,
+        exp_id = 160,
+        observables = (; concentration = Observable(; time = [0.0, 1.0],
+            mean = [10.0, 11.0], variance = [1.0, 1.0])))
+
+    # The 0-, 4-, and 5-parameter systems all have the same exact trajectory:
+    # C0=10 is undersaturated against c*=20, so no crystals form and C(t)=10.
+    # The t=0 datum defines C0 and is excluded; the remaining unit residual
+    # with variance 1 has the frozen Normal NLL 0.5*(log(2π)+1).
+    parameter_cases = (
+        (; label = :zero, nucleation = nucl_empirical_fixed(
+               log10_nucleation_prefactor = -300.0, nucleation_order = 1.0),
+           growth = growth_empirical_fixed(growth_coefficient = 0.0, growth_order = 1.0),
+           aggregation = noaggregation(), nucleation_parameters = Float64[],
+           growth_parameters = Float64[], aggregation_parameters = Float64[],
+           parameters = Float64[]),
+        (; label = :four, nucleation = nucl_CNT(), growth = growth_empirical(),
+           aggregation = noaggregation(), nucleation_parameters = [0.0, 1e-6],
+           growth_parameters = [0.0, 1.0], aggregation_parameters = Float64[],
+           parameters = [0.0, 1e-6, 0.0, 1.0]),
+        (; label = :five, nucleation = nucl_CNT(), growth = growth_empirical(),
+           aggregation = aggr_scalar(), nucleation_parameters = [0.0, 1e-6],
+           growth_parameters = [0.0, 1.0], aggregation_parameters = [0.0],
+           parameters = [0.0, 1e-6, 0.0, 1.0, 0.0]))
+
+    for mesh_solver in (FiniteVol(meshsize = 8, lmax = 50e-6),
+                        WENO(meshsize = 8, lmax = 50e-6))
+        @testset "$(typeof(mesh_solver))" begin
+            for parameter_case in parameter_cases
+                @testset "$(parameter_case.label) parameter case" begin
+                    mesh_problem = CrystallisationProblem(;
+                        kinetics_nucleationfunction = parameter_case.nucleation,
+                        kinetics_growthfunction = parameter_case.growth,
+                        kinetics_aggregationfunction = parameter_case.aggregation,
+                        parameterset_nucleation = parameter_case.nucleation_parameters,
+                        parameterset_growth = parameter_case.growth_parameters,
+                        parameterset_aggregation = parameter_case.aggregation_parameters,
+                        initial_concentration = 10.0,
+                        saturation_model = ConstantSolubility(20.0),
+                        solver = mesh_solver)
+                    prepared_mesh_loss = prepare_loss(mesh_problem, [mesh_loss_experiment])
+
+                    @test loss(logMLE(), prepared_mesh_loss,
+                               parameter_case.parameters) ≈ 1.4189385332046727 atol = 1e-12
+                    @test loss(mae(), prepared_mesh_loss, parameter_case.parameters) ≈ 1.0
+                end
+            end
+        end
+    end
+end
