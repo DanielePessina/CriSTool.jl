@@ -69,19 +69,31 @@
 
     @testset "WENO Solver Basic Test" begin
         params = [38.0, 0.0007, 1e-9 / 60, 3.0]
+        # Frozen independent MoM trajectory for the same unseeded, supersaturated
+        # case. The tolerance allows the WENO mesh and finite-domain error.
+        expected_concentration = [18.0, 11.017412693766037, 7.451991893434699,
+                                 6.223578197583567, 5.581375675096114]
 
-        _,
-        solution = runsimulation(params,
-                                 nucl_CNT(),
-                                 growth_empirical(),
-                                 noaggregation(),
-                                 nobreakage(),
-                                 18.0;
-                                 save_idx = collect(0:7200.0:28800.0),
-                                 solver = WENO(meshsize = 100, lmax = 50e-6))
+        for meshsize in (50, 100)
+            _,
+            solution = runsimulation(params,
+                                     nucl_CNT(),
+                                     growth_empirical(),
+                                     noaggregation(),
+                                     nobreakage(),
+                                     18.0;
+                                     save_idx = collect(0:7200.0:28800.0),
+                                     solver = WENO(meshsize = meshsize,
+                                                   lmax = 50e-6))
 
-        @test solution.success
-        @test length(solution.time) > 0
+            @test solution.success
+            @test solution.time == collect(0:7200.0:28800.0)
+            @test solution.concentration ≈ expected_concentration atol = 0.02
+            # This unseeded run forms a birth front; permit only a 1e-12
+            # relative undershoot against its largest physical density.
+            density_scale = maximum(abs, solution.numberdensity)
+            @test minimum(solution.numberdensity) >= -1e-12 * density_scale
+        end
     end
 
     @testset "Mesh Size Independence" begin

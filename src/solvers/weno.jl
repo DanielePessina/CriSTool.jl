@@ -318,8 +318,9 @@ end
         ndens_pad_cache[end] = zero(eltype(ndens_pad_cache))
 
         flux[1] = nucleation_rate
+        first_interior_state = weno_flux(ndens_pad_cache, 3)
         flux[2] = scalar_growth_rate *
-                  0.5 * (numberdensity[1] + numberdensity[2])
+                  _weno_nonnegative_state(first_interior_state, numberdensity[1])
         for cell_index in 3:length(numberdensity)
             reconstructed_state = weno_flux(ndens_pad_cache, cell_index + 1)
             flux[cell_index] = scalar_growth_rate *
