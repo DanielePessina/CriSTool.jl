@@ -303,7 +303,17 @@ function _fill_signed_weno_flux!(flux::AbstractVector,
     return flux
 end
 
-"""Fill the legacy positive scalar-growth WENO flux in place."""
+@inline function _weno_nonempty_left_state(padded_density, left_cell_index,
+                                          upwind_density)
+    # The existing positivity correction returns zero for an empty or
+    # negative upwind cell, irrespective of the high-order trace.  Avoid
+    # constructing a five-point stencil whose result will be discarded.
+    upwind_density <= zero(upwind_density) && return zero(upwind_density)
+    return _weno_nonnegative_state(weno_flux(padded_density, left_cell_index),
+                                  upwind_density)
+end
+
+"""Fill positive scalar-growth WENO fluxes with local positivity correction."""
 @inline function _fill_positive_weno_flux!(flux::AbstractVector,
                                            numberdensity::AbstractVector,
                                            scalar_growth_rate,
@@ -318,13 +328,12 @@ end
         ndens_pad_cache[end] = zero(eltype(ndens_pad_cache))
 
         flux[1] = nucleation_rate
-        first_interior_state = weno_flux(ndens_pad_cache, 3)
         flux[2] = scalar_growth_rate *
-                  _weno_nonnegative_state(first_interior_state, numberdensity[1])
+                  _weno_nonempty_left_state(ndens_pad_cache, 3, numberdensity[1])
         for cell_index in 3:length(numberdensity)
-            reconstructed_state = weno_flux(ndens_pad_cache, cell_index + 1)
             flux[cell_index] = scalar_growth_rate *
-                _weno_nonnegative_state(reconstructed_state, numberdensity[cell_index - 1])
+                _weno_nonempty_left_state(ndens_pad_cache, cell_index + 1,
+                                         numberdensity[cell_index - 1])
         end
         high_order_state = numberdensity[end] +
                            0.5 * (numberdensity[end] - numberdensity[end - 1])
