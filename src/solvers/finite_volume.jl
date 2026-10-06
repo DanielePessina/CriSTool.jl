@@ -326,7 +326,7 @@ end
 function _wrap_solution(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
                                                                        FiniteVol, NuP, GrP,
                                                                        BrP, AggP, TP},
-                                    sol) where {NuclF <:
+                                    sol; boundary_flow_state = nothing) where {NuclF <:
                                                                               AbstractNucleationFunction,
                                                                               GrF <:
                                                                               Union{AbstractFPScalarGrowthFunction,
@@ -353,8 +353,9 @@ function _wrap_solution(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF
     moments = _momentsizes(CryProblem.solver.cell_centre, nd_matrix)
     solvent_solution_state = _solvent_solution_state(CryProblem, sol)
     reactor_state = merge(_reactor_solution_state(CryProblem, sol),
-                          _mesh_boundary_flow_state(CryProblem.solver,
-                                                    CryProblem, sol))
+                          boundary_flow_state === nothing ?
+                              _mesh_boundary_flow_state(CryProblem.solver, CryProblem, sol) :
+                              boundary_flow_state)
 
     return CrystallisationFVSolution(sol.t,
                                      solvent_solution_state.concentration,
@@ -560,7 +561,7 @@ end
 function _wrap_solution(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
                                                                       FiniteVol, NuP, GrP,
                                                                       BrP, AggP, TP},
-                                   sol) where {NuclF <:
+                                   sol; boundary_flow_state = nothing) where {NuclF <:
                                                                              AbstractNucleationFunction,
                                                                              GrF <:
                                                                              Union{AbstractFPLengthGrowthFunction,
@@ -587,8 +588,9 @@ function _wrap_solution(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF
     moments = _momentsizes(CryProblem.solver.cell_centre, nd_matrix)
     solvent_solution_state = _solvent_solution_state(CryProblem, sol)
     reactor_state = merge(_reactor_solution_state(CryProblem, sol),
-                          _mesh_boundary_flow_state(CryProblem.solver,
-                                                    CryProblem, sol))
+                          boundary_flow_state === nothing ?
+                              _mesh_boundary_flow_state(CryProblem.solver, CryProblem, sol) :
+                              boundary_flow_state)
 
     return CrystallisationFVSolution(sol.t,
                                      solvent_solution_state.concentration,

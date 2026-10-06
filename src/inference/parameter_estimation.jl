@@ -780,14 +780,10 @@ function _solve_prepared(prep::PreparedExperiment, params)
                                      callback_factory = prep.callback_factory)
     OrdinaryDiffEq.SciMLBase.successful_retcode(sol.retcode) ||
         return _failed_prepared_simulation(prep, sol, sol.retcode)
-    # This catch surrounds package post-processing only. User kinetic,
-    # callback and observable errors occur outside it and still propagate.
-    try
-        return _wrap_solution(prep.problem, sol)
-    catch reconstruction_error
-        reconstruction_error isa DomainError || rethrow()
-        return _failed_prepared_simulation(prep, sol, reconstruction_error)
-    end
+    physical_result, _ = _wrap_prepared_result(prep.problem, sol;
+        reconstruction_failure_handler = (raw_solution, reconstruction_error) ->
+            _failed_prepared_simulation(prep, raw_solution, reconstruction_error))
+    return physical_result
 end
 
 """

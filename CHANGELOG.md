@@ -33,10 +33,13 @@
 - Captured-data NUTS models avoid DynamicPPL's generated argument-conversion
   failure on Julia 1.12/1.13 while preserving conditioning and task-local setups.
 - Steady reconstruction failures become failed candidates during inference.
+  User kinetic errors during mesh boundary post-processing still propagate.
   Mesh steady results preserve and report machine-roundoff undershoots while
   rejecting larger negative populations.
 - Direct and prepared steady workflows share the 100-residence-time relaxation
   budget; unsupported steady reactor configurations reject during preparation.
+  Convergence saves the actual equilibrium after extinction events, and steady
+  observables contain only that final sample even when callbacks save events.
 - ABC thresholds selected for the discrepancy, with explicit targets for custom
   discrepancies; supplied optimizer configuration is preserved.
 - New reactor guides, dynamic-versus-steady MSMPR and fed-batch tutorials, and

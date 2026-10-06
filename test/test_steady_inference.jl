@@ -85,3 +85,32 @@ end
         callback_factory = callback_problem -> throw(DomainError(0.0, "user callback failure")))
     @test_throws DomainError loss(mae(), callback_error_setup, [0.0, 0.0])
 end
+
+@testset "Steady dissolution saves the equilibrium after extinction" begin
+    extinct_seed_moments = [1e12 * (1e-6)^moment_order for moment_order in 0:4]
+    extinction_problem = CrystallisationProblem(; solver = MoM(reltol = 1e-10, abstol = 1e-24),
+        initial_concentration = 0.1, initial_solvent_state = (; concentration = 0.1),
+        initial_state = vcat(extinct_seed_moments, 0.1),
+        saturation_model = ConstantSolubility(1.0),
+        kinetics_growthfunction = growth_dissolution(), parameterset_growth = [1e-6, 0.0, 1.0],
+        operation = MSMPROperation(volume = 2.0, inflow = 0.2,
+            feed = CrystallisationFeed(concentration = 0.1)))
+    extinction_equilibrium = solve_steadystate(extinction_problem; relaxation_horizon = 1000.0)
+    @test extinction_equilibrium.success
+    @test length(extinction_equilibrium.time) == 1
+    @test only(extinction_equilibrium.concentration) ≈ 0.1 atol = 2e-11
+    @test extinction_equilibrium.final_state[1:5] == zeros(5)
+    @test extinction_equilibrium.product_solid_mass_flow == 0.0
+    @test extinction_equilibrium.product_dissolved_solute_flow ≈ 0.02 atol = 4e-12
+    extinction_experiment = CrystallisationExperiment(;
+        observables = (; concentration = Observable(time = [300.0], mean = [0.1], variance = 0.01)),
+        temperature = 300.0, exp_id = 821)
+    extinction_setup = prepare_loss([extinction_problem], [extinction_experiment];
+        mode = :steady, steady_options = (; relaxation_horizon = 1000.0))
+    extinction_parameters = vcat(extinction_problem.parameterset_nucleation, [1e-6, 0.0, 1.0])
+    @test loss(mae(), extinction_setup, extinction_parameters) ≈ 0.0 atol = 2e-11
+    extinction_predictions = only(run_ensemble(reshape(extinction_parameters, :, 1),
+        extinction_setup; verbosity = 0))
+    @test extinction_predictions.success == [true]
+    @test extinction_predictions.concentration ≈ fill(0.1, 1, 1) atol = 2e-11
+end

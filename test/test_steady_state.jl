@@ -230,3 +230,20 @@ end
     @test remade_parameter_finite_difference ≈ 40.0 rtol = 2e-4
     @test remade_parameter_gradient ≈ remade_parameter_finite_difference rtol = 2e-4
 end
+
+@testset "Steady output excludes saved user callback events" begin
+    event_equilibrium_problem = steady_state_test_problem(initial_concentration_value = 2.0,
+        initial_state = vcat(zeros(5), 2.0))
+    saved_event_factory = ode_problem -> CriSTool.DiscreteCallback(
+        (numerical_state, simulation_time, integrator) -> 0.5 <= simulation_time < 0.7,
+        integrator -> nothing; save_positions = (true, true))
+    event_equilibrium = solve_steadystate(event_equilibrium_problem;
+        minimum_relaxation = 2.0, relaxation_horizon = 5.0, autonomous = true,
+        callback_factory = saved_event_factory,
+        solve_options = (; dt = 0.1, adaptive = false))
+    @test event_equilibrium.success
+    @test length(event_equilibrium.time) == 1
+    @test only(event_equilibrium.time) >= 2.0
+    @test only(event_equilibrium.concentration) == 2.0
+    @test event_equilibrium.final_state == vcat(zeros(5), 2.0)
+end

@@ -219,7 +219,7 @@ function _steady_autostop_callback(problem, ode_problem, reference_scales,
     end
     return DiscreteCallback(condition,
                             integrator -> OrdinaryDiffEq.SciMLBase.terminate!(integrator);
-                            save_positions = (false, false))
+                            save_positions = (false, true))
 end
 
 function _steady_moment3(problem, raw_state, physical_result)
@@ -437,15 +437,12 @@ function _solve_steadystate_ode(problem::CrystallisationProblem, ode_problem,
 
     applicable(_wrap_solution, problem, raw_solution) ||
         throw(ArgumentError("No physical result wrapper is available for $(typeof(problem.solver)) with the selected kinetics."))
-    physical_result = try
-        _wrap_solution(problem, raw_solution)
-    catch reconstruction_error
-        # Classify package reconstruction failures without catching errors from
-        # the user's RHS or callbacks, which ran before this wrapper boundary.
-        reconstruction_error isa DomainError || rethrow()
-        reconstruction_failure_handler === nothing && rethrow()
-        return reconstruction_failure_handler(raw_solution, reconstruction_error)
-    end
+    final_sample_index = lastindex(raw_solution.u)
+    equilibrium_sample = OrdinaryDiffEq.SciMLBase.solution_slice(raw_solution,
+        final_sample_index:final_sample_index)
+    physical_result, reconstructed = _wrap_prepared_result(problem, equilibrium_sample;
+        reconstruction_failure_handler)
+    reconstructed || return physical_result
     physical_valid, physical_status = _steady_physical_constraints(
         problem, raw_state, physical_result)
     hydraulics, product, balance = _steady_product_diagnostics(

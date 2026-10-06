@@ -1,5 +1,24 @@
 ###### Solver functions ######
 
+"""Return `(result, reconstructed)`, classifying only package reconstruction failures."""
+function _wrap_prepared_result(configured_problem, ode_solution;
+                               reconstruction_failure_handler = nothing)
+    # Mesh boundary diagnostics re-enter user rate laws at interpolated saved
+    # times. Evaluate them before guarding package-owned reconstruction.
+    boundary_flow_state = configured_problem.solver isa Union{FiniteVol, WENO} ?
+        _mesh_boundary_flow_state(configured_problem.solver, configured_problem, ode_solution) : nothing
+    try
+        physical_result = boundary_flow_state === nothing ?
+            _wrap_solution(configured_problem, ode_solution) :
+            _wrap_solution(configured_problem, ode_solution; boundary_flow_state)
+        return physical_result, true
+    catch reconstruction_error
+        reconstruction_error isa DomainError || rethrow()
+        reconstruction_failure_handler === nothing && rethrow()
+        return reconstruction_failure_handler(ode_solution, reconstruction_error), false
+    end
+end
+
 """
     weno_flux(y::AbstractArray{T}, i::Integer) where {T<:Real}
 

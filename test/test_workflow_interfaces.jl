@@ -257,3 +257,38 @@ end
     zero_parameter_setup = prepare_loss([zero_parameter_problem], [distribution_experiment])
     @test_throws ArgumentError run_ensemble(Uniform(0.5, 1.5), zero_parameter_setup; n_samples = 1)
 end
+
+struct OutputTimeDomainGrowth <: CriSTool.AbstractFPScalarGrowthFunction
+    nparams::Int
+end
+CriSTool.paramaxis(::OutputTimeDomainGrowth) = CriSTool.ComponentArrays.Axis(output_time_rate = 1)
+function CriSTool.growthrate(::OutputTimeDomainGrowth, kinetic_parameters, configured_problem,
+                            numerical_state, simulation_time)
+    simulation_time == 0.5 && throw(DomainError(simulation_time, "user output-time kinetic error"))
+    return zero(kinetic_parameters[1])
+end
+
+@testset "User kinetic DomainError at interpolated mesh outputs propagates" begin
+    output_error_experiment = CrystallisationExperiment(;
+        observables = (; concentration = Observable(time = [0.0, 0.5, 1.0],
+            mean = [20.0, 20.0, 20.0], variance = 1.0)), temperature = 300.0, exp_id = 822)
+    for output_error_solver in (FiniteVol(meshsize = 4), WENO(meshsize = 4))
+        output_error_problem = CrystallisationProblem(; solver = output_error_solver,
+            kinetics_nucleationfunction = nucl_empirical_fixed([0.0, 1.0]),
+            parameterset_nucleation = Float64[], kinetics_growthfunction = OutputTimeDomainGrowth(1),
+            parameterset_growth = [0.0], initial_concentration = 20.0,
+            saturation_model = ConstantSolubility(20.0))
+        output_error_setup = prepare_loss([output_error_problem], [output_error_experiment];
+            algorithm = CriSTool.OrdinaryDiffEq.Euler(),
+            solve_options = (; dt = 0.3, adaptive = false))
+        @test_throws DomainError loss(mae(), output_error_setup, [0.0])
+        ensemble_output_error = try
+            run_ensemble(reshape([0.0], 1, 1), output_error_setup; verbosity = 0)
+        catch propagated_error
+            propagated_error
+        end
+        @test ensemble_output_error isa CompositeException
+        @test ensemble_output_error isa Exception &&
+            occursin("user output-time kinetic error", sprint(showerror, ensemble_output_error))
+    end
+end
