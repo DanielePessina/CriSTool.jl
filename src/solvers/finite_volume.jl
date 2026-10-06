@@ -83,9 +83,8 @@ function _mesh_boundary_flow_state(solver::FiniteVol, problem, ode_solution)
     upper_mass_flow = similar(lower_mass_flow)
     flux_cache = similar(sample_state, solver.meshsize + 1)
     growth_rate_cache = similar(sample_state, solver.meshsize)
-    parameters = (; nucl = problem.parameterset_nucleation,
-                  gr = problem.parameterset_growth,
-                  diss = problem.parameterset_dissolution)
+    # Prepared inference remakes p without replacing the physical template.
+    parameters = ode_solution.prob.p
     lower_length = first(solver.cell_face)
     upper_length = last(solver.cell_face)
     mass_scale = problem.crystal_density * problem.volume_shape_factor

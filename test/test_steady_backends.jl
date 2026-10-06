@@ -17,6 +17,26 @@
         @test only(backend_equilibrium.concentration) ≈ 0.9999998402032 atol = 5e-9
         @test backend_equilibrium.scaled_residual_norm <= 1.01e-8
         @test backend_equilibrium.diagnostics.total_api_balance.relative_error < 1e-5
+        if steady_solver isa CriSTool.AbstractDiscretisedSolver
+            # The direct solve is the reference for the same physical candidate
+            # evaluated through a template with half its growth rate.
+            candidate_template = CriSTool._copy_crystallisation_problem(configured_backend;
+                parameterset_growth = [1e-7])
+            boundary_experiment = CrystallisationExperiment(;
+                observables = (; concentration = Observable(time = [300.0],
+                    mean = [only(backend_equilibrium.concentration)], variance = 0.01)),
+                temperature = 300.0, exp_id = 815)
+            boundary_setup = prepare_loss([candidate_template], [boundary_experiment];
+                mode = :steady, steady_options = (; relaxation_horizon = 1000.0,
+                    autonomous = true, residual_reltol = 1e-8, residual_abstol = 1e-10))
+            candidate_equilibrium = CriSTool._solve_prepared(only(boundary_setup.prepared),
+                [3e5, 2e-7])
+            @test candidate_equilibrium.success
+            @test reactor_vars(candidate_equilibrium.physical_result).size_boundary_upper_solid_mass_flow ≈
+                reactor_vars(backend_equilibrium.physical_result).size_boundary_upper_solid_mass_flow rtol = 1e-8 atol = 0.0
+            @test candidate_equilibrium.diagnostics.total_api_balance.relative_error ≈
+                backend_equilibrium.diagnostics.total_api_balance.relative_error atol = 1e-12
+        end
         if steady_solver isa QMOM
             @test backend_equilibrium.physical_result.moments[:, 1] ≈
                 [3e6, 6.0, 2.4e-5, 1.44e-10, 1.152e-15, 1.152e-20] rtol = 2e-6

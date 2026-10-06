@@ -172,3 +172,9 @@ The projection returns a numeric trajectory aligned with the physical solution
 times. Existing `observable_values` extensions continue to work. Named prediction
 results retain reactor volume and additional solvent signals; failed samples are
 recorded and require explicit exclusion when summarizing uncertainty.
+Default prediction observables are selected per configured system and experiment,
+so different solvent schemas and batch/flow operations can share a setup.
+An explicit `observables` selection must be available on every system.
+`run_ensemble(distribution, setup; n_samples, rng)` also accepts a univariate
+distribution for a one-parameter setup; multivariate distributions must draw one
+value per kinetic parameter.

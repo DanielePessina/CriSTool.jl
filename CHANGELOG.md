@@ -26,6 +26,10 @@
   construction avoid repeated work; unused WENO caches are removed.
 - Prepared finite-volume and WENO losses validate the number of scalar kinetic
   parameters, including empty parameter blocks.
+- FV/WENO boundary-flow diagnostics use the solved candidate's kinetic
+  parameters, including when checking prepared steady-state mass balances.
+- Default ensemble observables follow each prepared experiment's system;
+  one-parameter ensembles also accept univariate distributions.
 - Captured-data NUTS models avoid DynamicPPL's generated argument-conversion
   failure on Julia 1.12/1.13 while preserving conditioning and task-local setups.
 - Steady reconstruction failures become failed candidates during inference.

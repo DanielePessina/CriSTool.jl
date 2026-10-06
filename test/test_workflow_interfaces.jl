@@ -182,3 +182,78 @@ end
     @test gradient_fit.u[1] ≈ 1.0 atol = 1e-5
     @test gradient_fit.objective ≈ -11.058694958350254 atol = 1e-7
 end
+
+@testset "Default predictions follow each prepared system's observable schema" begin
+    schema_times = [0.0, 1.0]
+    schema_batch = CrystallisationProblem(;
+        kinetics_nucleationfunction = nucl_empirical_fixed(log10_nucleation_prefactor = -Inf,
+            nucleation_order = 1.0), parameterset_nucleation = Float64[],
+        kinetics_growthfunction = growth_empirical_fixed([0.0, 1.0]),
+        parameterset_growth = Float64[], initial_concentration = 20.0,
+        saturation_model = ConstantSolubility(20.0), solver = MoM())
+    schema_extended = CriSTool._copy_crystallisation_problem(schema_batch;
+        initial_solvent_state = (; concentration = 20.0, pH = 7.0),
+        solvent_dynamics = (configured_problem, numerical_state, saved_time, growth_rate) ->
+            (; concentration = 0.0, pH = 1.0))
+    schema_concentration = Observable(time = schema_times, mean = [20.0, 20.0], variance = 1.0)
+    schema_plain_experiment = CrystallisationExperiment(;
+        observables = (; concentration = schema_concentration), temperature = 300.0, exp_id = 711)
+    schema_extended_experiment = CrystallisationExperiment(;
+        observables = (; concentration = schema_concentration,
+            pH = Observable(time = schema_times, mean = [7.0, 8.0], variance = 1.0)),
+        temperature = 300.0, exp_id = 712)
+    schema_setup = prepare_loss([schema_batch, schema_extended],
+        [schema_plain_experiment, schema_extended_experiment])
+    @test loss(mae(), schema_setup, Float64[]) ≈ 0.0 atol = 1e-10
+    schema_predictions = run_ensemble(zeros(0, 1), schema_setup; verbosity = 0)
+    @test all(prediction -> prediction.success == [true], schema_predictions)
+    @test observable_values(schema_predictions[1], :concentration) ≈ [20.0 20.0]
+    @test !hasproperty(schema_predictions[1].predictions, :pH)
+    @test observable_values(schema_predictions[2], :pH) ≈ [7.0 8.0]
+    @test_throws ArgumentError run_ensemble(zeros(0, 1), schema_setup; observables = [:pH])
+
+    schema_msmpr = CriSTool._copy_crystallisation_problem(schema_batch;
+        operation = MSMPROperation(volume = 2.0, inflow = 0.5,
+            feed = CrystallisationFeed(concentration = 20.0)))
+    schema_volume_experiment = CrystallisationExperiment(;
+        observables = (; concentration = schema_concentration,
+            volume = Observable(time = schema_times, mean = [2.0, 2.0], variance = 1.0)),
+        temperature = 300.0, exp_id = 713)
+    schema_volume_setup = prepare_loss([schema_batch, schema_msmpr],
+        [schema_plain_experiment, schema_volume_experiment])
+    schema_volume_predictions = run_ensemble(zeros(0, 1), schema_volume_setup; verbosity = 0)
+    @test all(prediction -> prediction.success == [true], schema_volume_predictions)
+    @test !hasproperty(schema_volume_predictions[1].predictions, :volume)
+    @test observable_values(schema_volume_predictions[2], :volume) == [2.0 2.0]
+end
+
+@testset "Univariate ensemble draws preserve sample shape and RNG" begin
+    distribution_problem = CrystallisationProblem(;
+        kinetics_nucleationfunction = nucl_empirical_fixed(log10_nucleation_prefactor = -Inf,
+            nucleation_order = 1.0), parameterset_nucleation = Float64[],
+        kinetics_growthfunction = WorkflowConstantGrowth(), parameterset_growth = [1.0],
+        initial_concentration = 20.0, saturation_model = ConstantSolubility(10.0),
+        initial_state = [1e12, 1e7, 100.0, 1e-3, 1e-8, 20.0], solver = MoM())
+    distribution_experiment = CrystallisationExperiment(;
+        observables = (; concentration = Observable(time = [0.0, 1.0],
+            mean = [20.0, 20.0], variance = 1.0)), temperature = 300.0, exp_id = 714)
+    distribution_setup = prepare_loss([distribution_problem], [distribution_experiment])
+    for distribution_sample_count in (1, 3)
+        distribution_rng = CriSTool.Random.Xoshiro(714)
+        expected_draws = rand(CriSTool.Random.Xoshiro(714), Uniform(0.5, 1.5), distribution_sample_count)
+        distribution_predictions = only(run_ensemble(Uniform(0.5, 1.5), distribution_setup;
+            n_samples = distribution_sample_count, rng = distribution_rng, verbosity = 0))
+        @test distribution_predictions.success == fill(true, distribution_sample_count)
+        # Closed-system concentration follows the independently known solid
+        # inventory rho*kv*N*((L0+G*t)^3-L0^3).
+        expected_concentration = 20.0 .- 1109.7e12 .* ((10e-6 .+ 1e-7 .* expected_draws).^3 .- (10e-6)^3)
+        @test size(distribution_predictions.concentration) == (distribution_sample_count, 2)
+        @test distribution_predictions.concentration[:, 1] == fill(20.0, distribution_sample_count)
+        @test distribution_predictions.concentration[:, 2] ≈ expected_concentration atol = 1e-8
+    end
+    @test_throws ArgumentError run_ensemble(Uniform(0.5, 1.5), distribution_setup; n_samples = 0)
+    zero_parameter_problem = CriSTool._copy_crystallisation_problem(distribution_problem;
+        kinetics_growthfunction = growth_empirical_fixed([0.0, 1.0]), parameterset_growth = Float64[])
+    zero_parameter_setup = prepare_loss([zero_parameter_problem], [distribution_experiment])
+    @test_throws ArgumentError run_ensemble(Uniform(0.5, 1.5), zero_parameter_setup; n_samples = 1)
+end

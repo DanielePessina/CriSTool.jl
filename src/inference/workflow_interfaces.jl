@@ -295,7 +295,9 @@ end
 """
     run_ensemble(samples, setup::LossSetup; observables=nothing, ...)
 
-Predict each prepared system for parameter samples in columns. Physical
+Predict each prepared system for parameter samples in columns. By default,
+observable names are selected separately for each system and its experiment.
+An explicit `observables` selection applies to every system. Physical
 configuration and solve settings are preserved; named solvent/reactor values
 are retained alongside the established concentration and size predictions.
 """
@@ -306,7 +308,7 @@ function run_ensemble(parameter_samples::AbstractMatrix, setup::LossSetup;
     sample_count = size(parameter_samples, 2)
     sample_count > 0 || throw(ArgumentError("An ensemble requires at least one parameter sample."))
     prepared_predictions = PredictionEnsemble[]
-    for prepared_experiment in setup.prepared
+    for (experiment_index, prepared_experiment) in enumerate(setup.prepared)
         sample_solutions = Vector{AbstractSolution}(undef, sample_count)
         Threads.@threads for sample_index in 1:sample_count
             private_preparation = deepcopy(prepared_experiment)
@@ -324,7 +326,8 @@ function run_ensemble(parameter_samples::AbstractMatrix, setup::LossSetup;
         prediction_names = observables === nothing ?
             Tuple(unique((builtin_names...,
                 propertynames(prepared_experiment.problem.initial_solvent_state)...,
-                setup.observable_names..., propertynames(setup.observable_projections)...,
+                propertynames(setup.experiments[experiment_index].observables)...,
+                propertynames(setup.observable_projections)...,
                 (prepared_experiment.problem.operation isa BatchOperation ? () : (:volume,))...))) :
             Tuple(Symbol.(observables))
         saved_times = collect(Float64, prepared_experiment.saveat)
@@ -391,12 +394,21 @@ end
     run_ensemble(distribution, setup::LossSetup; n_samples=2048, rng, ...)
 
 Draw kinetic parameter samples and predict the exact prepared systems.
+Univariate distributions require a one-parameter setup; multivariate draws
+must have one row per kinetic parameter.
 """
 function run_ensemble(parameter_distribution::Distributions.Distribution,
                       setup::LossSetup; n_samples::Int = 2048,
                       rng = Random.default_rng(), kwargs...)
     n_samples > 0 || throw(ArgumentError("n_samples must be positive."))
-    return run_ensemble(rand(rng, parameter_distribution, n_samples), setup; kwargs...)
+    if parameter_distribution isa Distributions.UnivariateDistribution
+        _setup_parameter_count(setup) == 1 ||
+            throw(ArgumentError("A univariate distribution requires exactly one kinetic parameter."))
+        parameter_samples = reshape(rand(rng, parameter_distribution, n_samples), 1, n_samples)
+    else
+        parameter_samples = rand(rng, parameter_distribution, n_samples)
+    end
+    return run_ensemble(parameter_samples, setup; kwargs...)
 end
 
 function plot_measurements_vs_ensemble(measurements::Vector{<:AbstractExperiment},
