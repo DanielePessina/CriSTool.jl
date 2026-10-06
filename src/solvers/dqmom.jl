@@ -7,6 +7,8 @@ The ODE uses normalized weights and weighted, dimensionless nodes so the
 projection matrix does not contain powers of lengths measured in metres.
 """
 
+include("dqmom_operations.jl")
+
 @inline function _validate_dqmom_solver(solver::DQMOM)
     solver.nquadrature >= 2 ||
         throw(ArgumentError("DQMOM requires nquadrature >= 2."))
@@ -36,10 +38,12 @@ function _validate_dqmom_public_state(problem::CrystallisationProblem)
     direct_state = _get_initial_state(problem)
     nquadrature = solver.nquadrature
     n_solvent = length(propertynames(problem.initial_solvent_state))
-    expected_length = 2 * nquadrature + n_solvent
+    n_reactor = _operation_state_count(problem.operation)
+    expected_length = 2 * nquadrature + n_reactor + n_solvent
     length(direct_state) == expected_length ||
         throw(ArgumentError("DQMOM initial_state must contain $nquadrature weights, " *
-                            "$nquadrature physical nodes, and $n_solvent solvent values."))
+                            "$nquadrature physical nodes, $n_reactor reactor values, " *
+                            "and $n_solvent solvent values."))
 
     weights = @view direct_state[1:nquadrature]
     nodes = @view direct_state[(nquadrature + 1):(2 * nquadrature)]
@@ -389,10 +393,12 @@ function _dqmom_direct_state(problem::CrystallisationProblem)
     public_state = _get_initial_state(problem)
     nquadrature = solver.nquadrature
     n_solvent = length(propertynames(problem.initial_solvent_state))
+    n_reactor = _operation_state_count(problem.operation)
     element_type = promote_type(eltype(public_state),
                                 typeof(solver.coordinate_scale),
                                 typeof(solver.weight_scale))
-    internal_state = Vector{element_type}(undef, 2 * nquadrature + n_solvent)
+    internal_state = Vector{element_type}(undef,
+                                         2 * nquadrature + n_reactor + n_solvent)
     @inbounds for node_index in 1:nquadrature
         weight = public_state[node_index]
         physical_node = public_state[nquadrature + node_index]
@@ -401,7 +407,12 @@ function _dqmom_direct_state(problem::CrystallisationProblem)
         internal_state[node_index] = scaled_weight
         internal_state[nquadrature + node_index] = scaled_weight * scaled_node
     end
-    first_solvent = 2 * nquadrature + 1
+    first_reactor = 2 * nquadrature + 1
+    @inbounds for reactor_index in 1:n_reactor
+        internal_state[first_reactor + reactor_index - 1] =
+            public_state[first_reactor + reactor_index - 1]
+    end
+    first_solvent = first(_solvent_state_range(problem))
     @inbounds for solvent_index in 1:n_solvent
         internal_state[first_solvent + solvent_index - 1] =
             public_state[first_solvent + solvent_index - 1]
@@ -508,14 +519,31 @@ function _dqmom_rhs!(destination,
                      parameters,
                      time,
                      problem::CrystallisationProblem)
+    feed_population = _operation_feed_population(problem)
+    return _dqmom_rhs!(destination,
+                       state,
+                       parameters,
+                       time,
+                       problem,
+                       feed_population)
+end
+
+function _dqmom_rhs!(destination,
+                     state,
+                     parameters,
+                     time,
+                     problem::CrystallisationProblem,
+                     feed_population)
     solver = problem.solver
     nquadrature = solver.nquadrature
     n_solvent = length(propertynames(problem.initial_solvent_state))
-    n_states = 2 * nquadrature + n_solvent
+    n_reactor = _operation_state_count(problem.operation)
+    n_states = 2 * nquadrature + n_reactor + n_solvent
     length(destination) == n_states ||
         throw(ArgumentError("DQMOM RHS received an incompatible state length."))
 
-    if nquadrature == 3 &&
+    if problem.operation isa BatchOperation &&
+       nquadrature == 3 &&
        problem.kinetics_aggregationfunction isa noaggregation &&
        problem.kinetics_breakagefunction isa nobreakage
         return _dqmom_rhs_no_binary_n3!(destination, state, parameters, time, problem)
@@ -561,6 +589,17 @@ function _dqmom_rhs!(destination,
                                   scaled_nodes,
                                   growth_rates,
                                   nucleation_rate_value)
+    internal_third_moment_rate = source[4]
+    operation_context = _dqmom_operation_transport_context(problem,
+                                                            state,
+                                                            time)
+    if !isnothing(operation_context)
+        _dqmom_add_operation_moment_source!(source,
+                                            state,
+                                            problem,
+                                            operation_context,
+                                            feed_population)
+    end
     projection_matrix = _dqmom_projection_matrix(scaled_nodes)
     direct_rates = projection_matrix \ source
 
@@ -569,17 +608,11 @@ function _dqmom_rhs!(destination,
         destination[nquadrature + node_index] = direct_rates[nquadrature + node_index]
     end
 
-    # Differentiate m₃ = Σ qᵢ xᵢ³ in the direct variables.  This keeps the
-    # solvent coupling tied to the actual state derivative rather than to a
-    # second, potentially inconsistent approximation.
-    scaled_volume_rate = zero(eltype(direct_rates))
-    @inbounds for node_index in 1:nquadrature
-        scaled_node = scaled_nodes[node_index]
-        scaled_volume_rate += -2 * scaled_node^3 * direct_rates[node_index] +
-                              3 * scaled_node^2 * direct_rates[nquadrature + node_index]
-    end
+    # Solvent exchange is internal to crystallisation. Inlet and washout
+    # moments are already included in the projected population derivative but
+    # must not be interpreted as crystal growth or dissolution.
     physical_volume_rate = solver.weight_scale * solver.coordinate_scale^3 *
-                            scaled_volume_rate
+                            internal_third_moment_rate
 
     growth_context = if problem.kinetics_growthfunction isa AbstractFPLengthGrowthFunction
         growth_rates
@@ -598,6 +631,10 @@ function _dqmom_rhs!(destination,
                                                growth_context,
                                                physical_volume_rate)
     _write_solvent_derivatives!(destination, problem, solvent_rates)
+    _dqmom_add_operation_state_rates!(destination,
+                                     state,
+                                     problem,
+                                     operation_context)
     return nothing
 end
 
@@ -635,13 +672,15 @@ function crystallisation_odeproblem(problem::CrystallisationProblem{NuclF, GrF, 
     initial_values = element_type.(internal_values)
 
     n_solvent = length(propertynames(problem.initial_solvent_state))
+    feed_population = _operation_feed_population(problem)
     no_binary_sources = problem.kinetics_aggregationfunction isa noaggregation &&
                         problem.kinetics_breakagefunction isa nobreakage
     # Static three-node path: SVector state + out-of-place RHS (like the QMOM
     # fast path), so Tsit5 runs fully unrolled static stages instead of
     # heap-backed Vector stages.  Restricted to the default concentration-only
     # solvent coupling, which the RHS writes directly.
-    fast_scalar_path = no_binary_sources && problem.solver.nquadrature == 3 &&
+    fast_scalar_path = problem.operation isa BatchOperation &&
+                       no_binary_sources && problem.solver.nquadrature == 3 &&
                        n_solvent == 1 &&
                        propertynames(problem.initial_solvent_state) == (:concentration,) &&
                        problem.solvent_dynamics isa DefaultSolventDynamics
@@ -661,7 +700,7 @@ function crystallisation_odeproblem(problem::CrystallisationProblem{NuclF, GrF, 
                                         parameters)
     else
         DQMOM_model! = (destination, state, p, time) ->
-            _dqmom_rhs!(destination, state, p, time, problem)
+            _dqmom_rhs!(destination, state, p, time, problem, feed_population)
         ode_problem = ODEProblem(DQMOM_model!,
                                  initial_values,
                                  (saveat[1], saveat[end]),
@@ -686,6 +725,7 @@ function _wrap_solution(problem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
     solver = problem.solver
     nquadrature = solver.nquadrature
     n_solvent = length(propertynames(problem.initial_solvent_state))
+    n_reactor = _operation_state_count(problem.operation)
     internal_matrix = Array(solution)
     time_points = collect(solution.t)
     n_time_points = length(time_points)
@@ -726,11 +766,17 @@ function _wrap_solution(problem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
                                           scaled_nodes[second_index]))
                 end
             end
+            physical_minimum_gap = solver.coordinate_scale * minimum_gap
+            physical_minimum_gap > solver.node_coalescence_tolerance *
+                                   solver.coordinate_scale ||
+                throw(DomainError(physical_minimum_gap,
+                                  "DQMOM trajectory reached node coalescence; " *
+                                  "active quadrature nodes cannot merge or be reborn."))
             projection_diagnostics[time_index] = DQMOMProjectionDiagnostics(
                 :ok,
                 minimum(@view weight_matrix[:, time_index]),
                 minimum(@view node_matrix[:, time_index]),
-                solver.coordinate_scale * minimum_gap,
+                physical_minimum_gap,
                 # The 3-node default uses a static 6x6 inverse (zero heap
                 # allocations).  The dense fallback uses `cond(A, 1)`: one LU
                 # + norms instead of a full SVD (gesdd), which dominated the
@@ -761,14 +807,23 @@ function _wrap_solution(problem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
           zeros(element_type, n_time_points)
     moment2 = collect(@view moment_matrix[3, :])
     solvent_solution_state = _solvent_solution_state(problem, solution)
+    reactor_solution_state = _reactor_solution_state(problem, solution)
     solvent_final = Vector{element_type}(undef, n_solvent)
-    first_solvent = 2 * nquadrature + 1
+    first_solvent = first(_solvent_state_range(problem))
     @inbounds for solvent_index in 1:n_solvent
         solvent_final[solvent_index] = internal_matrix[
             first_solvent + solvent_index - 1, n_time_points]
     end
+    reactor_final = if n_reactor == 0
+        Vector{element_type}()
+    else
+        reactor_range = _reactor_state_range(problem)
+        collect(@view internal_matrix[first(reactor_range):last(reactor_range),
+                                      n_time_points])
+    end
     final_state = vcat(collect(view(weight_matrix, :, n_time_points)),
                        collect(view(node_matrix, :, n_time_points)),
+                       reactor_final,
                        solvent_final)
     successful = OrdinaryDiffEq.SciMLBase.successful_retcode(solution.retcode)
 
@@ -794,6 +849,7 @@ function _wrap_solution(problem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
                                         final_state,
                                         solution.stats,
                                         successful,
+                                        reactor_solution_state,
                                         projection_diagnostics)
 end
 
@@ -801,7 +857,8 @@ function _simulatecrystallisation(problem::CrystallisationProblem{NuclF, GrF, Br
                                                                    AggF, DQMOM,
                                                                    NuP, GrP, BrP,
                                                                    AggP, TP},
-                                  saveat)::CrystallisationDQMOMSolution where {
+                                  saveat; algorithm = nothing, solve_options::NamedTuple = (;),
+                                  callback_factory = nothing)::CrystallisationDQMOMSolution where {
                                       NuclF <: AbstractNucleationFunction,
                                       GrF <: AbstractGrowthFunction,
                                       BrF <: AbstractBreakageFunction,
@@ -812,17 +869,9 @@ function _simulatecrystallisation(problem::CrystallisationProblem{NuclF, GrF, Br
                                       AggP <: AbstractVector{<:Real},
                                       TP <: AbstractTemperature}
     ode_problem, time_step_solver = crystallisation_odeproblem(problem, saveat)
-    abstol_tol, auto_tol_cb = _auto_abstol_opts(problem.solver, ode_problem.u0,
-                                                problem.solver.abstol)
-    ode_solution = solve(ode_problem,
-                         time_step_solver;
-                         callback = auto_tol_cb,
-                         saveat = saveat,
-                         reltol = problem.solver.reltol,
-                         abstol = abstol_tol,
-                         dense = false,
-                         alg_hints = [:stiff],
-                         maxiters = CRISTOOL_MAX_SOLVER_ITERS)
+    ode_solution = _solve_crystallisation_ode(problem, ode_problem,
+                                          algorithm === nothing ? time_step_solver : algorithm,
+                                          saveat; solve_options, callback_factory)
     return _wrap_solution(problem, ode_solution)
 end
 
@@ -853,6 +902,7 @@ dqmom_quadrature(solution::CrystallisationDQMOMSolution, time_index::Integer) =
 time(solution::CrystallisationDQMOMSolution) = solution.time
 state_vars(solution::CrystallisationDQMOMSolution) =
     merge(solution.solvent_state,
+          reactor_vars(solution),
           (; weights = solution.weights,
              nodes = solution.nodes,
              moments = solution.moments,

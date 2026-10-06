@@ -38,6 +38,15 @@ length-dependent dissolution rate accepts an explicit mesh argument when it
 is evaluated outside the solver; use the solver-owned scratch buffer with
 `growthrate!` in custom discretised code.
 
+WENO limits each proposed time step to `0.9 * cell_dL / maximum(abs, G)`
+using the net growth or dissolution rate at the current accepted state. It
+applies the limit at initialization and after accepted steps, and preserves
+any smaller `solve_options.dtmax` supplied by the caller. For scalar rates,
+the maximum is simply `abs(G)`. This local estimate does not guarantee a CFL
+bound at every intermediate stage when rates vary with state or time.
+The timestep controller uses ordinary numeric rate values; ForwardDiff
+derivatives still propagate through the population and solvent equations.
+
 ## QMOM, DQMOM, and signed rates
 
 QMOM stores raw physical moments in the state and uses `coordinate_scale` only

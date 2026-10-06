@@ -1,5 +1,24 @@
 ###### Solver functions ######
 
+"""Return `(result, reconstructed)`, classifying only package reconstruction failures."""
+function _wrap_prepared_result(configured_problem, ode_solution;
+                               reconstruction_failure_handler = nothing)
+    # Mesh boundary diagnostics re-enter user rate laws at interpolated saved
+    # times. Evaluate them before guarding package-owned reconstruction.
+    boundary_flow_state = configured_problem.solver isa Union{FiniteVol, WENO} ?
+        _mesh_boundary_flow_state(configured_problem.solver, configured_problem, ode_solution) : nothing
+    try
+        physical_result = boundary_flow_state === nothing ?
+            _wrap_solution(configured_problem, ode_solution) :
+            _wrap_solution(configured_problem, ode_solution; boundary_flow_state)
+        return physical_result, true
+    catch reconstruction_error
+        reconstruction_error isa DomainError || rethrow()
+        reconstruction_failure_handler === nothing && rethrow()
+        return reconstruction_failure_handler(ode_solution, reconstruction_error), false
+    end
+end
+
 """
     weno_flux(y::AbstractArray{T}, i::Integer) where {T<:Real}
 
@@ -15,45 +34,8 @@ oscillations near discontinuities.
 # Returns
 - Reconstructed value at cell interface i+1/2
 """
-function weno_flux(y::AbstractArray{T}, i::Integer) where {T <: Real}
-    # Constants for WENO scheme
-    ε = T(CRISTOOL_WENO_EPSILON)
-    γ₁, γ₂, γ₃ = T(0.3), T(0.6), T(0.1)
-    c13_12 = T(13 / 12)
-    c1_4 = T(1 / 4)
-
-    # Precompute commonly used differences to avoid redundant calculations
-    @inbounds begin
-        d1 = y[i + 2] - y[i + 1]
-        d2 = y[i + 1] - y[i]
-        d3 = y[i] - y[i - 1]
-        d4 = y[i - 1] - y[i - 2]
-
-        # Calculate candidate stencils (q values)
-        q₁ = muladd(T(5 / 6), y[i + 1], muladd(T(1 / 3), y[i], -T(1 / 6) * y[i + 2]))
-        q₂ = muladd(T(5 / 6), y[i], muladd(T(1 / 3), y[i + 1], -T(1 / 6) * y[i - 1]))
-        q₃ = muladd(T(11 / 6), y[i], muladd(-T(7 / 6), y[i - 1], T(1 / 3) * y[i - 2]))
-
-        # Calculate smoothness indicators (β values)
-        β₁ = muladd(c13_12, (d1 - d2)^2, c1_4 * (d1 + d2)^2)
-        β₂ = muladd(c13_12, d2^2, c1_4 * (d3 + d1)^2)
-        β₃ = muladd(c13_12, d4^2, c1_4 * (3d3 + d4)^2)
-
-        # Calculate non-linear weights
-        α₁ = γ₁ / (ε + β₁)^2
-        α₂ = γ₂ / (ε + β₂)^2
-        α₃ = γ₃ / (ε + β₃)^2
-
-        # Normalize weights
-        α_sum_inv = 1 / (α₁ + α₂ + α₃)
-        ω₁ = α₁ * α_sum_inv
-        ω₂ = α₂ * α_sum_inv
-        ω₃ = α₃ * α_sum_inv
-
-        # Compute final reconstruction
-        return muladd(ω₁, q₁, muladd(ω₂, q₂, ω₃ * q₃))
-    end
-end
+weno_flux(cell_averages::AbstractArray{<:Real}, left_cell_index::Integer) =
+    _weno_flux_left(cell_averages, left_cell_index)
 
 """
     _get_initial_state(CryProblem) -> Vector
@@ -74,13 +56,13 @@ _get_initial_state(CryProblem) = isnothing(CryProblem.initial_state) ?
                                      CryProblem.initial_state
 
 _zero_state(solver::AbstractDiscretisedSolver, CryProblem) =
-    [zeros(solver.meshsize); collect(values(CryProblem.initial_solvent_state))]
+    [zeros(solver.meshsize); _operation_initial_state(CryProblem.operation); collect(values(CryProblem.initial_solvent_state))]
 _zero_state(solver::MoM, CryProblem) =
-    [zeros(solver.nmoments + 1); collect(values(CryProblem.initial_solvent_state))]
+    [zeros(solver.nmoments + 1); _operation_initial_state(CryProblem.operation); collect(values(CryProblem.initial_solvent_state))]
 _zero_state(solver::QMOM, CryProblem) =
-    [zeros(moment_count(solver)); collect(values(CryProblem.initial_solvent_state))]
+    [zeros(moment_count(solver)); _operation_initial_state(CryProblem.operation); collect(values(CryProblem.initial_solvent_state))]
 _zero_state(solver::DQMOM, CryProblem) =
-    [zeros(2 * solver.nquadrature); collect(values(CryProblem.initial_solvent_state))]
+    [zeros(2 * solver.nquadrature); _operation_initial_state(CryProblem.operation); collect(values(CryProblem.initial_solvent_state))]
 
 """
     _build_timestepping_algorithm(algorithm_type; step_limiter=nothing, stage_limiter=nothing)
@@ -328,25 +310,100 @@ function _fill_signed_first_order_flux!(flux::AbstractVector,
 end
 
 """
-    _auto_abstol_opts(solver, u0, scalar_tol) -> (abstol, callback)
+    _parameter_eltype(odeproblem.p)
 
-`tolerance_mode = :auto` returns a per-component absolute-tolerance floor
-(`fill(abstol, length(u0))`, so `AutoAbstol` runs in array mode and each state
-component tracks its own running max) plus the solve-level `AutoAbstol`
-callback (`save=false`: never injects extra save points; `u_modified!` is
-forced false inside the callback, so it cannot re-trigger FSAL or interfere
-with problem-level callbacks such as the extinction callbacks, which
-`merge_problem_kwargs` combines into a `CallbackSet`).
-
-`:scalar` (the default) returns `(scalar_tol, nothing)` — passing
-`callback = nothing` leaves the problem-level callback untouched, so the
-`:scalar` solve path is byte-identical to the pre-`tolerance_mode` code.
+Scalar element type carried by an ODE problem's parameter container, or
+`Float64` for parameter containers without an element type.
 """
-@inline function _auto_abstol_opts(solver::AbstractSolver, u0::AbstractVector,
-                                   scalar_tol)
+_parameter_eltype(ode_parameters::AbstractArray) = eltype(ode_parameters)
+_parameter_eltype(ode_parameters) = Float64
+
+"""
+    _auto_abstol_opts(solver, u0, absolute_floor, scalar_type=Float64; reltol=solver.reltol)
+
+Allocate solve-local component tolerances and an AutoAbstol callback. In auto
+mode, each component retains its physical absolute floor while its tolerance
+tracks its own largest magnitude. Scalar mode leaves the supplied floor intact.
+
+The `AutoAbstol` mutable magnitude cache and the `abstol` buffer it writes back
+into are built at `scalar_type`. When ODE parameter derivatives promote the
+integrated state to `ForwardDiff.Dual`, both buffers must accept Dual
+assignment; promoting them keeps the callback derivative-safe while preserving
+the physical per-component floors and per-solve cache isolation.
+"""
+function _auto_abstol_opts(solver::AbstractSolver, u0::AbstractVector,
+                           absolute_floor, scalar_type::Type = Float64;
+                           reltol = solver.reltol)
     if solver.tolerance_mode === :auto
-        floor = fill(float(solver.abstol), length(u0))
-        return floor, AutoAbstol(false; init_curmax = floor)
+        component_floor = absolute_floor isa AbstractVector ? copy(absolute_floor) :
+                          fill(float(absolute_floor), length(u0))
+        promoted_floor = scalar_type.(component_floor)
+        return promoted_floor,
+               AutoAbstol(false; init_curmax = promoted_floor ./ reltol)
     end
-    return scalar_tol, nothing
+    return absolute_floor isa AbstractVector ? copy(absolute_floor) : absolute_floor, nothing
+end
+
+_solver_absolute_floor(configured_problem::CrystallisationProblem, odeproblem) =
+    _solver_absolute_floor(configured_problem, odeproblem, configured_problem.solver)
+
+_solver_absolute_floor(configured_problem, odeproblem, configured_solver::AbstractSolver) =
+    configured_solver.abstol
+
+function _solver_absolute_floor(configured_problem, odeproblem, qmom_solver::QMOM)
+    n_moments = moment_count(qmom_solver)
+    moment_zero = abs(odeproblem.u0[1])
+    # A scalar tolerance cannot resolve SI raw moments with disparate dimensions.
+    moment_tolerances = [max(qmom_solver.abstol *
+                             max(moment_zero * qmom_solver.coordinate_scale^index,
+                                 eps(Float64) * qmom_solver.coordinate_scale^index),
+                             eps(Float64) * qmom_solver.coordinate_scale^index)
+                         for index in 0:(n_moments - 1)]
+    return vcat(moment_tolerances,
+                fill(qmom_solver.abstol, length(odeproblem.u0) - n_moments))
+end
+
+function _validate_crystallisation_solve_options(solve_options::NamedTuple)
+    for option_name in keys(solve_options)
+        option_name in (:u0, :p, :tspan, :saveat, :save_idxs, :callback,
+                        :merge_callbacks, :save_start, :save_end, :save_everystep,
+                        :initialize_save, :timeseries_steps) &&
+            throw(ArgumentError("solve_options cannot set $option_name; preserve the prepared state/time contract and use callback_factory for callbacks."))
+    end
+    return solve_options
+end
+
+"""
+    _solve_crystallisation_ode(problem, odeproblem, algorithm, saveat;
+                              solve_options=(;), callback_factory=nothing)
+
+Shared direct/prepared option policy. `callback_factory(odeproblem)` constructs
+one fresh user callback per evaluation, composed with package safety callbacks.
+Iteration and elapsed-time limits may be supplied explicitly in `solve_options`.
+"""
+function _solve_crystallisation_ode(problem::CrystallisationProblem, odeproblem,
+                                    algorithm, saveat;
+                                    solve_options::NamedTuple = (;),
+                                    callback_factory = nothing)
+    _validate_crystallisation_solve_options(solve_options)
+    solver_defaults = (reltol = problem.solver.reltol,
+                       abstol = _solver_absolute_floor(problem, odeproblem),
+                       dense = false, maxiters = CRISTOOL_MAX_SOLVER_ITERS)
+    if !(problem.solver isa MoM)
+        solver_defaults = merge(solver_defaults, (alg_hints = [:stiff],))
+    end
+    selected_options = merge(solver_defaults, solve_options)
+    scalar_type = promote_type(eltype(odeproblem.u0), _parameter_eltype(odeproblem.p))
+    abstol, auto_callback = _auto_abstol_opts(problem.solver, odeproblem.u0,
+                                              selected_options.abstol, scalar_type;
+                                              reltol = selected_options.reltol)
+    user_callback = callback_factory === nothing ? nothing : callback_factory(odeproblem)
+    solve_callback = CallbackSet(auto_callback, user_callback)
+    # Templates are reused; callbacks can hold mutable event state. Do not share
+    # those states across parameter candidates or concurrent evaluations.
+    original_callback = get(odeproblem.kwargs, :callback, nothing)
+    solve_problem = isnothing(original_callback) ? odeproblem :
+                    remake(odeproblem; callback = deepcopy(original_callback))
+    return solve(solve_problem, algorithm; selected_options..., abstol = abstol,
+                 saveat = saveat, callback = solve_callback)
 end

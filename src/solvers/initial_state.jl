@@ -202,7 +202,7 @@ function initial_state_from_characteristics(problem::CrystallisationProblem,
     population_count = _population_state_count(problem.solver)
 
     if characteristics.d43 == 0.0
-        return vcat(zeros(Float64, population_count), solvent_values)
+        return vcat(zeros(Float64, population_count), _operation_initial_state(problem.operation), solvent_values)
     end
 
     supports_d43 = problem.solver isa AbstractDiscretisedSolver ||
@@ -219,11 +219,8 @@ function initial_state_from_characteristics(problem::CrystallisationProblem,
     else
         _initial_mesh_population(problem, characteristics)
     end
-    return vcat(population, solvent_values)
+    return vcat(population, _operation_initial_state(problem.operation), solvent_values)
 end
 
-function _problem_with_initial_state(problem::CrystallisationProblem, state)
-    fields = NamedTuple{propertynames(problem)}(
-        Tuple(getfield(problem, field) for field in propertynames(problem)))
-    return CrystallisationProblem(; merge(fields, (; initial_state = state))...)
-end
+_problem_with_initial_state(problem::CrystallisationProblem, state) =
+    _copy_crystallisation_problem(problem; initial_state = state)

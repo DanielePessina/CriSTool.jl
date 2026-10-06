@@ -110,7 +110,7 @@ function fit_finite_volume_with_abcde(measurements, solver, aggregation, breakag
                               nparticles = abcde_particles,
                               generations = abcde_generations,
                               confidenceinterval = 0.90,
-                              test = :f,
+                              test = :auto,
                               extrastring = "FiniteVol ABCDE",
                               outputdir = RESULTS_DIR,
                               saveplot = true,

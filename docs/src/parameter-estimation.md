@@ -11,6 +11,16 @@ For a fully worked end-to-end example (PE + ABCDE + NUTS) see
 [Tutorial 2 — Parameter Estimation](https://github.com/DanielePessina/CriSTool.jl/blob/main/examples/Tutorial%202%20Parameter%20Estimation.jl)
 and [Tutorial 5 — ABCDE and MCMC](https://github.com/DanielePessina/CriSTool.jl/blob/main/examples/Tutorial%205%20ABCDE%20and%20MCMC.jl).
 
+`MHAlgorithm` accepts a configured `DE`, `NSGA2`, `SA` or `PSO` instance.
+Its algorithm parameters (including DE strategy, `F` and `CR`), options,
+information and termination criteria carry through to the run. CriSTool copies
+this configuration and starts with fresh optimizer status, leaving the supplied
+instance unchanged. Explicit `nparticles`, `generations`, `parallel_evaluation`
+and `verbosity` keywords override the corresponding supplied settings;
+`HPC = true` suppresses optimizer output. When no algorithm is supplied, the
+default is DE `:best1` with 128 particles, 128 iterations and batch evaluation.
+For reproducible runs, supply `Metaheuristics.Options(seed = ...)` on the algorithm.
+
 ## Basic workflow
 
 ```julia
@@ -65,20 +75,36 @@ problem = CrystallisationProblem(; kinetics_nucleationfunction = nucl_f,
 L = loss(lossfn, problem, optimal_params, experiments)
 ```
 
-Weights follow the observable field order. The default `[1.0, 1.0]` weights
-the first two observable fields; additional observables receive weight 1.0
-unless explicit weights are supplied. Each named observable is compared at all
-of its measured time points. `logMLE` uses measured variances by
-default, with `RelativeVariance(percent)` available for relative-error data:
+Named weights associate each factor with its observable even when experiments
+use different observable subsets or field orders:
 
 ```julia
-lossfn = logMLE(weighting = [1.0, 0.5, 1.0],
-                variance_model = RelativeVariance(5.0))
+lossfn = mae(weighting = (; concentration = 1.0, d43 = 0.5))
+setup = prepare_loss(problem, experiments)
+objectives = CriSTool.batchLF_procMO(lossfn, setup, optimal_params)
+setup.observable_names # labels of the multiobjective result
 ```
 
-The `problem` carries kinetics and solver; per-experiment conditions
-(temperature, initial concentration, and initial crystals) are read from each
-`CrystallisationExperiment` inside the loss.
+For homogeneous schemas, vector weights retain the first experiment's field
+order; unspecified factors default to 1.0. With heterogeneous schemas the global
+names are sorted. Nonuniform vector weights then require an explicit
+`observable_order` in `prepare_loss`; named weights are simpler. Scalar MAE sums
+per-observable mean errors pooled over included points across all experiments.
+Its multiobjective result contains those same terms. `logMLE` sums Gaussian NLL
+terms and uses measured variances by default; `RelativeVariance(percent)` selects
+a relative-error model.
+
+`prepare_loss(problem, experiments)` applies measured experiment temperature,
+initial concentration and declared initial crystals. Only the concentration point
+at the integration start is excluded from scoring because it supplies C0. A late
+first concentration sample cannot supply C0 when another observable begins earlier.
+`prepare_loss(configured_problems, experiments)` instead preserves each configured
+problem and scores all targets, including the first concentration sample. Use
+`exclude_initial_concentration` to record an intentional selection policy.
+
+Unsuccessful numerical solves receive a failure penalty. Invalid parameter sizes,
+unknown observables and exceptions in user kinetics or custom observables propagate;
+they cannot silently become a plausible objective value.
 
 ## Adding a new loss function
 
@@ -167,3 +193,42 @@ chain = MCMC_Routine(experiments, prior, nucl_f, growth_f,
 `MCMC_Routine` returns the named chain; with `outputdir` set it persists the
 chain (`.jld2`) and writes posterior pair, trace/density and
 measurements-vs-ensemble plots.
+
+When a problem template has an explicit `initial_state`, loss preparation retains
+its initial crystal population and other solvent initial values. It applies each
+experiment's measured initial concentration and constant temperature. Explicit
+`initial_crystals` on an experiment replace the template population. Preparation
+creates a new problem and leaves the template unchanged.
+
+## Simulation options in prepared losses
+
+Direct simulation and prepared loss evaluation use the same solver tolerances
+and iteration limits. QMOM uses an absolute tolerance for each raw moment,
+scaled to its physical dimensions; `tolerance_mode = :auto` preserves those
+floors and adapts each component separately. Each evaluation creates fresh
+callback state, including when parameter candidates run concurrently.
+
+Keep simulation settings separate from optimizer options:
+
+```julia
+setup = prepare_loss(problem, experiments;
+    solve_options = (; reltol = 1e-7, maxiters = 100_000, maxtime = 30.0))
+objective_value = loss(lossfn, setup, optimal_params)
+```
+
+An optional `algorithm` keyword overrides the selected SciML time-stepper.
+The default has no special prepared-loss wall-clock limit. Set `maxtime` or
+`maxiters` explicitly when an inference workflow needs a candidate budget.
+
+For a custom SciML callback, pass `callback_factory = odeproblem -> callback`.
+The factory runs once per solve and should construct fresh mutable state.
+Its callback composes with the package domain, extinction and CFL callbacks.
+Use `save_positions = (false, false)` when callback events should not add
+measurement predictions. The callback must preserve the population and solvent
+state layout. Errors raised by the factory propagate to the caller.
+
+`solve_options` accepts a named tuple of SciML options. State, parameter,
+integration-span and output-selection overrides (`u0`, `p`, `tspan`, `saveat`,
+`save_idxs`, and saving controls) are reserved by the prepared observation
+contract. Raw `callback` and `merge_callbacks` overrides are also reserved;
+use the factory to retain package safety callbacks.

@@ -75,6 +75,7 @@ simulations](simulation.md).
 | Question | Guide | Full example |
 | --- | --- | --- |
 | How do I run a simulation? | [Running simulations](simulation.md) | [Tutorial 1](https://github.com/DanielePessina/CriSTool.jl/blob/main/examples/Tutorial%201%20Running%20Simulations.jl) |
+| How do I model a reactor operation or steady state? | [Reactor operations and steady state](operations.md) | [Tutorial 9](https://github.com/DanielePessina/CriSTool.jl/blob/main/examples/Tutorial%209%20MSMPR%20Dynamic%20versus%20Steady%20State.jl), [Tutorial 10](https://github.com/DanielePessina/CriSTool.jl/blob/main/examples/Tutorial%2010%20Fed-Batch%20Mixing%20and%20Seeded%20Growth.jl) |
 | Which solver should I use? | [Solvers](solvers.md) | [Tutorial 6](https://github.com/DanielePessina/CriSTool.jl/blob/main/examples/Tutorial%206%20Dissolution.jl), [Tutorial 7](https://github.com/DanielePessina/CriSTool.jl/blob/main/examples/Tutorial%207%20QMOM.jl) |
 | How do I represent nucleation and growth? | [Kinetics](kinetics.md) | [Tutorial 1](https://github.com/DanielePessina/CriSTool.jl/blob/main/examples/Tutorial%201%20Running%20Simulations.jl) |
 | How do I load experimental data? | [Measurements and data loading](measurements.md) | [Tutorial 2](https://github.com/DanielePessina/CriSTool.jl/blob/main/examples/Tutorial%202%20Parameter%20Estimation.jl) |
@@ -89,6 +90,7 @@ simulations](simulation.md).
 ## Guides
 
 - [Running simulations](simulation.md)
+- [Reactor operations and steady state](operations.md)
 - [Solvers](solvers.md)
 - [Kinetics: nucleation, growth, aggregation, and breakage](kinetics.md)
 - [Measurements and data loading](measurements.md)

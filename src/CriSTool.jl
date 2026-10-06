@@ -13,7 +13,7 @@ using Turing
 
 # Scientific Computing & Differential Equations
 using OrdinaryDiffEq
-import DiffEqCallbacks: AutoAbstol
+import DiffEqCallbacks: AutoAbstol, StepsizeLimiter
 using SciMLSensitivity
 using OptimizationBase
 using PreallocationTools: DiffCache, get_tmp
@@ -74,10 +74,13 @@ const CRISTOOL_PRIOR_PLOT_SAMPLES = 2^18
 ## Export stuff
 export CrystallisationFVSolution, CrystallisationMoMSolution,
        CrystallisationQMOMSolution, CrystallisationDQMOMSolution,
+       CrystallisationSteadyStateSolution, SteadyStateConvergenceError,
        EnsembleFVSolution, EnsembleMoMSolution,
        CrystallisationProblem
 export Observable, ObservableColumns, CrystallisationExperiment, AbstractExperiment,
        initial_concentration
+export AbstractCrystallisationOperation, BatchOperation, MSMPROperation, FedBatchOperation,
+       CrystallisationFeed, reactor_vars, reactor_volume, operation_flows
 export AbstractInitialCrystals, LogNormalInitialCrystals, GaussianInitialCrystals
 export AbstractSolubilityModel, ConstantSolubility, PolynomialSolubility, CallableSolubility,
        AbstractSaturationModel, ConstantSaturation, PolynomialSaturation, CallableSaturation,
@@ -104,6 +107,8 @@ export AbstractAggregationFunction, AbstractBreakageFunction, nobreakage,
        breakage_empirical, breakage_uniform, noaggregation,
        aggr_scalar, aggr_linear, aggr_linearvol, aggr_avg
 export runsimulation, paramaxis, crystallisation_odeproblem,
+       crystallisation_solution,
+       solve_steadystate,
        get_characteristic_size, getmomentsizes,
        initial_state_from_characteristics
 export AbstractPELossFunction, AbstractVarianceModel, MeasuredVariance, RelativeVariance,
@@ -119,6 +124,7 @@ export AbstractSolver, AbstractMomentSolver, FiniteVol, MoM, QMOM, DQMOM, WENO,
        aggregation_moment_source, breakage_moment_source
 export run_abc, AbstractABCSampler, ABCDESampler, ABCDETurnerSampler
 export run_ensemble, run_ensemble_fixed
+export PredictionEnsemble, prediction_summary
 export PE_Routine, PE_Routine_Optimisation, ABCDE_Routine, ABCDE_Turner_Routine,
        plot_posterior_pairplot, plot_measurements_vs_ensemble
 export ChainPairPlots, ChainStatsPlots, ChainMeasurementPlots
@@ -137,6 +143,7 @@ include("core/measurement_types.jl")
 include("core/solver_types.jl")
 include("core/temperature_types.jl")
 include("core/saturation_types.jl")
+include("core/operation_types.jl")
 include("core/problem_types.jl")
 
 # Measurement ingestion and normalization.
@@ -156,12 +163,14 @@ include("physics/aggregation_breakage_rates.jl")
 
 # Numerical solver implementations and public simulation wrappers.
 include("solvers/solver_helpers.jl")
+include("solvers/operation_balances.jl")
 include("solvers/qmom.jl")
 include("solvers/mom.jl")
 include("solvers/dqmom.jl")
 include("solvers/finite_volume.jl")
 include("solvers/weno.jl")
 include("solvers/runsimulation.jl")
+include("solvers/steady_state.jl")
 
 include("output/pretty_printing.jl")
 
@@ -183,6 +192,7 @@ include("inference/bayesian.jl")
 # Uncertainty workflows.
 include("uncertainty/sensitivity.jl")
 include("uncertainty/ensembles.jl")
+include("inference/workflow_interfaces.jl")
 
 # Plotting is included last because it consumes all public solution and
 # inference interfaces.
