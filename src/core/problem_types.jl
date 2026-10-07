@@ -214,8 +214,7 @@ function _validate_crystallisation_problem(problem::CrystallisationProblem)
             required_value = hasproperty(problem, required_name) ? getproperty(problem, required_name) :
                 (problem.material_system !== nothing && hasproperty(problem.material_system, required_name) ?
                     getproperty(problem.material_system, required_name) : nothing)
-            required_value isa Real && isfinite(required_value) && required_value > 0 ||
-                throw(ArgumentError("$(typeof(kinetic_law)) requires positive $required_name."))
+            _validate_required_material_property(kinetic_law, required_name, required_value)
         end
     end
     if problem.solver isa MoM && (problem.kinetics_growthfunction isa AbstractFPLengthGrowthFunction ||

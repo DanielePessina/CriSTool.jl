@@ -31,6 +31,9 @@ are excluded from scoring. Preparation does not fit initial conditions or silent
 move the start to a later measurement. In steady mode, supply explicit
 `relaxation_initial` and an autonomous MSMPR operation; steady observations are
 targets, not initial conditions.
+Callable kinetic laws require `steady_options=(autonomous=true,)`, an explicit
+declaration that their rate does not depend on time. The package cannot infer
+that property from arbitrary user code.
 
 Gaussian `logMLE()` requires supplied positive variances for scored measurements.
 No noise is fitted and no missing variance is filled automatically. `mae()` does

@@ -19,6 +19,15 @@ import OptimizationOptimJL
         initial_crystals = interface_seed)
     @test interface_model.system.molecular_volume === nothing
     @test LysozymeSystem() isa CrystallisationSystem
+    offset_system = CrystallisationSystem(saturation_model = ConstantSolubility(10.),
+        crystal_density = 1000., volume_shape_factor = 1., properties = (signed_offset = -1e-9,))
+    offset_growth = KineticModel(CallableGrowth((rate_values, rate_context) -> rate_context.system.signed_offset;
+        parameters = (;), required = (:signed_offset,)))
+    offset_model = CrystallisationModel(system = offset_system, nucleation = interface_nucleation, growth = offset_growth)
+    offset_run = CrystallisationProblem(offset_model;
+        initial_conditions = (concentration = 20.,), temperature = ConstantTemperature(293.15))
+    @test CriSTool.growthrate(offset_growth.law, offset_run.parameterset_growth,
+        offset_run, CriSTool._get_initial_state(offset_run), 0.) == -1e-9
     @test_throws ArgumentError KineticModel(growth_empirical(); parameters = (wrong = 1.0, growth_order = 2.0))
     @test_throws ArgumentError CrystallisationProblem(CrystallisationModel(system = interface_system,
         nucleation = KineticModel(nucl_CNT(); parameters = (ln_nucleation_prefactor = 38., surface_energy = 0.0006)),
@@ -64,6 +73,21 @@ import OptimizationOptimJL
     @test optimized_fit.model.growth.parameters.held_order == 2.0
     @test interface_model.growth.parameters.speed == 0.01
 
+    pareto_experiment = CrystallisationExperiment(observables = merge(initial_observables,
+        (d43 = Observable(time = [100.], mean = [18e-6]),)),
+        initial_from = interface_experiment.initial_from, seed_shape = interface_experiment.seed_shape,
+        temperature = 293.15, exp_id = 31)
+    pareto_prepared = prepare_fit(interface_model, [pareto_experiment],
+        OptimisationSpec(bounds = interface_spec.bounds, loss = mae()))
+    pareto_results = fit(pareto_prepared; algorithm = Metaheuristics.NSGA2(N = 12,
+        options = Metaheuristics.Options(iterations = 3, seed = 42, parallel_evaluation = true)))
+    native_front = Metaheuristics.get_non_dominated_solutions(first(pareto_results).backend_result.population)
+    @test [pareto_result.parameters.growth.speed for pareto_result in pareto_results] ==
+        vec(Metaheuristics.positions(native_front))
+    @test permutedims(hcat([collect(values(pareto_result.objectives)) for pareto_result in pareto_results]...)) ≈
+        Metaheuristics.pareto_front(first(pareto_results).backend_result)
+    @test first(pareto_results).model.growth.parameters.held_order == 2.0
+
     interface_draws = ParameterSamples(growth = (speed = [0.01, 0.02],))
     interface_predictions = predict(interface_model, [interface_experiment, interface_experiment], interface_draws;
         saveat = [0., 100.], observables = (:concentration, :d43))
@@ -88,10 +112,17 @@ import OptimizationOptimJL
     late_experiment = CrystallisationExperiment(observables = (concentration = Observable(
         time = [10., 100.], mean = [20., 19.9], variance = [0.01, 0.01]),), temperature = 293.15, exp_id = 32)
     @test_throws ArgumentError prepare_fit(interface_model, [late_experiment], interface_spec)
+    @test_throws ArgumentError prepare_fit(interface_model, [interface_experiment], interface_spec; initial_time = 10.)
+    @test_throws ArgumentError prepare_fit(interface_model, [interface_experiment], interface_spec;
+        problem_options = (initial_state = interface_run.initial_state,))
     incomplete_seed_experiment = CrystallisationExperiment(observables = initial_observables,
         initial_from = (concentration = :concentration, crystals = (mass_concentration = :seed_mass,)),
         seed_shape = (family = :lognormal, geometric_std = 1.2), temperature = 293.15, exp_id = 33)
     @test_throws ArgumentError prepare_fit(interface_model, [incomplete_seed_experiment], interface_spec)
+    conflicting_shape_experiment = CrystallisationExperiment(observables = initial_observables,
+        initial_from = interface_experiment.initial_from,
+        seed_shape = (distribution = Uniform(10e-6, 20e-6), family = :lognormal), temperature = 293.15, exp_id = 33)
+    @test_throws ArgumentError prepare_fit(interface_model, [conflicting_shape_experiment], interface_spec)
     conflicting_seed_experiment = CrystallisationExperiment(observables = initial_observables,
         initial_from = interface_experiment.initial_from, seed_shape = interface_experiment.seed_shape,
         initial_crystals = LogNormalInitialCrystals(mass_concentration = 0., d43 = 0., geometric_std = 1.2),
@@ -103,6 +134,12 @@ import OptimizationOptimJL
     @test_throws ArgumentError prepare_fit(interface_model, [no_variance_experiment], interface_spec)
     @test prepare_fit(interface_model, [no_variance_experiment],
         OptimisationSpec(bounds = interface_spec.bounds, loss = mae())) isa PreparedFit
+    ignored_noise_experiment = CrystallisationExperiment(observables = (
+        concentration = no_variance_experiment.observables.concentration,
+        d43 = Observable(time = [100.], mean = [17e-6], variance = [1e-12])),
+        temperature = 293.15, exp_id = 35)
+    @test prepare_fit(interface_model, [ignored_noise_experiment], OptimisationSpec(bounds = interface_spec.bounds,
+        loss = logMLE(weighting = (concentration = 0., d43 = 1.)))) isa PreparedFit
 
     bayesian_prepared = prepare_fit(interface_model, [interface_experiment],
         BayesianSpec(priors = (growth = (speed = Uniform(0.001, 0.03),),)))
@@ -152,9 +189,15 @@ import OptimizationOptimJL
         temperature = 293.15, exp_id = 40, relaxation_initial = (concentration = 8.,),
         operation = MSMPROperation(volume = 2., inflow = .5,
             feed = CrystallisationFeed(concentration = 2.)))
-    steady_prepared = prepare_fit(interface_model, [msmpr_experiment], interface_spec; mode = :steady)
+    @test_throws ArgumentError prepare_fit(interface_model, [msmpr_experiment], interface_spec; mode = :steady)
+    steady_prepared = prepare_fit(interface_model, [msmpr_experiment], interface_spec;
+        mode = :steady, steady_options = (autonomous = true,))
     @test loss(steady_prepared, [.01]) ≈ .5 * log(2π * .01) atol = 1e-8
     @test steady_prepared.setup.included_observations[1][:concentration] == [1]
+    steady_predictions = predict(interface_model, [msmpr_experiment], interface_draws;
+        mode = :steady, observables = (:concentration,), steady_options = (autonomous = true,))
+    @test steady_predictions.ensembles[1].concentration ≈ fill(2., 2, 1) atol = 1e-8
+    @test_throws ArgumentError predict(interface_model, [interface_experiment], interface_draws; initial_time = 10.)
 
     noncontiguous_model = CrystallisationModel(system = interface_system,
         nucleation = KineticModel(CallableNucleation((rate_values, rate_context) -> rate_values.amplitude * 1e9;

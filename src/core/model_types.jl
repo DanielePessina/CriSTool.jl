@@ -31,6 +31,16 @@ required_properties(kinetic_law) = ()
 required_properties(::Union{nucl_CNT, nucl_CNTnoS, nucl_CNT_fixed, nucl_CNT_plus_second}) =
     (:molecular_volume,)
 
+function _validate_required_material_property(kinetic_law, required_name, required_value)
+    required_value !== nothing && (!(required_value isa Real) || isfinite(required_value)) ||
+        throw(ArgumentError("$(typeof(kinetic_law)) requires supplied finite $required_name."))
+    if required_name === :molecular_volume
+        required_value isa Real && required_value > 0 ||
+            throw(ArgumentError("$(typeof(kinetic_law)) requires positive molecular_volume."))
+    end
+    return nothing
+end
+
 """
     KineticModel(law; parameters=(;))
 
@@ -114,8 +124,7 @@ function _validate_material_model(crystal_model::CrystallisationModel)
             hasproperty(material_system, required_name) ||
                 throw(ArgumentError("Material system lacks required property $required_name."))
             required_value = getproperty(material_system, required_name)
-            required_value isa Real && isfinite(required_value) && required_value > 0 ||
-                throw(ArgumentError("$(typeof(bound_kinetic.law)) requires a positive $required_name."))
+            _validate_required_material_property(bound_kinetic.law, required_name, required_value)
         end
     end
     return crystal_model

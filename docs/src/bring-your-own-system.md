@@ -33,3 +33,10 @@ Additional solvent variables use named initial conditions and custom
 `solvent_dynamics`. Experiments map those initial quantities explicitly through
 `initial_from`. Custom observables use local `observable_projections` during
 preparation. Only kinetic parameters are selectable for fitting.
+
+Additional material values can be supplied as `properties=(offset=..., viscosity=...)`
+and read through `context.system`. Declare needed names with a callable law's
+`required=(...)` tuple. Missing properties and nonfinite scalar values fail;
+custom laws own the domain rules for their extra properties, including valid
+zero/signed values or supplied callable models. Density, shape factor and the
+molecular volume required by CNT retain their physical positivity requirements.

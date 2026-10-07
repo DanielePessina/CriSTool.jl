@@ -58,3 +58,37 @@ DQMOM reproduces an unseeded nucleation transient.
 Benchmark output is machine-dependent and is intentionally ignored by Git.
 Record reproducible results outside the package tree when a benchmark run is
 needed for a paper or release note.
+
+## Named model interface
+
+`model_interface.jl` compares built-in/callable growth rates, configured/model
+simulation entry points, and full/selected prepared losses. It verifies matched
+physical trajectories and objectives before timing, using BenchmarkTools medians
+and warmed inputs. BenchmarkTools is a benchmark-only dependency.
+
+Run `julia --project=benchmark benchmark/model_interface.jl`. To compare against
+a package checkout's existing resolved runtime environment while loading the
+benchmark instrumentation separately:
+
+```sh
+julia --project=. -e 'push!(LOAD_PATH, joinpath(pwd(), "benchmark")); include("benchmark/model_interface.jl")'
+```
+
+Observed on Julia 1.12.4, one thread, Apple M1, using the root resolved environment
+and the second command (2026-10-07):
+
+| Workload | Median | Bytes | Allocations |
+| --- | ---: | ---: | ---: |
+| built-in growth rate | 28.39 ns | 0 | 0 |
+| callable growth rate | 28.48 ns | 0 | 0 |
+| configured MoM solve | 168.25 µs | 14,096 | 212 |
+| model simulation | 168.88 µs | 14,096 | 212 |
+| full prepared loss | 152.38 µs | 10,608 | 182 |
+| selected prepared loss | 153.13 µs | 10,624 | 182 |
+
+The small timing differences are inconclusive. These measurements support
+accepting the concrete law/named-value representation; they are not a claim of
+an improvement in solver performance or first-call compilation latency. The
+workload uses CNT/empirical growth, MoM, five saved times over four hours, and a
+one-parameter selection. Mesh solves and large inference studies need their own
+representative benchmarks.

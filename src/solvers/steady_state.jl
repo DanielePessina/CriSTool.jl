@@ -119,7 +119,8 @@ function _steady_state_autonomy_issues(problem::CrystallisationProblem)
                                   (:dissolution_kinetics, problem.kinetics_dissolutionfunction),
                                   (:aggregation_kinetics, problem.kinetics_aggregationfunction),
                                   (:breakage_kinetics, problem.kinetics_breakagefunction))
-        parentmodule(typeof(kinetic_model)) === parentmodule(typeof(problem)) ||
+        (parentmodule(typeof(kinetic_model)) === parentmodule(typeof(problem)) &&
+            !(kinetic_model isa _CallableKinetic)) ||
             push!(issues, name)
     end
     return unique(issues)

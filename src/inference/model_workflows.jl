@@ -146,6 +146,8 @@ function _experiment_seed(experiment_run::CrystallisationExperiment)
     seed_shape = experiment_run.seed_shape
     seed_shape isa NamedTuple || throw(ArgumentError("Seed mapping requires explicit seed_shape."))
     if hasproperty(seed_shape, :distribution)
+        all(shape_name -> shape_name in (:distribution, :weighting, :mass_loss_tolerance), keys(seed_shape)) ||
+            throw(ArgumentError("Distribution seeds cannot also declare a characteristic shape or width."))
         keys(seed_mapping) == (:mass_concentration,) || throw(ArgumentError("Distribution seed mapping needs mass only."))
         return DistributionInitialCrystals(seed_shape.distribution;
             mass_concentration = seed_mass,
@@ -153,12 +155,18 @@ function _experiment_seed(experiment_run::CrystallisationExperiment)
             mass_loss_tolerance = get(seed_shape, :mass_loss_tolerance, 1e-4))
     end
     hasproperty(seed_mapping, :d43) || throw(ArgumentError("Characteristic seed mapping must supply d43."))
+    Set(keys(seed_mapping)) == Set((:mass_concentration, :d43)) ||
+        throw(ArgumentError("Characteristic seed mappings accept mass_concentration and d43 only."))
     seed_d43 = _mapped_initial_value(experiment_run, seed_mapping.d43)
     seed_family = get(seed_shape, :family, nothing)
     if seed_family === :lognormal && hasproperty(seed_shape, :geometric_std)
+        Set(keys(seed_shape)) == Set((:family, :geometric_std)) ||
+            throw(ArgumentError("Lognormal shape requires only family and geometric_std."))
         return _checked_seed_description(LogNormalInitialCrystals(; mass_concentration = seed_mass,
             d43 = seed_d43, geometric_std = _mapped_initial_value(experiment_run, seed_shape.geometric_std)))
     elseif seed_family === :gaussian && hasproperty(seed_shape, :standard_deviation)
+        Set(keys(seed_shape)) == Set((:family, :standard_deviation)) ||
+            throw(ArgumentError("Gaussian shape requires only family and standard_deviation."))
         return _checked_seed_description(GaussianInitialCrystals(; mass_concentration = seed_mass,
             d43 = seed_d43, standard_deviation = _mapped_initial_value(experiment_run, seed_shape.standard_deviation)))
     end
@@ -166,6 +174,10 @@ function _experiment_seed(experiment_run::CrystallisationExperiment)
 end
 
 function _model_experiment_problem(crystal_model, experiment_run, selected_solver; mode = :transient, kwargs...)
+    reserved_conditions = intersect(keys(kwargs), (:initial_conditions, :initial_state,
+        :initial_crystals, :temperature, :operation, :solver))
+    isempty(reserved_conditions) || throw(ArgumentError(
+        "Experiment initial observations and declared conditions cannot be overridden through problem_options: $reserved_conditions."))
     initial_seed = _experiment_seed(experiment_run)
     solvent_initial = if mode === :steady
         experiment_run.relaxation_initial isa NamedTuple || throw(ArgumentError(
@@ -201,10 +213,12 @@ end
 
 function _strict_likelihood_variances(loss_function, prepared_setup)
     loss_function isa logMLE || return
+    _validate_loss_weights(loss_function, prepared_setup)
     loss_function.variance_model isa MeasuredVariance ||
         throw(ArgumentError("Likelihood studies require supplied measured variances; relative noise is not inferred."))
     for (experiment_index, experiment_run) in enumerate(prepared_setup.experiments)
-        for observable_name in prepared_setup.observable_names
+        for (objective_index, observable_name) in enumerate(prepared_setup.observable_names)
+            iszero(_observable_weight(loss_function, objective_index, observable_name)) && continue
             hasproperty(experiment_run.observables, observable_name) || continue
             target_indices = prepared_setup.included_observations[experiment_index][observable_name]
             isempty(target_indices) && continue
@@ -234,6 +248,8 @@ function prepare_fit(crystal_model::CrystallisationModel, measured_runs::Abstrac
         solver::AbstractSolver = MoM(), mode::Symbol = :transient,
         problem_options::NamedTuple = (;), kwargs...)
     mode in (:transient, :steady) || throw(ArgumentError("mode must be :transient or :steady."))
+    isempty(intersect(keys(kwargs), (:initial_time, :exclude_initial_concentration))) ||
+        throw(ArgumentError("Model fitting owns the time-zero initial-observation and scoring policy."))
     isempty(measured_runs) && throw(ArgumentError("Supply at least one experiment."))
     selected_tree = fit_specification isa OptimisationSpec ? fit_specification.bounds : fit_specification.priors
     kinetic_selection = _kinetic_selection(crystal_model, selected_tree)
@@ -306,7 +322,13 @@ function fit(prepared_fit::PreparedFit{<:Any, <:OptimisationSpec}; algorithm,
             starting_values, prepared_fit; lb = lower_bounds, ub = upper_bounds)
         OptimizationBase.solve(optimization_problem, algorithm; searchoptions...)
     end
-    optimal_values = backend_result isa Metaheuristics.State ? Metaheuristics.minimizer(backend_result) : backend_result.u
+    optimal_values = if algorithm isa Metaheuristics.Algorithm && algorithm.parameters isa Metaheuristics.NSGA2
+        Metaheuristics.positions(Metaheuristics.get_non_dominated_solutions(backend_result.population))
+    elseif backend_result isa Metaheuristics.State
+        Metaheuristics.minimizer(backend_result)
+    else
+        backend_result.u
+    end
     if optimal_values isa AbstractMatrix
         return [_model_fit_result(prepared_fit, collect(candidate_row), backend_result) for candidate_row in eachrow(optimal_values)]
     end
@@ -322,8 +344,11 @@ function _selected_optimizer_objective(prepared_fit, candidate_values::AbstractV
     return loss(prepared_fit, candidate_values)
 end
 function _selected_optimizer_objective(prepared_fit, candidate_values::AbstractMatrix, multiobjective::Bool)
-    candidate_outputs = [_selected_optimizer_objective(deepcopy(prepared_fit), collect(candidate_row), multiobjective)
-        for candidate_row in eachrow(candidate_values)]
+    candidate_outputs = Vector{Any}(undef, size(candidate_values, 1))
+    Threads.@threads for candidate_index in axes(candidate_values, 1)
+        candidate_outputs[candidate_index] = _selected_optimizer_objective(deepcopy(prepared_fit),
+            collect(view(candidate_values, candidate_index, :)), multiobjective)
+    end
     return multiobjective ? (permutedims(hcat(first.(candidate_outputs)...)),
         zeros(size(candidate_values, 1), 1), zeros(size(candidate_values, 1), 1)) : candidate_outputs
 end
@@ -471,14 +496,18 @@ Each draw is reused across all runs. Noise is added only through `measurement_sa
 """
 function predict(crystal_model::CrystallisationModel, prediction_runs::AbstractVector,
         joint_samples::ParameterSamples; saveat = nothing, solver::AbstractSolver = MoM(),
-        observables = nothing, problem_options::NamedTuple = (;), kwargs...)
+        observables = nothing, mode::Symbol = :transient, problem_options::NamedTuple = (;), kwargs...)
     _validate_material_model(crystal_model)
+    mode in (:transient, :steady) || throw(ArgumentError("mode must be :transient or :steady."))
+    if any(prediction_run -> prediction_run isa CrystallisationExperiment, prediction_runs)
+        get(kwargs, :initial_time, 0.0) == 0 || throw(ArgumentError("Experiment predictions start from time-zero initial observations."))
+    end
     isempty(prediction_runs) && throw(ArgumentError("Supply prediction experiments or problems."))
     selected_paths = _selection_for_samples(crystal_model, joint_samples)
     expanded_draws = hcat([_expanded_parameters(selected_paths, view(joint_samples.values, :, draw_index))
         for draw_index in axes(joint_samples.values, 2)]...)
     physical_runs = [prediction_run isa CrystallisationExperiment ?
-        _model_experiment_problem(crystal_model, prediction_run, solver; problem_options...) : prediction_run
+        _model_experiment_problem(crystal_model, prediction_run, solver; mode, problem_options...) : prediction_run
         for prediction_run in prediction_runs]
     all(physical_run -> physical_run isa CrystallisationProblem, physical_runs) ||
         throw(ArgumentError("Predictions require experiments or configured problems."))
@@ -508,7 +537,7 @@ function predict(crystal_model::CrystallisationModel, prediction_runs::AbstractV
             temperature = physical_run.temp_profile, exp_id = experiment_id))
     end
     prepared_predictions = prepare_loss(physical_runs, prediction_experiments;
-        exclude_initial_concentration = false, kwargs...)
+        exclude_initial_concentration = false, mode, kwargs...)
     ensemble_predictions = run_ensemble(expanded_draws, prepared_predictions; observables)
     return PredictionResult(joint_samples, getproperty.(prediction_experiments, :exp_id), ensemble_predictions)
 end
