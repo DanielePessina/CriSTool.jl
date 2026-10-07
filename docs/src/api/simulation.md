@@ -2,6 +2,17 @@
 
 ```@docs
 CrystallisationProblem
+CrystallisationSystem
+LysozymeSystem
+CrystallisationModel
+KineticModel
+CallableGrowth
+CallableNucleation
+CallableLengthGrowth
+KineticContext
+required_properties
+named_parameters
+simulate
 runsimulation
 CrystallisationFVSolution
 CrystallisationMoMSolution
@@ -16,6 +27,9 @@ solve_steadystate
 AbstractInitialCrystals
 LogNormalInitialCrystals
 GaussianInitialCrystals
+DistributionInitialCrystals
+number_weighted
+seed_domain_diagnostics
 initial_state_from_characteristics
 get_characteristic_size
 getmomentsizes

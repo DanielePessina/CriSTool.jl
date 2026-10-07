@@ -22,6 +22,19 @@ Key ideas:
 - To add a new model: subtype the right `Abstract*Function`, declare
   `paramaxis`, and implement the corresponding rate method.
 
+## Bind a law to named values
+
+```julia
+bound_growth = KineticModel(growth_empirical(); parameters = (
+    growth_coefficient = 1e-9, growth_order = 2.0))
+```
+
+Unlisted parameters in a fitting specification remain fixed; separate fixed
+kinetic variants are unnecessary in the model workflow. For a simple custom
+law use `CallableGrowth`, `CallableNucleation` or `CallableLengthGrowth`; see
+[Bringing your own system](bring-your-own-system.md) and Tutorial 4.
+The dispatch-based interface below remains available for advanced extensions.
+
 ## Built-in examples
 
 ```julia
@@ -129,7 +142,7 @@ Three pieces, all in your own user script:
 1. A struct subtyping the right `Abstract*Function`.
 2. A `paramaxis` method returning a ComponentArrays `Axis`.
 3. The rate function, which reads named parameters via
-   `_named_params(model, parameters)`.
+   `named_parameters(model, parameters)`.
 
 Worked example in
 [Tutorial 4](https://github.com/DanielePessina/CriSTool.jl/blob/main/examples/Tutorial%204%20Defining%20a%20Custom%20Kinetic.jl). Sketched
@@ -138,7 +151,7 @@ here for nucleation and growth:
 ```julia
 using CriSTool
 using CriSTool: AbstractFPNucleationFunction, AbstractFPScalarGrowthFunction,
-                _named_params
+                named_parameters
 import CriSTool: paramaxis, nucleationrate, growthrate
 using ComponentArrays
 
@@ -154,7 +167,7 @@ paramaxis(::nucl_custom) = ComponentArrays.Axis(ln_prefactor = 1, nucleation_ord
 
 function nucleationrate(nf::nucl_custom, parameters,
                         prob::CrystallisationProblem, state, t)
-    p = _named_params(nf, parameters)
+    p = named_parameters(nf, parameters)
     S = supersaturation(prob, state, t)
     return S > 1.001 ? exp(p.ln_prefactor) * (S - 1)^p.nucleation_order : 0.0
 end
@@ -171,7 +184,7 @@ paramaxis(::growth_custom) = ComponentArrays.Axis(growth_coefficient = 1, growth
 
 function growthrate(gf::growth_custom, parameters,
                     prob::CrystallisationProblem, state, t)
-    p = _named_params(gf, parameters)
+    p = named_parameters(gf, parameters)
     S = supersaturation(prob, state, t)
     return S > 1.001 ? p.growth_coefficient * (S - 1)^p.growth_order : 0.0
 end

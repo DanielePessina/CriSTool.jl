@@ -109,7 +109,7 @@ Base.@kwdef @concrete struct CrystallisationProblem{NuF <: AbstractNucleationFun
     saturation_model::SM = lysozyme_solubility()
     volume_shape_factor::Float64 = 0.81 #0.55
     solid_mass_concentration_threshold::Float64 = 1e-12
-    molecular_volume::Float64 = 2.97e-26
+    molecular_volume::Union{Nothing, Float64} = 2.97e-26
     initial_solvent_state::SS = (; concentration = initial_concentration)
     solvent_dynamics::SD = default_solvent_dynamics
 
@@ -137,6 +137,7 @@ Base.@kwdef @concrete struct CrystallisationProblem{NuF <: AbstractNucleationFun
     kinetics_dissolutionfunction::DissF = nodissolution()
     parameterset_dissolution::DissP = Float64[]
     operation::OP = BatchOperation()
+    material_system = nothing
 
 end
 
@@ -206,6 +207,21 @@ called once at the public simulation boundary; the hot RHS only evaluates the
 already validated rate laws.
 """
 function _validate_crystallisation_problem(problem::CrystallisationProblem)
+    for kinetic_law in (problem.kinetics_nucleationfunction, problem.kinetics_growthfunction,
+            problem.kinetics_dissolutionfunction, problem.kinetics_aggregationfunction,
+            problem.kinetics_breakagefunction)
+        for required_name in required_properties(kinetic_law)
+            required_value = hasproperty(problem, required_name) ? getproperty(problem, required_name) :
+                (problem.material_system !== nothing && hasproperty(problem.material_system, required_name) ?
+                    getproperty(problem.material_system, required_name) : nothing)
+            _validate_required_material_property(kinetic_law, required_name, required_value)
+        end
+    end
+    if problem.solver isa MoM && (problem.kinetics_growthfunction isa AbstractFPLengthGrowthFunction ||
+            problem.kinetics_growthfunction isa AbstractFPLengthDissolutionFunction ||
+            problem.kinetics_dissolutionfunction isa AbstractFPLengthDissolutionFunction)
+        throw(ArgumentError("MoM requires scalar kinetics; choose DQMOM for length growth or a mesh solver."))
+    end
     if problem.solver isa MoM &&
        (!(problem.kinetics_aggregationfunction isa noaggregation) ||
         !(problem.kinetics_breakagefunction isa nobreakage))

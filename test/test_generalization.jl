@@ -103,7 +103,8 @@ end
                                        variance = fill(0.5, 4)),
             # custom observable beyond the lysozyme set: accumulated crystal mass
             mass = Observable(; time = [0.0, 1800.0, 3600.0, 7200.0],
-                              mean = sol.concentration[1] .- sol.concentration),
+                              mean = sol.concentration[1] .- sol.concentration,
+                              variance = fill(0.5, 4)),
             pH = Observable(; time = [0.0, 2700.0, 7200.0],
                             mean = [sol.solvent_state.pH[1],
                                     sol.solvent_state.pH[2],

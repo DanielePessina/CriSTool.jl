@@ -127,3 +127,28 @@ problem = CrystallisationProblem(; kinetics_nucleationfunction = nucl_CNT(),
                                  solver = MoM())
 L = loss(logMLE(), problem, [38.0, 0.0006, 1e-9 / 60, 3.0], experiments)
 ```
+
+## Initial observations and seed hooks
+
+`initial_from=(concentration=:concentration,)` is the default. Transient fitting
+requires an exact sample at time zero; a late first measurement fails preparation.
+For seeded experiments, declare a complete mapping and shape:
+
+```julia
+seeded_experiment = CrystallisationExperiment(
+    observables = measured_observables,
+    initial_from = (concentration = :concentration,
+        crystals = (mass_concentration = :seed_mass, d43 = :d43)),
+    seed_shape = (family = :lognormal, geometric_std = 1.2),
+    temperature = ConstantTemperature(293.15), exp_id = 1)
+```
+
+Mapped seed observables must have time-zero values. Width may itself name an
+observable. Alternatively use `seed_shape=(distribution=length_distribution,)`
+and map only mass concentration. Missing seed declarations mean unseeded; partial
+or contradictory declarations fail. Initialising samples are excluded from scoring.
+
+`load_measurements` and `experiments_from_table` accept `initial_from`, `seed_shape`,
+`operation` and `relaxation_initial`, preserving the same semantics as explicitly
+constructed experiments. Bootstrap and variance balancing retain these settings
+and unselected observables.

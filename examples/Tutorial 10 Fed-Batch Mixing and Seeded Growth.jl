@@ -1,4 +1,4 @@
-"""
+#=
 Tutorial 10: fed-batch pure mixing and seeded growth.
 
 A fed-batch has one inlet and no outlet: the volume is a reactor state with
@@ -17,7 +17,7 @@ G·Δt, so d43 shifts by G·Δt while M₀·V stays conserved and the concentrat
 drops slightly below the pure-mixing value because solute is consumed.
 
 Run with:  julia --project=examples "examples/Tutorial 10 Fed-Batch Mixing and Seeded Growth.jl"
-"""
+=#
 
 using CriSTool
 using CairoMakie

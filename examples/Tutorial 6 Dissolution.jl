@@ -1,4 +1,4 @@
-"""
+#=
 Tutorial 6: signed growth and dissolution.
 
 The same scalar dissolution rate is run with MoM, FiniteVol, and WENO.
@@ -7,7 +7,7 @@ the crystal growth rate is negative and the solution concentration rises.
 For a length-dependent dissolution law, use Tutorial 6's discretised solver
 pattern with `growth_dissolution_length()`; QMOM support is intentionally
 limited to scalar signed kinetics.
-"""
+=#
 
 using CriSTool
 using CairoMakie

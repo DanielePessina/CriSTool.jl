@@ -1,4 +1,8 @@
 using CriSTool
+# Internal engine regression coverage is intentionally independent of the
+# recommended public model workflow.
+using CriSTool: PE_Routine, PE_Routine_Optimisation, ABCDE_Routine,
+    ABCDE_Turner_Routine, MCMC_Routine, run_abc, run_ensemble, run_ensemble_fixed
 using Test
 using Distributions
 using DataFrames
@@ -8,6 +12,8 @@ import FiniteDifferences
 import StaticArrays
 
 @testset "CriSTool.jl" begin
+    include("test_model_interface.jl")
+    if !("interface" in ARGS)
     include("test_structs.jl")
     include("test_initial_state.jl")
     include("test_operations.jl")
@@ -48,4 +54,5 @@ import StaticArrays
     include("test_gold_fixture.jl")
     include("test_plotting.jl")
     include("test_aqua.jl")
+    end
 end

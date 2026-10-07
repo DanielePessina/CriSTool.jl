@@ -1,82 +1,23 @@
-"""
-Tutorial 4: Defining a custom kinetic family.
-
-Three pieces let you add a new kinetic without modifying CriSTool:
-  1. A struct subtyping the right Abstract* family.
-  2. A `paramaxis` method declaring a ComponentArrays Axis.
-  3. A `growthrate` / `nucleationrate` / `aggregationrate` / `breakagerate`
-     method with the standard signature
-     `(fn, parameters, prob::CrystallisationProblem, state, t)`.
-
-The example adds a Michaelis-Menten-style saturation growth law:
-
-    G(S) = A * (S - 1) / (B + (S - 1))    for S > 1, else 0
-
-where S = supersaturation = state[end] / saturation_concentration(prob, t).
-"""
-
+#=Tutorial 4: define a custom law with a callable and one named parameter schema.=#
 using CriSTool
-using CriSTool: AbstractFPScalarGrowthFunction, _named_params
-import CriSTool: paramaxis, growthrate   # `import` (not `using`) to extend
-using ComponentArrays
-using CairoMakie
-
-# 1. Struct.
-struct growth_saturation <: AbstractFPScalarGrowthFunction
-    nparams::Int64
-    string::String
-    symbols::Vector{Symbol}
-end
-growth_saturation() = growth_saturation(2, "Saturation Gr", [:A, :B])
-
-# 2. Axis — powers `p.A` / `p.B` named access in the rate function below.
-paramaxis(::growth_saturation) = ComponentArrays.Axis(A = 1, B = 2)
-
-# 3. Rate function. Standard signature: (fn, params, prob, state, t).
-#    The rate computes S itself via supersaturation(prob, state, t) and reads
-#    temperature from prob.temp_profile — no positional supersaturation or temperature.
-function growthrate(gf::growth_saturation, parameters::AbstractVector,
-                    prob::CrystallisationProblem, state, t)
-    p = _named_params(gf, parameters)
-    S = supersaturation(prob, state, t)
-    return S > 1.001 ? p.A * (S - 1) / (p.B + (S - 1)) : 0.0
-end
 
 function main()
-    # Rate function callable in isolation — build a problem and a state.
-    prob = CrystallisationProblem(; kinetics_growthfunction = growth_saturation(),
-                                  solver = MoM())
-    state = [0.0, 0.0, 0.0, 0.0, 0.0, 1.5 * saturation_concentration(prob, 0.0)]
-    println("G(S=1.5, A=1.5, B=0.3) = ",
-            growthrate(growth_saturation(),
-                       ComponentVector(A = 1.5e-9 / 60, B = 0.3),
-                       prob, state, 0.0), " m/s")
-
-    # Plug into runsimulation. ComponentVector input keeps the layout explicit;
-    # a flat [nucleation; growth] vector also works.
-    params = ComponentVector(nucl = (ln_nucleation_prefactor = 38.0, surface_energy = 0.0006),
-                              gr   = (A = 1.5e-9 / 60, B = 0.3),
-                              agg  = Float64[], br = Float64[])
-    _, sol = runsimulation(params;
-                            nucl = nucl_CNT(), gr = growth_saturation(),
-                            agg = noaggregation(), br = nobreakage(),
-                            initial_concentration = 18.0,
-                            solver = MoM(),
-                            save_idx = 0.0:360.0:21600.0)
-
-    println("Final concentration: $(sol.concentration[end]) kg/m³")
-    println("Final d43:           $(sol.d43[end]) m")
-
-    fig = Figure(size = (900, 400))
-    Label(fig[0, :], "Tutorial 4: custom growth_saturation kinetic",
-          fontsize = 16, halign = :left)
-    ax_c = CairoMakie.Axis(fig[1, 1], xlabel = "Time (min)",
-                            ylabel = "Concentration (mg/mL)")
-    lines!(ax_c, sol.time ./ 60, sol.concentration, color = :dodgerblue)
-    ax_d = CairoMakie.Axis(fig[1, 2], xlabel = "Time (min)",
-                            ylabel = "d43 (μm)")
-    lines!(ax_d, sol.time ./ 60, 1e6 .* sol.d43, color = :seagreen)
-    display(fig)
+    saturation_growth = CallableGrowth(
+        (rate_values, rate_context) -> begin
+            driving_force = max(supersaturation(rate_context) - 1, 0)
+            rate_values.coefficient * driving_force / (rate_values.half_saturation + driving_force)
+        end; parameters = (coefficient = 2e-11, half_saturation = 0.3))
+    crystal_model = CrystallisationModel(system = LysozymeSystem(),
+        nucleation = KineticModel(nucl_CNT(); parameters = (
+            ln_nucleation_prefactor = 38.0, surface_energy = 0.0006)),
+        growth = KineticModel(saturation_growth))
+    configured_run = CrystallisationProblem(crystal_model;
+        initial_conditions = (concentration = 18.0,), temperature = ConstantTemperature(293.15))
+    trajectory = simulate(configured_run; saveat = 0.0:600.0:21600.0)
+    @assert trajectory.success
+    println("Custom growth: final concentration = ", trajectory.concentration[end])
+    # Fit only coefficient using OptimisationSpec(bounds=(growth=(coefficient=(...),),)).
+    # Advanced users can still define custom law types, paramaxis and rate methods.
+    trajectory
 end
-
 main()

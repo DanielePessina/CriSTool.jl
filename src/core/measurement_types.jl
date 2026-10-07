@@ -119,10 +119,14 @@ Base.@kwdef @concrete struct CrystallisationExperiment{O <: NamedTuple,
                                                        M <: NamedTuple} <:
                  AbstractExperiment
     observables::O
-    temperature::Float64
+    temperature
     exp_id::Int
     initial_crystals::I = nothing
     metadata::M = NamedTuple()
+    initial_from::NamedTuple = (; concentration = :concentration)
+    seed_shape = nothing
+    operation::AbstractCrystallisationOperation = BatchOperation()
+    relaxation_initial = nothing
 end
 
 """
