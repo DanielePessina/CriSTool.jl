@@ -721,7 +721,7 @@ function _experiment_problem(problem::CrystallisationProblem,
              collect(values(experiment_solvent)))
     end
     experiment_problem = _copy_crystallisation_problem(problem;
-        temp_profile = ConstantTemperature(expt.temperature),
+        temp_profile = _experiment_temperature(expt.temperature),
         initial_concentration = applied_concentration,
         initial_solvent_state = experiment_solvent,
         initial_state = experiment_state)
@@ -840,10 +840,9 @@ end
 function _measurement_variance(observable, mean_value, index,
                                ::MeasuredVariance, relative_variance_floor)
     measured_variance = _variance_at(observable, index)
-    fallback_variance = (0.1 * abs(mean_value))^2
-    variance_floor = _scaled_variance_floor(mean_value, relative_variance_floor)
-    return measured_variance === nothing ? max(variance_floor, fallback_variance) :
-           max(measured_variance, variance_floor)
+    measured_variance isa Real && isfinite(measured_variance) && measured_variance > 0 ||
+        throw(ArgumentError("Gaussian likelihood requires supplied strictly positive measurement variance."))
+    return measured_variance
 end
 
 function _measurement_variance(observable, mean_value, index,
@@ -1007,6 +1006,7 @@ function _loss_objectives(lf::AbstractPELossFunction, setup::LossSetup, params)
             iszero(_observable_weight(lf, objective_index, name)) && continue
             measured = getproperty(expt.observables, name)
             included_indices = _included_observation_indices(setup, experiment_index, name)
+            isempty(included_indices) && continue
             predicted = prep.mode === :steady ?
                 fill(only(_setup_observable_values(setup, solution, name)), length(measured.time)) :
                 _simulated_at(setup, solution, name, measured.time)

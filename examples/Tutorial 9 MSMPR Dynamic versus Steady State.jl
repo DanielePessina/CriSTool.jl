@@ -1,4 +1,4 @@
-"""
+#=
 Tutorial 9: MSMPR dynamic relaxation versus an explicit steady-state solve.
 
 A fixed-flow MSMPR with a crystal-bearing feed and no growth or nucleation
@@ -26,7 +26,7 @@ crystal load `M₀_feed` (here one-tenth of the tank seed mass, so
 not steady inputs.
 
 Run with:  julia --project=examples "examples/Tutorial 9 MSMPR Dynamic versus Steady State.jl"
-"""
+=#
 
 using CriSTool
 using CairoMakie

@@ -1,10 +1,10 @@
-"""
+#=
 Tutorial 7: a three-node Quadrature Method of Moments (QMOM) simulation.
 
 QMOM evolves raw moments and reconstructs a Gaussian quadrature at each saved
 time. The quadrature is useful for evaluating size-dependent closures while
 the public observables remain the moment-derived d32 and d43 metrics.
-"""
+=#
 
 using CriSTool
 using CairoMakie

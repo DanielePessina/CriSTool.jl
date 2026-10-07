@@ -34,6 +34,10 @@ function balance_variances(experiments::Vector{<:CrystallisationExperiment};
             observables = merge(expt.observables, NamedTuple{(obs,)}((balanced,))),
             temperature = expt.temperature,
             initial_crystals = expt.initial_crystals,
+            initial_from = expt.initial_from,
+            seed_shape = expt.seed_shape,
+            operation = expt.operation,
+            relaxation_initial = expt.relaxation_initial,
             exp_id = expt.exp_id,
             metadata = expt.metadata)
     end

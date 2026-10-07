@@ -17,6 +17,9 @@ fluxlimiter_ospre(gradient_ratio) = gradient_ratio <= zero(gradient_ratio) ?
 @inline _named_params(model, p::AbstractVector) = ComponentArray(p, paramaxis(model))
 @inline _named_params(_, p::ComponentArrays.ComponentArray) = p
 
+"""`named_parameters(law, values)` provides supported named access for custom dispatch-based kinetics."""
+@inline named_parameters(kinetic_law, parameter_values::AbstractVector) = _named_params(kinetic_law, parameter_values)
+
 # Generic fallback for kinetics that haven't declared a custom paramaxis.
 # Generates `θ1, θ2, ...` from `model.nparams`. Specific paramaxis methods
 # (e.g. `paramaxis(::nucl_CNT) = ComponentArrays.Axis(ln_nucleation_prefactor=1,

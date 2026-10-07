@@ -17,8 +17,8 @@ abstract type AbstractVarianceModel end
 """
     MeasuredVariance()
 
-Use the measured variance, falling back to a relative 10% standard deviation
-when the observable has no variance.
+Use supplied strictly positive measurement variances. Missing or zero variance
+on a scored measurement is an error; noise is never fitted or invented.
 """
 struct MeasuredVariance <: AbstractVarianceModel end
 

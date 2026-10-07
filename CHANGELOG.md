@@ -2,6 +2,21 @@
 
 ## 0.1.0 — unreleased
 
+- Named material and kinetic models reused across simulation, selected-parameter
+  optimisation, explicit-prior Bayesian/ABC inference and joint predictions.
+- Callable scalar/node-dependent kinetics with supported named parameter and
+  physical context interfaces; generic material properties fail when required
+  values are missing instead of inheriting lysozyme values.
+- Time-zero initial-observation mappings and explicit seed shapes, preserved by
+  data loading, balancing and bootstrap. Likelihood scoring requires supplied
+  positive variances; no default noise variance is invented.
+- Distribution-based seed populations with number/volume conversion, checked
+  improper moments and mesh mass-loss diagnostics without silent renormalisation.
+- Fitted models returned without input mutation, named joint uncertainty draws,
+  retained failed samples and explicit optional future-measurement noise.
+- Positional inference/ensemble routines are no longer exported; see the named
+  workflow and migration guides. Low-level numerical interfaces remain available.
+
 - Dynamic batch, fixed-volume MSMPR, and variable-volume fed-batch population
   balances, with independent initial seeds and crystal-bearing or clear feeds.
 - Explicit autonomous MSMPR steady solving by dynamic relaxation, checked with

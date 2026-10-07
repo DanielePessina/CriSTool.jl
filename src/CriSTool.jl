@@ -22,6 +22,7 @@ using PreallocationTools: DiffCache, get_tmp
 using DataFrames
 using ComponentArrays
 using Distributions
+using QuadGK: quadgk
 using MCMCChains
 import Base.Iterators
 
@@ -122,28 +123,32 @@ export AbstractSolver, AbstractMomentSolver, FiniteVol, MoM, QMOM, DQMOM, WENO,
        moment_order, moment_count, nmoments, quadrature, qmom_quadrature,
        dqmom_quadrature,
        aggregation_moment_source, breakage_moment_source
-export run_abc, AbstractABCSampler, ABCDESampler, ABCDETurnerSampler
-export run_ensemble, run_ensemble_fixed
+export AbstractABCSampler, ABCDESampler, ABCDETurnerSampler
 export PredictionEnsemble, prediction_summary
-export PE_Routine, PE_Routine_Optimisation, ABCDE_Routine, ABCDE_Turner_Routine,
-       plot_posterior_pairplot, plot_measurements_vs_ensemble
+export plot_posterior_pairplot, plot_measurements_vs_ensemble
 export ChainPairPlots, ChainStatsPlots, ChainMeasurementPlots
 export plot_ps_measurements_vs_ensemble, plot_measurements_vs_simulation,
        plot_ps_measurements_vs_simulation
 export chains_to_matrix, distribution_to_matrix, create_product_prior, prior_to_matrix
-export nuts_model, MCMC_Routine, kinetic_parameter_symbols, rename_chain
+export nuts_model, kinetic_parameter_symbols, rename_chain
 export CRISTOOL_PALETTE
+export CrystallisationSystem, LysozymeSystem, KineticModel, CrystallisationModel,
+       CallableGrowth, CallableNucleation, CallableLengthGrowth, KineticContext,
+       required_properties, named_parameters, simulate, OptimisationSpec, BayesianSpec, ABCSpec,
+       PreparedFit, prepare_fit, fit, FitResult, InferenceResult, is_likelihood, loss_terms,
+       ParameterSamples, parameter_samples, predict, PredictionResult, measurement_samples,
+       DistributionInitialCrystals, number_weighted, seed_domain_diagnostics
 
 # Core types and public interfaces.
 include("core/solution_types.jl")
 include("core/kinetic_types.jl")
 include("core/loss_types.jl")
 include("core/initial_crystal_types.jl")
-include("core/measurement_types.jl")
 include("core/solver_types.jl")
 include("core/temperature_types.jl")
 include("core/saturation_types.jl")
 include("core/operation_types.jl")
+include("core/measurement_types.jl")
 include("core/problem_types.jl")
 
 # Measurement ingestion and normalization.
@@ -154,12 +159,14 @@ include("measurements/bootstrap.jl")
 # Solution post-processing precedes the model and solver implementations.
 include("solvers/post_solution.jl")
 include("solvers/initial_state.jl")
+include("solvers/seed_distributions.jl")
 
 # Kinetic rate families and population-balance terms.
 include("physics/model_interfaces.jl")
 include("physics/nucleation_rates.jl")
 include("physics/growth_rates.jl")
 include("physics/aggregation_breakage_rates.jl")
+include("core/model_types.jl")
 
 # Numerical solver implementations and public simulation wrappers.
 include("solvers/solver_helpers.jl")
@@ -193,6 +200,7 @@ include("inference/bayesian.jl")
 include("uncertainty/sensitivity.jl")
 include("uncertainty/ensembles.jl")
 include("inference/workflow_interfaces.jl")
+include("inference/model_workflows.jl")
 
 # Plotting is included last because it consumes all public solution and
 # inference interfaces.

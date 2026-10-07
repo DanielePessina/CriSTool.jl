@@ -52,8 +52,8 @@ end
 
 Bootstrap arbitrary observable entries independently. The first point of each
 series is retained as its experiment anchor; later points are sampled with
-replacement. Original experiment metadata and unselected observable fields
-are not included in the returned bootstrap experiment.
+replacement. Metadata, initial mappings, conditions and unselected observables
+are preserved, including initial measurements needed by the fit workflow.
 """
 function bootstrap_measurements(experiments::Vector{<:CrystallisationExperiment},
                                 n_bootstrap::Integer = 1;
@@ -97,11 +97,15 @@ function bootstrap_measurements(experiments::Vector{<:CrystallisationExperiment}
                               Tuple{Int, Float64, Float64, Any}[])
                 _bootstrap_observable(original, entries)
             end
-            observables = NamedTuple{Tuple(observable_names)}(Tuple(rebuilt))
+            observables = merge(expt.observables, NamedTuple{Tuple(observable_names)}(Tuple(rebuilt)))
             push!(replicate, CrystallisationExperiment(;
                 observables = observables,
                 temperature = expt.temperature,
                 initial_crystals = expt.initial_crystals,
+                initial_from = expt.initial_from,
+                seed_shape = expt.seed_shape,
+                operation = expt.operation,
+                relaxation_initial = expt.relaxation_initial,
                 exp_id = expt.exp_id,
                 metadata = expt.metadata))
         end

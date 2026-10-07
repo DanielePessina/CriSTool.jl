@@ -116,7 +116,11 @@ function experiments_from_table(table;
                                     NamedTuple(),
                                 temperature_transform = identity,
                                 filters::NamedTuple = NamedTuple(),
-                                initial_crystals_cols = nothing)
+                                initial_crystals_cols = nothing,
+                                initial_from::NamedTuple = (; concentration = :concentration),
+                                seed_shape = nothing,
+                                operation::AbstractCrystallisationOperation = BatchOperation(),
+                                relaxation_initial = nothing)
     table = DataFrame(table)
     id_source = _measurement_source_column(id_col)
     _require_measurement_column(table, id_source, "experiment identifiers")
@@ -195,6 +199,7 @@ function experiments_from_table(table;
             observables = named_observables,
             temperature = temperature_value,
             initial_crystals = initial_crystals,
+            initial_from, seed_shape, operation, relaxation_initial,
             exp_id = experiment_id,
             metadata = metadata)
     end
@@ -276,7 +281,11 @@ function load_measurements(filepath::AbstractString;
                            temperature_transform = identity,
                            temperature_range::Tuple = (nothing, nothing),
                            filters::NamedTuple = NamedTuple(),
-                           initial_crystals_cols = nothing)
+                           initial_crystals_cols = nothing,
+                           initial_from::NamedTuple = (; concentration = :concentration),
+                           seed_shape = nothing,
+                           operation::AbstractCrystallisationOperation = BatchOperation(),
+                           relaxation_initial = nothing)
     table = _measurement_file_table(filepath, format)
     if temperature_range != (nothing, nothing)
         _require_measurement_column(table, :Temperature, "temperature filtering")
@@ -299,5 +308,6 @@ function load_measurements(filepath::AbstractString;
                                   metadata_cols = normalized_metadata,
                                   temperature_transform = temperature_transform,
                                   filters = filters,
-                                  initial_crystals_cols = initial_crystals_cols)
+                                  initial_crystals_cols = initial_crystals_cols,
+                                  initial_from, seed_shape, operation, relaxation_initial)
 end

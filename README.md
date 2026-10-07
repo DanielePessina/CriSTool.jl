@@ -1,157 +1,69 @@
 # CriSTool
 
-CriSTool is a Julia package for simulating batch crystallisation, fitting
-kinetic parameters to measurements, and propagating parameter uncertainty
-through population-balance models.
+CriSTool is a Julia package for crystallisation population-balance simulation,
+kinetic parameter estimation and uncertainty propagation. It supports batch,
+MSMPR and fed-batch operations with MoM, QMOM, DQMOM, finite-volume and WENO
+solvers. All physical inputs use numeric SI units.
 
-Read the [hosted development documentation](https://danielepessina.github.io/CriSTool.jl/dev/),
-including the [API reference](https://danielepessina.github.io/CriSTool.jl/dev/api/)
-and [tutorials](https://danielepessina.github.io/CriSTool.jl/dev/tutorials/).
+From a checkout, run `julia --project=. -e 'using Pkg; Pkg.instantiate()'`.
+Julia 1.10–1.13 is supported. Runnable tutorials use a separate environment:
+`julia --project=examples -e 'using Pkg; Pkg.instantiate()'`.
 
-The package provides:
-
-- population-balance solvers based on the Method of Moments (MoM), the
-  Quadrature Method of Moments (QMOM), Direct QMOM (DQMOM), finite volumes,
-  and WENO;
-- batch, MSMPR, and fed-batch reactor operations with clear or crystal-bearing
-  feeds, reactor volume/dilution, and (release backend) an explicit MSMPR
-  steady-state runner with scaled residual diagnostics;
-- nucleation, growth, aggregation, breakage, and signed dissolution kinetics;
-- measurement ingestion from CSV/table sources and typed experiment containers;
-- solver-aware initial crystal states from mass, d43, and explicit lognormal or
-  Gaussian distribution characteristics;
-- parameter estimation with Metaheuristics.jl and Optimization.jl-compatible
-  algorithms;
-- likelihood-free ABCDE and Turing NUTS workflows;
-- sensitivity analysis, ensemble simulation, and Makie plotting utilities.
-
-## Installation
-
-CriSTool declares Julia compatibility `^1.10` in `Project.toml`. The tutorial
-environment currently targets Julia 1.12. From a repository checkout,
-instantiate the package environment with:
-
-```sh
-julia --project=. -e 'using Pkg; Pkg.instantiate()'
-```
-
-After the `0.1.0` registry release, install CriSTool into another Julia
-environment with:
-
-```julia
-using Pkg
-Pkg.add("CriSTool")
-```
-
-The runnable examples use a separate environment because some tutorials add
-`GlobalSensitivity`, `QuasiMonteCarlo`, and other tutorial-only dependencies:
-
-```sh
-julia --project=examples -e 'using Pkg; Pkg.instantiate()'
-```
-
-## Quick start: one simulation
-
-`runsimulation` takes kinetic models, a parameter vector, and a solver. The
-canonical flat parameter vector is ordered as `[nucleation; growth;
-dissolution; aggregation; breakage]`. When `diss` is omitted, the compatibility
-layout is `[nucleation; growth; aggregation; breakage]`; `nodissolution()`,
-no-op aggregation, and no-op breakage contribute empty blocks.
+## Simulate your model
 
 ```julia
 using CriSTool
 
-nucl = nucl_CNT()
-gr   = growth_empirical()
+crystal_model = CrystallisationModel(
+    system = LysozymeSystem(),
+    nucleation = KineticModel(nucl_CNT(); parameters = (
+        ln_nucleation_prefactor = 38.0, surface_energy = 0.0006)),
+    growth = KineticModel(growth_empirical(); parameters = (
+        growth_coefficient = 1e-9 / 60, growth_order = 3.0)))
 
-parameters = [38.0, 0.0006, 1e-9 / 60, 3.0]
-problem, solution = runsimulation(
-    parameters;
-    nucl = nucl,
-    gr = gr,
-    agg = noaggregation(),
-    br = nobreakage(),
-    solver = MoM(),
-    initial_concentration = 18.0,
-    save_idx = 0.0:3600.0:28800.0,
-)
+batch_run = CrystallisationProblem(crystal_model;
+    initial_conditions = (concentration = 18.0,),
+    temperature = ConstantTemperature(293.15), solver = MoM())
+trajectory = simulate(batch_run; saveat = 0.0:3600.0:28800.0)
+trajectory.success
+trajectory.concentration[end]
+trajectory.d43[end]
 
-if solution.success
-    println("Final concentration: ", solution.concentration[end])
-    println("Final d43 (m): ", solution.d43[end])
-end
 ```
 
-The function returns the constructed `CrystallisationProblem` and a solution
-trajectory. Moment solutions expose `concentration`, `d10`, `d32`, `d43`, and
-`moment2`; finite-volume and WENO solutions also expose the resolved size
-distribution and `d10q`, `d50q`, and `d90q` quantiles. QMOM and DQMOM expose
-raw moments and quadrature data; DQMOM currently requires seeded initial
-crystals. See the hosted [Solvers guide](https://danielepessina.github.io/CriSTool.jl/dev/solvers/).
+The model binds kinetic laws to named values and can be reused across experiments
+and solvers. Simulation initial conditions are explicit. During transient fitting,
+experiments supply initial observations at time zero; absent seed declarations
+mean unseeded. A separate specification selects which kinetic parameters vary.
+Material properties, initial conditions and supplied measurement noise are never fitted.
 
-## Choose a starting point
-
-| If you want to… | Read | Run |
-| --- | --- | --- |
-| run a simulation or choose a solver | [Running simulations](https://danielepessina.github.io/CriSTool.jl/dev/simulation/), [Solvers](https://danielepessina.github.io/CriSTool.jl/dev/solvers/) | [Tutorial 1](<examples/Tutorial 1 Running Simulations.jl>) |
-| model a reactor operation or steady state | [Reactor operations and steady state](https://danielepessina.github.io/CriSTool.jl/dev/operations/) | [Tutorial 9](<examples/Tutorial 9 MSMPR Dynamic versus Steady State.jl>), [Tutorial 10](<examples/Tutorial 10 Fed-Batch Mixing and Seeded Growth.jl>) |
-| load measurements from CSV | [Measurements and data loading](https://danielepessina.github.io/CriSTool.jl/dev/measurements/) | [Tutorial 2](<examples/Tutorial 2 Parameter Estimation.jl>) |
-| fit kinetic parameters | [Parameter estimation](https://danielepessina.github.io/CriSTool.jl/dev/parameter-estimation/) | [Tutorial 2](<examples/Tutorial 2 Parameter Estimation.jl>) |
-| compare ABCDE and NUTS | [ABCDE routine](https://danielepessina.github.io/CriSTool.jl/dev/abcde/), [Parameter estimation](https://danielepessina.github.io/CriSTool.jl/dev/parameter-estimation/) | [Tutorial 5](<examples/Tutorial 5 ABCDE and MCMC.jl>) |
-| define a temperature or saturation model | [Temperature profiles](https://danielepessina.github.io/CriSTool.jl/dev/temperature-profiles/), [Saturation models](https://danielepessina.github.io/CriSTool.jl/dev/saturation-models/) | [Tutorial 1](<examples/Tutorial 1 Running Simulations.jl>) |
-| add a kinetic family or other system component | [Kinetics](https://danielepessina.github.io/CriSTool.jl/dev/kinetics/), [Bringing your own system](https://danielepessina.github.io/CriSTool.jl/dev/bring-your-own-system/) | [Tutorial 4](<examples/Tutorial 4 Defining a Custom Kinetic.jl>) |
-| model dissolution | [Kinetics](https://danielepessina.github.io/CriSTool.jl/dev/kinetics/), [Solvers](https://danielepessina.github.io/CriSTool.jl/dev/solvers/) | [Tutorial 6](<examples/Tutorial 6 Dissolution.jl>) |
-| inspect QMOM nodes and weights | [Solvers](https://danielepessina.github.io/CriSTool.jl/dev/solvers/) | [Tutorial 7](<examples/Tutorial 7 QMOM.jl>) |
-| run seeded DQMOM | [Solvers](https://danielepessina.github.io/CriSTool.jl/dev/solvers/), [Running simulations](https://danielepessina.github.io/CriSTool.jl/dev/simulation/) | — |
-| compare real-data MoM and FiniteVol fits | [Parameter estimation](https://danielepessina.github.io/CriSTool.jl/dev/parameter-estimation/), [Solvers](https://danielepessina.github.io/CriSTool.jl/dev/solvers/) | [Tutorial 8](<examples/Tutorial 8 Real-data MoM versus QMOM.jl>) |
-| run sensitivity studies | [Sensitivity analysis](https://danielepessina.github.io/CriSTool.jl/dev/sensitivity/) | [Tutorial 3](<examples/Tutorial 3 Sensitivity Analysis.jl>) |
-| run ensemble uncertainty studies | [Ensembles and uncertainty](https://danielepessina.github.io/CriSTool.jl/dev/uq-ensembles/) | — |
-
-The complete tutorial catalogue, dependencies, and run commands are in
-the hosted [Tutorials](https://danielepessina.github.io/CriSTool.jl/dev/tutorials/).
-The scripts in `examples/` are the full runnable versions.
-
-## A structured parameter vector
-
-The flat form is convenient for optimisers. When parameters need to be read or
-edited by name, wrap them with the composite axis built from the selected
-kinetic models:
+## Fit and predict
 
 ```julia
-using ComponentArrays
+experiments = load_measurements("measurements.csv")
+fit_spec = OptimisationSpec(bounds = (
+    growth = (growth_coefficient = (1e-12, 1e-9),)), loss = logMLE())
+prepared = prepare_fit(crystal_model, experiments, fit_spec; solver = MoM())
+# using Metaheuristics
+# fitted = fit(prepared; algorithm = Metaheuristics.DE(N = 32))
 
-axis = paramaxis(nucl, gr, noaggregation(), nobreakage())
-parameters_named = ComponentArray(parameters, axis)
-
-parameters_named.nucl.ln_nucleation_prefactor
-parameters_named.gr.growth_order
+# Joint draws can come from NUTS, ABC, bootstrap fits, or user input.
+draws = ParameterSamples(growth = (growth_coefficient = [1e-11, 2e-11],))
+predictions = predict(crystal_model, experiments, draws; solver = MoM())
+bands = prediction_summary(predictions, :concentration)
 ```
 
-See the hosted [Running simulations](https://danielepessina.github.io/CriSTool.jl/dev/simulation/)
-and [Kinetics](https://danielepessina.github.io/CriSTool.jl/dev/kinetics/)
-for parameter axes and custom model definitions.
+Likelihood fitting requires supplied positive variances for scored measurements.
+MAE does not. Predictions describe physical trajectories by default; adding a
+supplied measurement-noise distribution is an explicit separate operation.
 
-## Documentation and development
+Read the [development documentation](https://danielepessina.github.io/CriSTool.jl/dev/),
+the [model workflow guide](docs/src/model-workflow.md), and the
+[migration guide](docs/src/migration.md). Existing low-level solver interfaces
+remain available for advanced numerical work; positional inference routines are
+no longer the recommended interface.
 
-- [Hosted documentation](https://danielepessina.github.io/CriSTool.jl/dev/)
-- [Hosted API reference](https://danielepessina.github.io/CriSTool.jl/dev/api/)
-- [Hosted tutorial catalogue](https://danielepessina.github.io/CriSTool.jl/dev/tutorials/)
+Run tests with `julia --project=. -e 'using Pkg; Pkg.test()'`.
+Build docs with `julia --project=docs docs/make.jl` after instantiating `docs`.
 
-Run the package test suite with:
-
-```sh
-julia --project=. -e 'using Pkg; Pkg.test()'
-```
-
-Build the local documentation site with:
-
-```sh
-julia --project=docs -e 'using Pkg; Pkg.instantiate()'
-julia --project=docs docs/make.jl
-```
-
-## License
-
-CriSTool is released under the BSD-3-Clause license; see [LICENSE](LICENSE).
-The vendored KissABC notice is recorded in
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+BSD-3-Clause; see [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

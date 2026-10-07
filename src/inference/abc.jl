@@ -73,6 +73,11 @@ function _abc_particles_matrix(particles)
     end
 end
 
+function _abc_particles_matrix(particles::MonteCarloMeasurements.AbstractParticles)
+    scalar_draws = collect(particles.particles)
+    return isempty(scalar_draws) ? nothing : reshape(scalar_draws, 1, :)
+end
+
 _abc_has_particles(particles) = !isnothing(_abc_particles_matrix(particles))
 
 # ============================================================================
