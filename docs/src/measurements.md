@@ -3,8 +3,8 @@
 CriSTool represents each experimental run as a `CrystallisationExperiment`:
 a typed `NamedTuple` of per-observable `Observable` containers. Every
 observable is a time series on its own grid; a single final-state measurement
-is a one-element series. The container also stores the run conditions
-(temperature, initial crystal state, `exp_id`). There is
+is a one-element series. The container also stores the `RunConditions` the run
+used, an integer `exp_id` and metadata. There is
 no `Dict{Symbol,Any}` anywhere; adding a new observable (pH, mass, PSD, ...)
 means adding a field to the `NamedTuple`, not a new container type.
 
@@ -53,7 +53,10 @@ retained in `experiment.metadata`.
 experiment is grouped by `Exp_ID` with columns such as `Time`,
 `Concentration`, `Concentration_var`, `Temperature`, and optional
 `PS`/`PS_var`. Use the `filters` keyword for arbitrary source columns and
-`initial_crystals_cols` to load initial seed characteristics.
+`initial_crystals_cols` to load initial seed characteristics. The `conditions`
+keyword takes any `RunConditions` keywords shared by every loaded run (see
+below); `temperature` may be supplied there only when the table has no
+temperature column.
 The bundled fixture already stores Kelvin; use an affine transform such as
 `T -> T + 273.15` only when adapting a separate Celsius source file.
 
@@ -100,8 +103,8 @@ expt.observables.d43.time             # particle-size measurement times
 expt.observables.d43.mean             # d43 at those times (m)
 expt.observables.d43.variance         # per-time variance, or nothing
 initial_concentration(expt)            # first concentration timepoint
-expt.temperature                       # Kelvin
-expt.initial_crystals
+expt.conditions.temperature            # AbstractTemperature (Kelvin)
+expt.conditions.crystals               # initial seed description, or nothing
 expt.exp_id
 ```
 
@@ -116,39 +119,55 @@ series for the standard workflow.
 ## Loss evaluation
 
 Losses consume every observable in the experiment: each named observable
-contributes an objective term over all of its time points.
-
-All loss functions take a `CrystallisationProblem` (kinetics + solver), the
-parameter vector, and the experiments:
+contributes an objective term over all of its time points. Evaluate a loss
+through a prepared fit, which selects the kinetic parameters by name:
 
 ```julia
-problem = CrystallisationProblem(; kinetics_nucleationfunction = nucl_CNT(),
-                                 kinetics_growthfunction = growth_empirical(),
-                                 solver = MoM())
-L = loss(logMLE(), problem, [38.0, 0.0006, 1e-9 / 60, 3.0], experiments)
+using Metaheuristics
+fit_specification = OptimisationSpec(
+    bounds = (growth = (growth_coefficient = (1e-12, 1e-9), growth_order = (1.0, 4.0)),),
+    algorithm = DE(N = 16), loss = mae())
+prepared_fit = prepare_fit(crystal_model, experiments, fit_specification; solver = MoM())
+objective_value = loss(prepared_fit, [1e-9 / 60, 3.0])
 ```
 
-## Initial observations and seed hooks
+The vector follows the order of the selected names. `loss_terms` reports the
+per-observable objectives.
 
-`initial_from=(concentration=:concentration,)` is the default. Transient fitting
-requires an exact sample at time zero; a late first measurement fails preparation.
-For seeded experiments, declare a complete mapping and shape:
+## Initial conditions from observations
+
+Every experiment carries `RunConditions`. A `FromObservation(:name)` value is
+read from the experiment's own time-zero observation of `:name`. The initial
+concentration defaults to `FromObservation(:concentration)`, so transient
+fitting requires an exact sample at time zero; a late first measurement fails
+preparation. Seeds use the same placeholder in any numeric field:
 
 ```julia
 seeded_experiment = CrystallisationExperiment(
-    observables = measured_observables,
-    initial_from = (concentration = :concentration,
-        crystals = (mass_concentration = :seed_mass, d43 = :d43)),
-    seed_shape = (family = :lognormal, geometric_std = 1.2),
-    temperature = ConstantTemperature(293.15), exp_id = 1)
+    observables = measured_observables, exp_id = 1,
+    conditions = RunConditions(temperature = 293.15,
+        crystals = LogNormalInitialCrystals(
+            mass_concentration = FromObservation(:seed_mass),
+            d43 = FromObservation(:d43), geometric_std = 1.2)))
 ```
 
-Mapped seed observables must have time-zero values. Width may itself name an
-observable. Alternatively use `seed_shape=(distribution=length_distribution,)`
-and map only mass concentration. Missing seed declarations mean unseeded; partial
-or contradictory declarations fail. Initialising samples are excluded from scoring.
+Placeholder observables must have time-zero values. A width may itself be a
+placeholder. `DistributionInitialCrystals(length_distribution;
+mass_concentration = FromObservation(:seed_mass))` reads only the mass. No seed
+means an unseeded run. The time-zero samples consumed by placeholders are
+excluded from scoring.
 
-`load_measurements` and `experiments_from_table` accept `initial_from`, `seed_shape`,
-`operation` and `relaxation_initial`, preserving the same semantics as explicitly
-constructed experiments. Bootstrap and variance balancing retain these settings
-and unselected observables.
+`load_measurements` and `experiments_from_table` accept the same settings through
+`conditions = (...)`, a `NamedTuple` of `RunConditions` keywords applied to every
+loaded run:
+
+```julia
+experiments = load_measurements(path;
+    conditions = (crystals = LogNormalInitialCrystals(
+        mass_concentration = 0.1, d43 = 20e-6, geometric_std = 1.2),))
+```
+
+A placeholder in shared conditions is resolved separately for each run, so per-run
+seed values only need the named observable mapped through `observables`.
+Seeds come either from `initial_crystals_cols` or from `conditions`, not both.
+Bootstrap and variance balancing retain conditions and unselected observables.

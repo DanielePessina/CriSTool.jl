@@ -20,8 +20,13 @@ custom_growth = CallableGrowth(
     (parameters, context) -> parameters.coefficient *
         max(supersaturation(context) - 1, 0)^parameters.order;
     parameters = (coefficient = 1e-9, order = 2.0))
-bound_growth = KineticModel(custom_growth)
+crystal_model = CrystallisationModel(material;
+    nucleation = nucl_empirical(log10_nucleation_prefactor = 8.0, nucleation_order = 2.0),
+    growth = custom_growth)
 ```
+
+Callable laws carry their values and are bound automatically;
+`KineticModel(custom_growth)` binds one explicitly.
 
 `temperature(context)` and `solvent_state(context)` expose physical values.
 Advanced callers may inspect `context.problem`, `context.state` and `context.time`.
@@ -29,10 +34,12 @@ Advanced callers may inspect `context.problem`, `context.state` and `context.tim
 takes an additional length in metres and fills solver-owned buffers internally.
 Custom types and `paramaxis`/rate dispatch remain available for specialised laws.
 
-Additional solvent variables use named initial conditions and custom
-`solvent_dynamics`. Experiments map those initial quantities explicitly through
-`initial_from`. Custom observables use local `observable_projections` during
-preparation. Only kinetic parameters are selectable for fitting.
+Additional solvent variables use `RunConditions(solvent = (pH = 7.0,))` and a
+custom `solvent_dynamics` callable, passed to `CrystallisationProblem` or to
+`prepare_fit` through `problem_options = (solvent_dynamics = ...,)`. Experiments
+read those initial values from time-zero data with `solvent = (pH =
+FromObservation(:pH),)`. Custom observables use local `observable_projections`
+during preparation. Only kinetic parameters are selectable for fitting.
 
 Additional material values can be supplied as `properties=(offset=..., viscosity=...)`
 and read through `context.system`. Declare needed names with a callable law's

@@ -2,7 +2,9 @@
 
 Sensitivity analysis evaluates how changes in kinetic parameters affect a
 chosen simulation output. The package supplies the forward model through
-`runsimulation`; the sampling and sensitivity estimators come from
+`runsimulation`, the low-level flat-vector interface intended for automatic
+differentiation and sensitivity work (use `simulate` with a
+`CrystallisationModel` for ordinary runs); the sampling and sensitivity estimators come from
 GlobalSensitivity.jl and QuasiMonteCarlo.jl.
 
 The lower-level `CriSTool.forwardsensitivity` helper currently covers batch scalar

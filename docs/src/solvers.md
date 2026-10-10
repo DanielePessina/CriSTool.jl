@@ -72,7 +72,7 @@ moment vector used by `MoM` and `QMOM`. Its public population block is
 where `wᵢ` is a particle-number weight in `m⁻³` and `Lᵢ` is a physical crystal
 length in metres. The initial weights must be strictly positive and the nodes
 must be distinct and above `minimum_size`. DQMOM is seeded-only in this first
-implementation: provide `initial_crystals` or a complete direct `initial_state`.
+implementation: provide a seed through `RunConditions(crystals = ...)`.
 An empty initial population is rejected instead of being activated by an
 artificial epsilon seed.
 
@@ -100,24 +100,18 @@ all nodes remain above `minimum_size`, then the solve fails with a
 ```julia
 using CriSTool
 
-initial_crystals = LogNormalInitialCrystals(
-    mass_concentration = 0.25,
-    d43 = 12e-6,
-    geometric_std = 1.25)
+growth_only_model = CrystallisationModel(
+    LysozymeSystem(saturation_model = ConstantSolubility(10.0));
+    nucleation = nucl_empirical_fixed(log10_nucleation_prefactor = -Inf,
+                                      nucleation_order = 1.0),
+    growth = growth_empirical(growth_coefficient = 3e-9, growth_order = 1.2))
 
-parameters = [3e-9, 1.2]  # growth coefficient (m/s), supersaturation order
-problem, solution = runsimulation(
-    parameters;
-    nucl = nucl_empirical_fixed(log10_nucleation_prefactor = -Inf,
-                                nucleation_order = 1.0),
-    gr = growth_empirical(),
-    agg = noaggregation(),
-    br = nobreakage(),
-    solver = DQMOM(nquadrature = 3),
-    initial_crystals = initial_crystals,
-    initial_concentration = 20.0,
-    saturation_model = ConstantSolubility(10.0),
-    save_idx = 0.0:3600.0:14400.0)
+seeded_run = RunConditions(temperature = 293.15, concentration = 20.0,
+    crystals = LogNormalInitialCrystals(
+        mass_concentration = 0.25, d43 = 12e-6, geometric_std = 1.25))
+
+solution = simulate(growth_only_model, seeded_run;
+    solver = DQMOM(nquadrature = 3), saveat = 0.0:3600.0:14400.0)
 
 solution.nodes[:, end]
 solution.weights[:, end]
@@ -129,17 +123,13 @@ solution.d43[end]
 ```julia
 using CriSTool
 
-params = [38.0, 0.0007, 1e-9 / 60, 3.0]
-problem, solution = runsimulation(
-    params;
-    nucl = nucl_CNT(),
-    gr = growth_empirical(),
-    agg = noaggregation(),
-    br = nobreakage(),
-    solver = QMOM(nquadrature = 3),
-    initial_concentration = 18.0,
-    save_idx = 0.0:3600.0:28800.0,
-)
+crystal_model = CrystallisationModel(LysozymeSystem();
+    nucleation = nucl_CNT(ln_nucleation_prefactor = 38.0, surface_energy = 0.0007),
+    growth = growth_empirical(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
+batch_run = RunConditions(temperature = 293.15, concentration = 18.0)
+
+solution = simulate(crystal_model, batch_run;
+    solver = QMOM(nquadrature = 3), saveat = 0.0:3600.0:28800.0)
 
 @show solution.moments[:, end]
 @show quadrature(solution, length(solution.time)).nodes
@@ -148,36 +138,16 @@ problem, solution = runsimulation(
 
 ## Example: choosing solvers
 
+The model and conditions stay the same; only the `solver` keyword changes.
+
 ```julia
-using CriSTool
+save_grid = 0.0:3600.0:28800.0
 
-params = [38.0, 0.0007, 1e-9 / 60, 3.0]
-nucl, gr = nucl_CNT(), growth_empirical()
-agg, br  = noaggregation(), nobreakage()
-
-# MoM
-_, sol_mom = runsimulation(
-    params; nucl = nucl, gr = gr, agg = agg, br = br,
-    solver = MoM(),
-    initial_concentration = 18.0,
-    save_idx = 0.0:3600.0:28800.0,
-)
-
-# Finite volume
-_, sol_fv = runsimulation(
-    params; nucl = nucl, gr = gr, agg = agg, br = br,
-    solver = FiniteVol(meshsize = 100, lmax = 50e-6),
-    initial_concentration = 18.0,
-    save_idx = 0.0:3600.0:28800.0,
-)
-
-# WENO
-_, sol_weno = runsimulation(
-    params; nucl = nucl, gr = gr, agg = agg, br = br,
-    solver = WENO(meshsize = 100, lmax = 50e-6),
-    initial_concentration = 18.0,
-    save_idx = 0.0:3600.0:28800.0,
-)
+sol_mom  = simulate(crystal_model, batch_run; solver = MoM(), saveat = save_grid)
+sol_fv   = simulate(crystal_model, batch_run;
+    solver = FiniteVol(meshsize = 100, lmax = 50e-6), saveat = save_grid)
+sol_weno = simulate(crystal_model, batch_run;
+    solver = WENO(meshsize = 100, lmax = 50e-6), saveat = save_grid)
 ```
 
 ## Overriding the time-stepper
@@ -188,19 +158,8 @@ Override the ODE time-stepping algorithm by setting the solver's
 default.
 
 ```julia
-using CriSTool
-
-params = [38.0, 0.0007, 1e-9 / 60, 3.0]
-
-_, sol = runsimulation(
-    params;
-    nucl = nucl_CNT(),
-    gr = growth_empirical(),
-    agg = noaggregation(),
-    br = nobreakage(),
+sol = simulate(crystal_model, batch_run;
     solver = FiniteVol(meshsize = 200, lmax = 50e-6,
                        timestepping_algorithm = :ssprk43),
-    initial_concentration = 18.0,
-    save_idx = 0.0:3600.0:28800.0,
-)
+    saveat = 0.0:3600.0:28800.0)
 ```

@@ -6,6 +6,8 @@ CrystallisationSystem
 LysozymeSystem
 CrystallisationModel
 KineticModel
+RunConditions
+FromObservation
 CallableGrowth
 CallableNucleation
 CallableLengthGrowth
@@ -64,9 +66,10 @@ below and the [Reactor operations and steady state](../operations.md) guide).
 `default_solvent_dynamics` is the default callable used by
 `CrystallisationProblem`. It updates the named `:concentration` solvent
 variable from the crystal growth rate and returns zero rates for any
-additional named solvent variables. Supply `initial_solvent_state` and a
-custom `solvent_dynamics` callable when the process includes coupled variables
-such as pH or volume.
+additional named solvent variables. Supply extra initial solvent values through
+`RunConditions(solvent = (...))` and a custom `solvent_dynamics` callable
+(a `CrystallisationProblem` keyword, or `problem_options` in `prepare_fit`) when
+the process includes coupled variables such as pH or volume.
 
 ## Steady MSMPR solves
 

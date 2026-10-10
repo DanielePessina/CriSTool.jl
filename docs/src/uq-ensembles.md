@@ -15,16 +15,26 @@ physical_bands = prediction_summary(predictions, :concentration)
 Unspecified kinetic values come from the reference model. Each column of
 `joint_draws.values` is reused across experiments. `predictions.ensembles` holds
 one ensemble per run, with sample rows and time columns.
-`predict` also accepts explicitly configured problems for future operating
-conditions; experiments instead infer initial conditions from time-zero data.
-Configured problems must use the reference model's material properties and law
-configuration; varying conditions never silently swaps the fitted physics.
+Runs may be experiments, whose placeholder conditions resolve from time-zero
+data, or numeric `RunConditions` for future operating conditions, which need
+`saveat`. The model supplies material properties and law configuration for every
+run; varying conditions never swaps the fitted physics. This form requires an
+explicit `solver`.
+
+A fit or posterior predicts with the solver, mode and numerical options it was
+prepared with:
+
+```julia
+fitted_runs = predict(posterior)                        # fitted experiments
+future_run = RunConditions(temperature = 288.15, concentration = 20.0)
+future_predictions = predict(posterior, [future_run]; saveat = 0.0:600.0:21600.0)
+```
 
 Failures retain their rows, IDs and diagnostics. Summaries fail unless exclusion
 is explicitly requested with `skip_failed=true`, then report counts. Bounds
 reduce invalid candidates but cannot guarantee every numerical solve succeeds.
 
-`parameter_samples(posterior)` adapts NUTS/ABC results;
+`posterior.samples` holds the NUTS/ABC draws;
 `parameter_samples(bootstrap_fit_results)` combines fits with identical selections.
 `parameter_samples(names, joint_distribution; n_samples, rng)` preserves a
 supplied joint distribution rather than sampling independent marginals.

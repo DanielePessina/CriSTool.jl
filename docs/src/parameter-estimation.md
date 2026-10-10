@@ -7,12 +7,12 @@ construct experiments, and select free kinetic values by name:
 using CriSTool, Metaheuristics
 experiments = load_measurements("measurements.csv")
 fit_specification = OptimisationSpec(bounds = (
-    growth = (growth_coefficient = (1e-12, 1e-9), growth_order = (1.0, 4.0))),
+    growth = (growth_coefficient = (1e-12, 1e-9), growth_order = (1.0, 4.0)),),
+    algorithm = DE(N = 32, options = Options(iterations = 100, seed = 42)),
     loss = logMLE())
 prepared_fit = prepare_fit(crystal_model, experiments, fit_specification;
     solver = MoM(), solve_options = (reltol = 1e-7,))
-fitted_result = fit(prepared_fit; algorithm = DE(N = 32,
-    options = Options(iterations = 100, parallel_evaluation = false)))
+fitted_result = fit(prepared_fit; threaded = true)
 fitted_result.model
 fitted_result.parameters
 fitted_result.objectives
@@ -22,15 +22,19 @@ fitted_result.backend_result
 Only named selected kinetic parameters vary. All others retain their model
 values. Bounds are required for bounded optimisation and current selected values
 must be in bounds. The input model is not mutated. Native backend diagnostics
-are retained. For an Optimization.jl algorithm, supply `algorithm`, `adtype` and
-`searchoptions`; numerical options belong to preparation.
+are retained. The algorithm belongs to the specification; for an Optimization.jl
+algorithm also set `adtype` and `searchoptions` there. Numerical solve options
+belong to preparation. `fit(prepared; threaded=true)` evaluates Metaheuristics
+populations in parallel, each candidate on a private copy of the solve templates.
+`problem_options` passes extra numerical problem settings to every run.
 
-Transient experiments require initial concentration observations at time zero.
-`initial_from` maps other required initial values and seeds; initialising samples
-are excluded from scoring. Preparation does not fit initial conditions or silently
-move the start to a later measurement. In steady mode, supply explicit
-`relaxation_initial` and an autonomous MSMPR operation; steady observations are
-targets, not initial conditions.
+Transient experiments read their initial values from time-zero observations
+through `FromObservation` placeholders in their `RunConditions`; by default only
+the concentration. Initialising samples are excluded from scoring. Preparation
+does not fit initial conditions or silently move the start to a later
+measurement. In steady mode (`mode = :steady`), each experiment's conditions must
+be numeric (no placeholders) and use an autonomous MSMPR operation; the run relaxes
+from those values, and steady observations are targets, not initial conditions.
 Callable kinetic laws require `steady_options=(autonomous=true,)`, an explicit
 declaration that their rate does not depend on time. The package cannot infer
 that property from arbitrary user code.
@@ -46,20 +50,25 @@ at preparation without adding global methods.
 ```julia
 using Distributions, Turing
 bayesian_spec = BayesianSpec(priors = (
-    growth = (growth_coefficient = Uniform(1e-12, 1e-9),)))
+    growth = (growth_coefficient = Uniform(1e-12, 1e-9),),),
+    sampler = NUTS(), n_samples = 1000, n_chains = 4)
 bayesian_fit = prepare_fit(crystal_model, experiments, bayesian_spec; solver = MoM())
-posterior = fit(bayesian_fit; sampler = NUTS(), n_samples = 1000, n_chains = 4)
-joint_draws = parameter_samples(posterior)
+posterior = fit(bayesian_fit; threaded = true, progress = false)
+joint_draws = posterior.samples
+posterior_predictions = predict(posterior)
 ```
 
 Priors are explicit and never automatically centred on a fitted optimum.
-`nuts_model(prepared)` exposes the Turing model for advanced sampling. Prepared
-mutable state is private per sampling task. See [ABCDE](abcde.md) for
+`threaded` runs chains in parallel; other keywords such as `rng` and `progress`
+go to `Turing.sample`. Prepared mutable state is private per sampling task. The
+native chain is kept in `posterior.backend_result`. See [ABCDE](abcde.md) for
 likelihood-free sampling and [Uncertainty](uq-ensembles.md) for predictions.
 
 ## Custom losses
 
-Advanced users may implement `loss(custom_loss, setup, parameters)`.
+Advanced users may subtype `AbstractPELossFunction` and implement
+`loss(custom_loss, setup, parameters)`, where `setup` is the internal
+`CriSTool.LossSetup` built by `prepare_fit`.
 `loss_terms` defaults to the total objective; extend it to expose named terms or
 multiobjective accounting. A custom negative log likelihood must explicitly
 implement `is_likelihood(custom_loss)=true` before use with `BayesianSpec`, and

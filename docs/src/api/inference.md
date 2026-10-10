@@ -19,7 +19,6 @@ measurement_samples
 AbstractABCSampler
 ABCDESampler
 ABCDETurnerSampler
-nuts_model
 kinetic_parameter_symbols
 rename_chain
 chains_to_matrix

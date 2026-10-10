@@ -19,7 +19,5 @@ MeasuredVariance
 RelativeVariance
 logMLE
 mae
-LossSetup
-prepare_loss
 loss
 ```

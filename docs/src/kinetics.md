@@ -15,19 +15,32 @@ Key ideas:
 - Each struct also declares a `paramaxis(::T)` method returning a
   ComponentArrays `Axis` — this is what powers named fields such as
   `p.ln_nucleation_prefactor` and `p.surface_energy` in rate functions.
-- `runsimulation` builds a `ComponentArray` view over the flat parameter
-  vector. The compatibility form is `[nucl; gr; agg; br]` when `diss` is
-  omitted; the canonical independent-dissolution form is
-  `[nucl; gr; diss; agg; br]`.
+- Model users bind values by name and never assemble vectors. The low-level
+  `runsimulation` interface (for automatic differentiation and sensitivity
+  work) builds a `ComponentArray` view over a flat parameter vector. Its
+  compatibility form is `[nucl; gr; agg; br]` when `diss` is omitted; the
+  canonical independent-dissolution form is `[nucl; gr; diss; agg; br]`.
 - To add a new model: subtype the right `Abstract*Function`, declare
   `paramaxis`, and implement the corresponding rate method.
 
 ## Bind a law to named values
 
 ```julia
-bound_growth = KineticModel(growth_empirical(); parameters = (
+bound_growth = growth_empirical(growth_coefficient = 1e-9, growth_order = 2.0)
+same_growth  = KineticModel(growth_empirical(); parameters = (
     growth_coefficient = 1e-9, growth_order = 2.0))
+energy_growth = growth_energy(activation_energy = 60e3,
+    log10_growth_coefficient = -8.0, growth_order = 2.0)
 ```
+
+A built-in law called with no keywords, such as `growth_empirical()`, is the
+unbound law. Called with all of its parameter names it returns a bound
+`KineticModel`; a partial set of names is an error. Keywords naming a struct
+field, such as `activation_energy` on `growth_energy` or `Lref` on
+`growth_empirical_length`, configure the law rather than bind a parameter.
+Laws without parameters (`noaggregation()`, `nobreakage()`, `nodissolution()`,
+the `*_fixed` variants) are bound automatically when placed in a
+`CrystallisationModel`.
 
 Unlisted parameters in a fitting specification remain fixed; separate fixed
 kinetic variants are unnecessary in the model workflow. For a simple custom
@@ -190,18 +203,16 @@ function growthrate(gf::growth_custom, parameters,
 end
 ```
 
-Then use them as usual:
+Then bind them by name like any built-in law:
 
 ```julia
-params = [38.0, 2.0, 1e-9 / 60, 3.0]
-problem, solution = runsimulation(
-    params;
-    nucl = nucl_custom(),
-    gr   = growth_custom(),
-    solver = MoM(),
-    initial_concentration = 18.0,
-    save_idx = 0.0:3600.0:28800.0,
-)
+custom_model = CrystallisationModel(LysozymeSystem();
+    nucleation = KineticModel(nucl_custom(); parameters = (
+        ln_prefactor = 38.0, nucleation_order = 2.0)),
+    growth = KineticModel(growth_custom(); parameters = (
+        growth_coefficient = 1e-9 / 60, growth_order = 3.0)))
+solution = simulate(custom_model, RunConditions(temperature = 293.15, concentration = 18.0);
+    solver = MoM(), saveat = 0.0:3600.0:28800.0)
 ```
 
 ## Aggregation and breakage
