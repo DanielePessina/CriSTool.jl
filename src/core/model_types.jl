@@ -90,7 +90,7 @@ CombinedNucleation(primary::KineticModel, secondary::KineticModel) =
         parameters = (primary = primary.parameters, secondary = secondary.parameters))
 
 """
-    CrystallisationModel(system; nucleation, growth, dissolution=NoDissolution(),
+    CrystallisationModel(system; growth, nucleation=NoNucleation(), dissolution=NoDissolution(),
                          aggregation=NoAggregation(), breakage=NoBreakage())
 
 A material system and five bound kinetic slots, independent of run conditions
@@ -107,7 +107,7 @@ struct CrystallisationModel{System, Nucleation, Growth, Dissolution, Aggregation
     breakage::Breakage
 end
 
-CrystallisationModel(material_system; nucleation, growth, dissolution = NoDissolution(),
+CrystallisationModel(material_system; growth, nucleation = NoNucleation(), dissolution = NoDissolution(),
         aggregation = NoAggregation(), breakage = NoBreakage()) =
     CrystallisationModel(material_system, _bound_kinetic(nucleation), _bound_kinetic(growth),
         _bound_kinetic(dissolution), _bound_kinetic(aggregation), _bound_kinetic(breakage))

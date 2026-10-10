@@ -32,9 +32,8 @@ using CriSTool
 using CairoMakie
 
 function main()
-    # No nucleation (a callable law returning zero) and a zero growth coefficient.
+    # No nucleation (the model default, `NoNucleation()`) and a zero growth coefficient.
     msmpr_model = CrystallisationModel(LysozymeSystem(saturation_model = ConstantSolubility(1.0));
-        nucleation = CallableNucleation((rate_values, rate_context) -> 0.0; parameters = (;)),
         growth = EmpiricalGrowth(growth_coefficient = 0.0, growth_order = 1.0))
     qmom_solver = QMOM(nquadrature = 3, reltol = 1e-10, abstol = 1e-12)
 
@@ -70,9 +69,10 @@ function main()
     @assert operation_flows(problem, 3600.0) == (inflow = 0.5, outflow = 0.5)
     @assert isapprox(solution.d43[end], 20e-6; rtol = 1e-4)      # no growth: seed and feed d43 equal
 
-    # Explicit steady-state solve on the same configured problem. Callable laws
-    # are opaque, so their time invariance is declared explicitly.
-    steady = solve_steadystate(problem; options = SteadyStateOptions(autonomous = true))
+    # Explicit steady-state solve on the same configured problem. Every law,
+    # the solubility and the temperature are built in and time invariant, so
+    # no autonomy declaration is needed.
+    steady = solve_steadystate(problem)
     steady_values = steady.equilibrium
     @assert steady.success && steady.diagnostics.converged
     @assert isapprox(steady_values.concentration, c_ss; rtol = 1e-6)

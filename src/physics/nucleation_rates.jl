@@ -1,6 +1,14 @@
 #### Kinetics
 ## Nucleation
 """
+    nucleationrate(::NoNucleation, parameters, problem, state, t) -> 0
+
+Zero nucleation rate, typed to carry the state and parameter element types.
+"""
+@inline nucleationrate(::NoNucleation, parameters::AbstractVector, prob::CrystallisationProblem, state, t) =
+    zero(promote_type(eltype(parameters), eltype(state)))
+
+"""
     nucleationrate(::CNTNucleation, parameters::AbstractVector,
                    problem::CrystallisationProblem, state, t) -> Real
 

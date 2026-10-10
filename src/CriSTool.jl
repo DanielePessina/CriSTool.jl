@@ -79,7 +79,7 @@ export AbstractSolution, state_vars, size_metrics, observable_values, solvent_st
 export AbstractNucleationFunction, AbstractGrowthFunction,
        AbstractScalarGrowthFunction, AbstractLengthGrowthFunction, CNTNucleation,
        EmpiricalNucleation, ArrheniusNucleation, CNTNucleationNoSupersaturation, SecondaryNucleation,
-       CombinedNucleation, AbstractDissolutionFunction,
+       CombinedNucleation, NoNucleation, AbstractDissolutionFunction,
        AbstractScalarDissolutionFunction, AbstractLengthDissolutionFunction,
        NoDissolution, dissolutionrate, dissolutionrate!, dissolutionrate_at_length,
        net_growth_rate, net_growth_rate!, net_growth_rate_at_length,

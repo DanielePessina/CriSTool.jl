@@ -16,7 +16,7 @@ const fitpredict_trajectory = (time = fitpredict_times,
 const fitpredict_conditions = RunConditions(temperature = 293.15, crystals = fixture_uniform_seed())
 const fitpredict_experiment = fixture_experiment(fitpredict_trajectory, fitpredict_conditions; exp_id = 31)
 # A second, unused growth coefficient checks that fits only touch selected values.
-const fitpredict_model = CrystallisationModel(fixture_system; nucleation = fixture_no_nucleation,
+const fitpredict_model = CrystallisationModel(fixture_system;
     growth = CallableGrowth((rate_values, rate_context) -> rate_values.speed * 1e-6;
         parameters = (speed = fitpredict_true_speed, held_order = 2.0)))
 const fitpredict_bounds = (growth = (speed = (0.001, 0.03),),)
@@ -351,7 +351,7 @@ end
 
 @testset "A posterior predicts with the solver it was fitted with" begin
     # This length law cannot run under the MoM default: a silent solver change would throw.
-    length_model = CrystallisationModel(fixture_system; nucleation = fixture_no_nucleation,
+    length_model = CrystallisationModel(fixture_system;
         growth = CallableLengthGrowth((rate_values, rate_context, crystal_length) -> rate_values.speed * 1e-6;
             parameters = (speed = 0.01,)))
     length_prepared = prepare_fit(length_model, [fitpredict_experiment], BayesianSpec(

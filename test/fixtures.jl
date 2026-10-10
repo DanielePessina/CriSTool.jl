@@ -8,16 +8,15 @@ using Distributions: Uniform
 const fixture_system = CrystallisationSystem(saturation_model = ConstantSolubility(10.0),
     crystal_density = 1000.0, volume_shape_factor = 1.0)
 
-# Zero nucleation and a constant growth speed G = speed * 1e-6 m/s, independent of
-# supersaturation. Seeds then translate rigidly in length: L(t) = L0 + G t.
-const fixture_no_nucleation = CallableNucleation((rate_values, rate_context) -> 0.0; parameters = (;))
+# Constant growth speed G = speed * 1e-6 m/s, independent of supersaturation.
+# Without nucleation (the model default) seeds translate rigidly: L(t) = L0 + G t.
 fixture_constant_growth(; speed = 0.01) =
     CallableGrowth((rate_values, rate_context) -> rate_values.speed * 1e-6; parameters = (; speed))
 # Constant nucleation rate B (#/m³/s) for MSMPR population-balance oracles.
 fixture_constant_nucleation(; birth_rate) =
     CallableNucleation((rate_values, rate_context) -> rate_values.birth_rate; parameters = (; birth_rate))
 
-fixture_translation_model(; speed = 0.01, nucleation = fixture_no_nucleation) =
+fixture_translation_model(; speed = 0.01, nucleation = NoNucleation()) =
     CrystallisationModel(fixture_system; nucleation, growth = fixture_constant_growth(; speed))
 
 # Uniform seed on [10, 20] µm carrying 0.25 kg/m³ of crystal mass.
