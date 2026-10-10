@@ -56,6 +56,8 @@ function _validate_operation(problem::CrystallisationProblem,
                              operation::Union{MSMPROperation, FedBatchOperation})
     _validate_operation_inflow(_operation_profile_value(operation.inflow, 0.0))
     feed_values = _operation_feed_values(operation.feed, 0.0)
+    all(value -> value isa Real && isfinite(value), feed_values) ||
+        throw(ArgumentError("Feed solvent values must be finite real numbers."))
     _validate_feed_concentration(feed_values.concentration)
     solvent_names = propertynames(problem.initial_solvent_state)
     :volume in solvent_names && throw(ArgumentError("Volume is a reactor state; remove :volume from initial_solvent_state."))
@@ -72,7 +74,7 @@ function _validate_operation(problem::CrystallisationProblem,
 end
 
 """
-    _validate_feed_transport_hook(problem)
+    _validate_feed_transport_hook(problem, operation)
 
 Check once, at ODE construction, that the feed transport hook returns exactly
 the named non-concentration solvent rates. The RHS then trusts its schema.
