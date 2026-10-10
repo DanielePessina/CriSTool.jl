@@ -1,16 +1,45 @@
 ###### Solver functions ######
 
+"""
+    crystallisation_odeproblem(problem, saveat) -> (odeproblem, default_algorithm)
+
+Build the ODE problem integrated by `problem.solver` over `saveat[1]..saveat[end]`,
+together with that solver's default OrdinaryDiffEq algorithm (or the
+configured `timestepping_algorithm`). Each solver type provides one
+`crystallisation_odeproblem(solver, problem, saveat)` method.
+"""
+crystallisation_odeproblem(problem::CrystallisationProblem, saveat) =
+    crystallisation_odeproblem(problem.solver, problem, saveat)
+
+"""Configured algorithm of `solver`, or `default_algorithm` when it is `nothing`."""
+_timestepping_algorithm(solver::AbstractSolver, default_algorithm) =
+    something(solver.timestepping_algorithm, default_algorithm)
+
+"""
+    _size_boundary_flow_state(solver, problem, ode_solution) -> NamedTuple
+
+Signed lower/upper size-boundary solid-mass flows (kg/s) of a mesh solution;
+moment and quadrature solvers have no size boundary.
+"""
+_size_boundary_flow_state(solver::AbstractDiscretisedSolver, problem, ode_solution) =
+    _mesh_boundary_flow_state(solver, problem, ode_solution)
+_size_boundary_flow_state(solver::AbstractMomentSolver, problem, ode_solution) = (;)
+
+"""Physical solution of an ODE solution; one `_wrap_solution(solver, ...)` method per solver."""
+_wrap_solution(problem::CrystallisationProblem, ode_solution) =
+    _wrap_solution(problem.solver, problem, ode_solution,
+                   _size_boundary_flow_state(problem.solver, problem, ode_solution))
+
 """Return `(result, reconstructed)`, classifying only package reconstruction failures."""
 function _wrap_prepared_result(configured_problem, ode_solution;
                                reconstruction_failure_handler = nothing)
     # Mesh boundary diagnostics re-enter user rate laws at interpolated saved
     # times. Evaluate them before guarding package-owned reconstruction.
-    boundary_flow_state = configured_problem.solver isa Union{FiniteVol, WENO} ?
-        _mesh_boundary_flow_state(configured_problem.solver, configured_problem, ode_solution) : nothing
+    boundary_flow_state = _size_boundary_flow_state(configured_problem.solver,
+                                                    configured_problem, ode_solution)
     try
-        physical_result = boundary_flow_state === nothing ?
-            _wrap_solution(configured_problem, ode_solution) :
-            _wrap_solution(configured_problem, ode_solution; boundary_flow_state)
+        physical_result = _wrap_solution(configured_problem.solver, configured_problem,
+                                         ode_solution, boundary_flow_state)
         return physical_result, true
     catch reconstruction_error
         reconstruction_error isa DomainError || rethrow()
@@ -38,141 +67,15 @@ weno_flux(cell_averages::AbstractArray{<:Real}, left_cell_index::Integer) =
     _weno_flux_left(cell_averages, left_cell_index)
 
 """
-    _get_initial_state(CryProblem) -> Vector
+    _get_initial_state(problem) -> Vector
 
-Get initial state vector for simulation.
-
-Returns zeros for number density/moments plus initial concentration,
-or the user-provided initial_state if specified.
-
-# Arguments
-- `CryProblem`: Crystallisation problem specification
-
-# Returns
-- Initial state vector [number_density_or_moments..., concentration]
+The configured `initial_state`, or an empty population followed by the
+operation and solvent initial values.
 """
-_get_initial_state(CryProblem) = isnothing(CryProblem.initial_state) ?
-                                     _zero_state(CryProblem.solver, CryProblem) :
-                                     CryProblem.initial_state
-
-_zero_state(solver::AbstractDiscretisedSolver, CryProblem) =
-    [zeros(solver.meshsize); _operation_initial_state(CryProblem.operation); collect(values(CryProblem.initial_solvent_state))]
-_zero_state(solver::MoM, CryProblem) =
-    [zeros(solver.nmoments + 1); _operation_initial_state(CryProblem.operation); collect(values(CryProblem.initial_solvent_state))]
-_zero_state(solver::QMOM, CryProblem) =
-    [zeros(moment_count(solver)); _operation_initial_state(CryProblem.operation); collect(values(CryProblem.initial_solvent_state))]
-_zero_state(solver::DQMOM, CryProblem) =
-    [zeros(2 * solver.nquadrature); _operation_initial_state(CryProblem.operation); collect(values(CryProblem.initial_solvent_state))]
-
-"""
-    _build_timestepping_algorithm(algorithm_type; step_limiter=nothing, stage_limiter=nothing)
-
-Build an ODE solver algorithm with optional step and stage limiters.
-
-# Arguments
-- `algorithm_type`: ODE solver type (e.g., Tsit5, SSPRK43)
-- `step_limiter`: Optional step limiter callback
-- `stage_limiter`: Optional stage limiter callback
-
-# Returns
-- Configured ODE solver algorithm instance
-"""
-@inline function _build_timestepping_algorithm(algorithm_type;
-                                                step_limiter = nothing,
-                                                stage_limiter = nothing)
-    if isnothing(step_limiter) && isnothing(stage_limiter)
-        return algorithm_type()
-    end
-    if isnothing(step_limiter)
-        return algorithm_type(stage_limiter! = stage_limiter)
-    end
-    if isnothing(stage_limiter)
-        return algorithm_type(step_limiter! = step_limiter)
-    end
-    return algorithm_type(step_limiter! = step_limiter, stage_limiter! = stage_limiter)
-end
-
-"""
-    _build_timestepping_algorithm_step_only(algorithm_type; step_limiter=nothing)
-
-Build an ODE solver algorithm with optional step limiter only.
-
-Used for solvers that don't support stage limiters (e.g., implicit methods).
-
-# Arguments
-- `algorithm_type`: ODE solver type
-- `step_limiter`: Optional step limiter callback
-
-# Returns
-- Configured ODE solver algorithm instance
-"""
-@inline function _build_timestepping_algorithm_step_only(algorithm_type;
-                                                         step_limiter = nothing)
-    if isnothing(step_limiter)
-        return algorithm_type()
-    end
-    return algorithm_type(step_limiter! = step_limiter)
-end
-
-"""
-    _timestepping_algorithm(::Val{:tsit5}, step_limiter, stage_limiter)
-
-Build Tsit5 algorithm with limiters.
-"""
-@inline _timestepping_algorithm(::Val{:tsit5}, step_limiter, stage_limiter) =
-    _build_timestepping_algorithm(Tsit5; step_limiter = step_limiter,
-                                  stage_limiter = stage_limiter)
-
-"""
-    _timestepping_algorithm(::Val{:ssprk43}, step_limiter, stage_limiter)
-
-Build SSPRK43 algorithm with limiters.
-"""
-@inline _timestepping_algorithm(::Val{:ssprk43}, step_limiter, stage_limiter) =
-    _build_timestepping_algorithm(SSPRK43; step_limiter = step_limiter,
-                                  stage_limiter = stage_limiter)
-
-"""
-    _timestepping_algorithm(::Val{:kvaerno5}, step_limiter, stage_limiter)
-
-Build Kvaerno5 algorithm with step limiter only.
-"""
-@inline _timestepping_algorithm(::Val{:kvaerno5}, step_limiter, stage_limiter) =
-    _build_timestepping_algorithm_step_only(Kvaerno5; step_limiter = step_limiter)
-
-"""
-    _timestepping_algorithm(::Val{:kencarp4}, step_limiter, stage_limiter)
-
-Build KenCarp4 algorithm with step limiter only.
-"""
-@inline _timestepping_algorithm(::Val{:kencarp4}, step_limiter, stage_limiter) =
-    _build_timestepping_algorithm_step_only(KenCarp4; step_limiter = step_limiter)
-
-"""
-    _resolve_timestepping_algorithm(solver::AbstractSolver, default_algorithm::Symbol;
-                                    step_limiter=nothing, stage_limiter=nothing)
-
-Resolve and build the timestepping algorithm for a solver.
-
-Uses the solver's configured algorithm if not `:auto`, otherwise uses the default.
-
-# Arguments
-- `solver`: Solver with timestepping_algorithm field
-- `default_algorithm`: Default algorithm symbol if solver uses :auto
-- `step_limiter`: Optional step limiter callback
-- `stage_limiter`: Optional stage limiter callback
-
-# Returns
-- Configured ODE solver algorithm instance
-"""
-@inline function _resolve_timestepping_algorithm(solver::AbstractSolver,
-                                                 default_algorithm::Symbol;
-                                                 step_limiter = nothing,
-                                                 stage_limiter = nothing)
-    alg_symbol = solver.timestepping_algorithm === :auto ? default_algorithm :
-                 solver.timestepping_algorithm
-    return _timestepping_algorithm(Val(alg_symbol), step_limiter, stage_limiter)
-end
+_get_initial_state(problem) = isnothing(problem.initial_state) ?
+    [zeros(_population_state_count(problem.solver)); _operation_initial_state(problem.operation);
+     collect(values(problem.initial_solvent_state))] :
+    problem.initial_state
 
 @inline function _concentration_depletion(cell_dL, numberdensity, scalar_growth_rate, cell_centre)
     derivative_type = promote_type(eltype(numberdensity), typeof(scalar_growth_rate))
@@ -321,8 +224,8 @@ _parameter_eltype(ode_parameters) = Float64
 """
     _auto_abstol_opts(solver, u0, absolute_floor, scalar_type=Float64; reltol=solver.reltol)
 
-Allocate solve-local component tolerances and an AutoAbstol callback. In auto
-mode, each component retains its physical absolute floor while its tolerance
+Allocate solve-local component tolerances and an AutoAbstol callback. With
+`solver.auto_abstol`, each component retains its physical absolute floor while its tolerance
 tracks its own largest magnitude. Scalar mode leaves the supplied floor intact.
 
 The `AutoAbstol` mutable magnitude cache and the `abstol` buffer it writes back
@@ -334,7 +237,7 @@ the physical per-component floors and per-solve cache isolation.
 function _auto_abstol_opts(solver::AbstractSolver, u0::AbstractVector,
                            absolute_floor, scalar_type::Type = Float64;
                            reltol = solver.reltol)
-    if solver.tolerance_mode === :auto
+    if solver.auto_abstol
         component_floor = absolute_floor isa AbstractVector ? copy(absolute_floor) :
                           fill(float(absolute_floor), length(u0))
         promoted_floor = scalar_type.(component_floor)
@@ -373,6 +276,10 @@ function _validate_crystallisation_solve_options(solve_options::NamedTuple)
     return solve_options
 end
 
+"""Algorithm hints: the non-stiff MoM closure needs none, other solvers are stiff."""
+_solver_alg_hints(solver::MoM) = (;)
+_solver_alg_hints(solver::AbstractSolver) = (alg_hints = [:stiff],)
+
 """
     _solve_crystallisation_ode(problem, odeproblem, algorithm, saveat;
                               solve_options=(;), callback_factory=nothing)
@@ -386,12 +293,10 @@ function _solve_crystallisation_ode(problem::CrystallisationProblem, odeproblem,
                                     solve_options::NamedTuple = (;),
                                     callback_factory = nothing)
     _validate_crystallisation_solve_options(solve_options)
-    solver_defaults = (reltol = problem.solver.reltol,
-                       abstol = _solver_absolute_floor(problem, odeproblem),
-                       dense = false, maxiters = CRISTOOL_MAX_SOLVER_ITERS)
-    if !(problem.solver isa MoM)
-        solver_defaults = merge(solver_defaults, (alg_hints = [:stiff],))
-    end
+    solver_defaults = merge((reltol = problem.solver.reltol,
+                             abstol = _solver_absolute_floor(problem, odeproblem),
+                             dense = false, maxiters = CRISTOOL_MAX_SOLVER_ITERS),
+                            _solver_alg_hints(problem.solver))
     selected_options = merge(solver_defaults, solve_options)
     scalar_type = promote_type(eltype(odeproblem.u0), _parameter_eltype(odeproblem.p))
     abstol, auto_callback = _auto_abstol_opts(problem.solver, odeproblem.u0,
@@ -408,14 +313,25 @@ function _solve_crystallisation_ode(problem::CrystallisationProblem, odeproblem,
                  saveat = saveat, callback = solve_callback)
 end
 
+"""Check that save times are finite, nonnegative SI seconds in increasing order."""
+function _validate_save_times(save_times)
+    length(save_times) >= 1 ||
+        throw(ArgumentError("save_idx must contain at least one time."))
+    all(time -> time isa Real && isfinite(time) && time >= 0, save_times) ||
+        throw(ArgumentError("save_idx must contain finite nonnegative SI times in seconds."))
+    length(save_times) == 1 || all(diff(collect(save_times)) .> 0) ||
+        throw(ArgumentError("save_idx must be strictly increasing."))
+    return save_times
+end
+
 """
     _simulatecrystallisation(problem, saveat; algorithm=nothing,
                              solve_options=(;), callback_factory=nothing)
 
 Solve `problem` at `saveat` with the solver selected by `problem.solver` and
-return its physical solution. Solver families provide the two hooks
-`crystallisation_odeproblem(problem, saveat) -> (odeproblem, default_algorithm)`
-and `_wrap_solution(problem, ode_solution)`.
+return its physical solution. Each solver type provides the two methods
+`crystallisation_odeproblem(solver, problem, saveat) -> (odeproblem, default_algorithm)`
+and `_wrap_solution(solver, problem, ode_solution, boundary_flow_state)`.
 """
 function _simulatecrystallisation(problem::CrystallisationProblem, saveat;
                                   algorithm = nothing,

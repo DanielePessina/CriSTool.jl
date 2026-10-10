@@ -9,10 +9,10 @@ simulate_translation_times = [0.0, 50.0, 100.0]
 simulate_mesh_solvers = (FiniteVol(meshsize = 40, lmax = 40e-6), WENO(meshsize = 40, lmax = 40e-6))
 # Raw length moment k of a mesh trajectory, per saved time.
 simulate_mesh_moment(trajectory, mesh_solver, order) =
-    vec(sum(trajectory.numberdensity .* mesh_solver.cell_centre .^ order; dims = 1)) .* mesh_solver.cell_dL
-simulate_raw_moment(trajectory::Union{CrystallisationQMOMSolution, CrystallisationDQMOMSolution}, solver, order) =
-    trajectory.moments[order + 1, :]
-simulate_raw_moment(trajectory::CrystallisationFVSolution, solver, order) =
+    vec(sum(trajectory.population.numberdensity .* mesh_solver.cell_centre .^ order; dims = 1)) .* mesh_solver.cell_dL
+simulate_raw_moment(trajectory::CrystallisationSolution{<:QuadraturePopulation}, solver, order) =
+    trajectory.population.moments[order + 1, :]
+simulate_raw_moment(trajectory::CrystallisationSolution{<:MeshPopulation}, solver, order) =
     simulate_mesh_moment(trajectory, solver, order)
 
 @testset "Translation closed form on every solver" begin
@@ -35,12 +35,13 @@ simulate_raw_moment(trajectory::CrystallisationFVSolution, solver, order) =
         if solver isa QMOM
             # Every tracked raw moment follows µ0·E[(L + Gt)^k].
             seed_number = fixture_seed_mass / 1000.0 / fixture_uniform_moment(3)
-            @test translation_trajectory.moments[:, end] ≈
+            @test translation_trajectory.population.moments[:, end] ≈
                   [seed_number * fixture_uniform_moment(order, 1e-6) for order in 0:5] rtol = 1e-6
         elseif solver isa DQMOM
             # Characteristics: nodes move by G·t = 1 µm, weights are constant.
-            @test translation_trajectory.nodes[:, end] ≈ translation_trajectory.nodes[:, 1] .+ 1e-6 rtol = 1e-6
-            @test translation_trajectory.weights[:, end] ≈ translation_trajectory.weights[:, 1] rtol = 1e-8
+            translation_rules = quadrature(translation_trajectory)
+            @test translation_rules[end].nodes ≈ translation_rules[1].nodes .+ 1e-6 rtol = 1e-6
+            @test translation_rules[end].weights ≈ translation_rules[1].weights rtol = 1e-8
         end
     end
 
@@ -89,6 +90,16 @@ end
           CrystallisationProblem(fixture_translation_model(), distribution_conditions(volume_seed)).initial_state rtol = 1e-12
     @test DistributionInitialCrystals(Uniform(10e-6, 20e-6); mass_concentration = 0.25, weighting = :volume).d43 ≈
           15e-6 rtol = 1e-9
+
+    # Every entry point resolves a seed the same way: the state built directly
+    # from a parametric seed equals the one the model path stores, on a mesh
+    # (cell integrals) and for moments.
+    for solver in (simulate_mesh_solvers[1], MoM())
+        unseeded_problem = CrystallisationProblem(fixture_translation_model(),
+            RunConditions(temperature = 293.15, concentration = 20.0); solver)
+        @test initial_state_from_characteristics(unseeded_problem, lognormal_seed) ==
+              CrystallisationProblem(fixture_translation_model(), distribution_conditions(lognormal_seed); solver).initial_state
+    end
 
     # An empty seed (zero mass) is a valid empty population.
     empty_seed_start = simulate(fixture_translation_model(), RunConditions(temperature = 293.15, concentration = 18.0,
@@ -265,7 +276,7 @@ end
     for transport_speed in (1.0, -1.0)
         cfl_problem = CrystallisationProblem(
             CrystallisationModel(cfl_system; nucleation = fixture_no_nucleation, growth = fixture_constant_growth(speed = transport_speed)),
-            cfl_conditions; solver = WENO(meshsize = 10, lmax = 100e-6, timestepping_algorithm = transport_speed < 0 ? :ssprk43 : :auto))
+            cfl_conditions; solver = WENO(meshsize = 10, lmax = 100e-6, timestepping_algorithm = transport_speed < 0 ? CriSTool.OrdinaryDiffEq.SSPRK43() : nothing))
         @test largest_accepted_step(cfl_problem) <= 9.0 + 1e-12
         # A tighter user dtmax wins; it must not leak into the next solve.
         @test largest_accepted_step(cfl_problem; solve_options = (; dtmax = 2.0)) <= 2.0 + 1e-12

@@ -1,24 +1,7 @@
-"""Physical raw moments represented by a normalized DQMOM state."""
-function _dqmom_physical_moments(numerical_state, dqmom_solver::DQMOM)
-    nquadrature = dqmom_solver.nquadrature
-    maximum_order = 2 * nquadrature - 1
-    element_type = promote_type(eltype(numerical_state),
-                                typeof(dqmom_solver.coordinate_scale),
-                                typeof(dqmom_solver.weight_scale))
-    physical_moments = zeros(element_type, maximum_order + 1)
-    @inbounds for moment_index in 0:maximum_order
-        scaled_moment = zero(element_type)
-        for node_index in 1:nquadrature
-            scaled_weight = numerical_state[node_index]
-            scaled_node = numerical_state[nquadrature + node_index] / scaled_weight
-            scaled_moment += scaled_weight * scaled_node^moment_index
-        end
-        physical_moments[moment_index + 1] = dqmom_solver.weight_scale *
-                                             dqmom_solver.coordinate_scale^moment_index *
-                                             scaled_moment
-    end
-    return physical_moments
-end
+"""Physical raw moments `µ0..µ_{2N-1}` represented by a normalized DQMOM state."""
+_dqmom_physical_moments(numerical_state, dqmom_solver::DQMOM) =
+    [_dqmom_physical_moment(dqmom_solver, numerical_state, moment_index)
+     for moment_index in 0:(2 * dqmom_solver.nquadrature - 1)]
 
 """Convert physical feed exchange into DQMOM's scaled moment coordinates."""
 function _dqmom_add_operation_moment_source!(scaled_source,

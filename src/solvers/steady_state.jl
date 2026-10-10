@@ -68,16 +68,15 @@ end
 """
 Result of relaxing an autonomous MSMPR to a numerically checked steady state.
 
-Property access returns equilibrium values: `steady.concentration`,
-`steady.d43`, `steady.d32` and `steady.time` are scalars, `steady.moments` and
-`steady.numberdensity` are vectors, and named tuples such as
-`steady.solvent_state` hold scalars. The underlying one-sample physical solver
-result is `steady.solution`; `observable_values`, `state_vars` and
-`size_metrics` return its one-sample trajectories, so a steady result can be
-used wherever a transient result is expected.
+`equilibrium(steady)` returns the equilibrium values as one named tuple:
+`time`, `concentration`, `d43`, `d32`, other solvent and size scalars, and
+population vectors such as `moments` or `numberdensity`. The underlying
+one-sample physical solver result is `steady.solution`; `observable_values`,
+`state_vars` and `size_metrics` return its one-sample trajectories, so a
+steady result can be used wherever a transient result is expected.
 
-Own fields:
-- `solution`: one-sample solver result at the equilibrium time.
+Fields:
+- `solution`: one-sample `CrystallisationSolution` at the equilibrium time.
 - `residual`, `scaled_residual`: native ODE right-hand side and its components
   multiplied by the residence time and divided by their state scale.
 - `hydraulics`: `(; volume, inflow, outflow, residence_time)`.
@@ -94,9 +93,9 @@ Own fields:
     solution
     residual
     scaled_residual
-    hydraulics::NamedTuple
-    product::NamedTuple
-    diagnostics::NamedTuple
+    hydraulics
+    product
+    diagnostics
     ode_stats
     retcode
     success::Bool
@@ -120,19 +119,19 @@ end
 # and population-by-time matrices to their single column.
 _steady_point_value(value::AbstractVector) = length(value) == 1 ? only(value) : value
 _steady_point_value(value::AbstractMatrix) = size(value, 2) == 1 ? vec(value) : value
-_steady_point_value(value::NamedTuple) = map(_steady_point_value, value)
 _steady_point_value(value) = value
 
-function Base.getproperty(steady::CrystallisationSteadyStateSolution, name::Symbol)
-    name in fieldnames(CrystallisationSteadyStateSolution) && return getfield(steady, name)
-    return _steady_point_value(getproperty(getfield(steady, :solution), name))
-end
+"""
+    equilibrium(steady::CrystallisationSteadyStateSolution) -> NamedTuple
 
-Base.propertynames(steady::CrystallisationSteadyStateSolution, private::Bool = false) =
-    Tuple(unique((fieldnames(CrystallisationSteadyStateSolution)...,
-                  propertynames(getfield(steady, :solution), private)...)))
+Equilibrium values of a steady MSMPR result: `time`, the solvent and reactor
+variables, the population arrays of `state_vars` as vectors, and the size
+metrics, each a scalar at the single equilibrium sample.
+"""
+equilibrium(steady::CrystallisationSteadyStateSolution) =
+    map(_steady_point_value, merge((; time = steady.solution.time), state_vars(steady.solution),
+                                   size_metrics(steady.solution)))
 
-time(steady::CrystallisationSteadyStateSolution) = time(steady.solution)
 state_vars(steady::CrystallisationSteadyStateSolution) = state_vars(steady.solution)
 reactor_vars(steady::CrystallisationSteadyStateSolution) = reactor_vars(steady.solution)
 size_metrics(steady::CrystallisationSteadyStateSolution) = size_metrics(steady.solution)
@@ -190,11 +189,16 @@ function _validate_steadystate_problem(problem::CrystallisationProblem;
                             "Profiles needing an explicit declaration: $issue_list."))
     end
 
-    # The steady result always reports dissolved and third-moment solid product
-    # flow. A lower-order MoM cannot supply that inventory independently.
-    if problem.solver isa MoM && problem.solver.nmoments < 3
+    _validate_steady_solver(problem.solver)
+    return nothing
+end
+
+# The steady result always reports dissolved and third-moment solid product
+# flow. A lower-order MoM cannot supply that inventory independently.
+_validate_steady_solver(solver::AbstractSolver) = nothing
+function _validate_steady_solver(solver::MoM)
+    solver.nmoments >= 3 ||
         throw(ArgumentError("A steady MoM result requires at least three tracked moments to report solid product flow."))
-    end
     return nothing
 end
 
@@ -219,20 +223,29 @@ function _steady_state_reference_scales(problem, ode_problem, user_scales)
     end
 
     scales = abs.(state)
-    feed_population = _operation_feed_population(problem)
-    if !(problem.solver isa DQMOM)
-        population_range = _population_state_range(problem)
-        @inbounds for (state_index, population_index) in zip(population_range,
-                                                              eachindex(feed_population))
-            scales[state_index] = max(scales[state_index], abs(feed_population[population_index]))
-        end
-    end
+    _include_feed_population_scales!(scales, problem.solver, problem,
+                                     _operation_feed_population(problem))
     feed_concentration = _feed_concentration(problem.operation.feed, ode_problem.tspan[1])
     concentration_index = _solvent_state_index(problem, :concentration)
     scales[concentration_index] = max(scales[concentration_index],
                                        abs(feed_concentration))
     return scales
 end
+
+"""
+    _include_feed_population_scales!(scales, solver, problem, feed_population)
+
+Raise population residual scales to the feed population. DQMOM feeds are
+physical moments rather than weight/node states, so they do not apply.
+"""
+function _include_feed_population_scales!(scales, solver::AbstractSolver, problem, feed_population)
+    @inbounds for (state_index, population_index) in zip(_population_state_range(problem),
+                                                          eachindex(feed_population))
+        scales[state_index] = max(scales[state_index], abs(feed_population[population_index]))
+    end
+    return scales
+end
+_include_feed_population_scales!(scales, solver::DQMOM, problem, feed_population) = scales
 
 function _steady_scaled_residual(problem, ode_problem, state, parameters,
                                  simulation_time, residence_time, reference_scales;
@@ -270,26 +283,19 @@ function _steady_autostop_callback(problem, ode_problem, reference_scales,
                             save_positions = (false, true))
 end
 
-function _steady_moment3(problem, raw_state, physical_result)
-    if problem.solver isa MoM
-        return raw_state[4]
-    elseif problem.solver isa QMOM || problem.solver isa DQMOM
-        return physical_result.moments[4, end]
-    end
-    population = @view raw_state[_population_state_range(problem)]
-    return momentcalculator(problem.solver.cell_centre, population, 3)
-end
+"""Third raw moment of a population vector in the solver's coordinates (raw moments for moment solvers)."""
+_third_raw_moment(solver::AbstractDiscretisedSolver, numberdensity) =
+    momentcalculator(solver.cell_centre, numberdensity, 3)
+_third_raw_moment(solver::AbstractMomentSolver, raw_moments) = raw_moments[4]
 
-function _steady_feed_moment3(problem, feed_population)
-    if problem.solver isa AbstractDiscretisedSolver
-        return momentcalculator(problem.solver.cell_centre, feed_population, 3)
-    end
-    return feed_population[4]
-end
+"""Final saved population of a physical result, as densities or raw moments."""
+_final_population_values(population::MeshPopulation) = population.numberdensity[:, end]
+_final_population_values(population::Union{MomentPopulation, QuadraturePopulation}) =
+    population.moments[:, end]
 
-function _steady_population_density_diagnostics(problem, raw_state)
-    problem.solver isa AbstractDiscretisedSolver || return nothing
-
+"""Raw density extremes and roundoff tolerance of a mesh steady state; `nothing` otherwise."""
+_steady_population_density_diagnostics(solver::AbstractMomentSolver, problem, raw_state) = nothing
+function _steady_population_density_diagnostics(solver::AbstractDiscretisedSolver, problem, raw_state)
     population_density = @view raw_state[_population_state_range(problem)]
     minimum_density = minimum(population_density)
     density_scale = maximum(abs, population_density)
@@ -311,32 +317,43 @@ function _steady_physical_constraints(problem, raw_state, physical_result)
     all(isfinite, raw_state) || return false, :nonfinite_state
     concentration = raw_state[_solvent_state_index(problem, :concentration)]
     concentration >= 0.0 || return false, :negative_concentration
+    return _steady_population_constraints(problem.solver, problem, raw_state, physical_result)
+end
 
-    if problem.solver isa AbstractDiscretisedSolver
-        density_diagnostics = _steady_population_density_diagnostics(problem, raw_state)
-        if density_diagnostics.negative_count > 0
-            density_diagnostics.minimum >= -density_diagnostics.roundoff_tolerance ||
-                return false, :negative_number_density
-            return true, :roundoff_negative_number_density
-        end
-    elseif problem.solver isa DQMOM
-        all(value -> isfinite(value) && value > 0.0, physical_result.weights) ||
-            return false, :nonpositive_quadrature_weight
-        all(value -> isfinite(value) && value > problem.solver.minimum_size,
-            physical_result.nodes) || return false, :invalid_quadrature_node
-    elseif problem.solver isa QMOM
-        all(diagnostic -> diagnostic.status in (:ok, :empty, :deflated),
-            physical_result.inversion_diagnostics) || return false, :unrealizable_moments
-    elseif problem.solver isa MoM
-        moments = @view raw_state[_population_state_range(problem)]
-        all(value -> isfinite(value) && value >= 0.0, moments) ||
-            return false, :negative_moment
-        for index in 2:(length(moments) - 1)
-            left = moments[index]^2
-            right = moments[index - 1] * moments[index + 1]
-            left <= right + 1e-10 * max(abs(left), abs(right), floatmin(Float64)) ||
-                return false, :non_logconvex_moments
-        end
+"""`(valid, status)` of the solver's population at a candidate steady state."""
+function _steady_population_constraints(solver::AbstractDiscretisedSolver, problem, raw_state,
+                                        physical_result)
+    density_diagnostics = _steady_population_density_diagnostics(solver, problem, raw_state)
+    density_diagnostics.negative_count > 0 || return true, :ok
+    density_diagnostics.minimum >= -density_diagnostics.roundoff_tolerance ||
+        return false, :negative_number_density
+    return true, :roundoff_negative_number_density
+end
+
+function _steady_population_constraints(solver::DQMOM, problem, raw_state, physical_result)
+    population = physical_result.population
+    all(value -> isfinite(value) && value > 0.0, population.weights) ||
+        return false, :nonpositive_quadrature_weight
+    all(value -> isfinite(value) && value > solver.minimum_size, population.nodes) ||
+        return false, :invalid_quadrature_node
+    return true, :ok
+end
+
+function _steady_population_constraints(solver::QMOM, problem, raw_state, physical_result)
+    all(diagnostic -> diagnostic.status in (:ok, :empty, :deflated),
+        physical_result.population.diagnostics) || return false, :unrealizable_moments
+    return true, :ok
+end
+
+function _steady_population_constraints(solver::MoM, problem, raw_state, physical_result)
+    moments = @view raw_state[_population_state_range(problem)]
+    all(value -> isfinite(value) && value >= 0.0, moments) ||
+        return false, :negative_moment
+    for index in 2:(length(moments) - 1)
+        left = moments[index]^2
+        right = moments[index - 1] * moments[index + 1]
+        left <= right + 1e-10 * max(abs(left), abs(right), floatmin(Float64)) ||
+            return false, :non_logconvex_moments
     end
     return true, :ok
 end
@@ -347,9 +364,8 @@ function _steady_product_diagnostics(problem, raw_state, physical_result,
     flows = operation_flows(operation, simulation_time)
     volume = reactor_volume(problem, raw_state)
     residence_time = volume / flows.inflow
-    moment3 = _steady_moment3(problem, raw_state, physical_result)
-    feed_population = _operation_feed_population(problem)
-    feed_moment3 = _steady_feed_moment3(problem, feed_population)
+    moment3 = _third_raw_moment(problem.solver, _final_population_values(physical_result.population))
+    feed_moment3 = _third_raw_moment(problem.solver, _operation_feed_population(problem))
     concentration = raw_state[_solvent_state_index(problem, :concentration)]
     density = problem.crystal_density * problem.volume_shape_factor
     inlet_dissolved_flow = flows.inflow * _feed_concentration(operation.feed, simulation_time)
@@ -473,7 +489,7 @@ function _solve_steadystate_ode(problem::CrystallisationProblem, ode_problem,
                     physical_state_valid = physical_valid,
                     physical_state_status = physical_status,
                     population_density_diagnostics =
-                        _steady_population_density_diagnostics(problem, raw_state),
+                        _steady_population_density_diagnostics(problem.solver, problem, raw_state),
                     total_api_balance = balance,
                     balance_reltol = options.balance_reltol,
                     balance_valid,
@@ -501,8 +517,8 @@ full-state RHS residual is within tolerance. It returns a distinct
 `CrystallisationSteadyStateSolution`; `success` is false if the relaxation
 horizon, residual, physical constraints, or total-API flow balance fails.
 If those checks fail, the direct call throws `SteadyStateConvergenceError`,
-which carries the unsuccessful result and its diagnostics. Property access on
-the result gives equilibrium values (`steady.concentration`, `steady.d43`).
+which carries the unsuccessful result and its diagnostics. `equilibrium(steady)`
+gives the equilibrium values (`equilibrium(steady).concentration`, `.d43`).
 
 Opaque time profiles and user-defined kinetics require
 `SteadyStateOptions(autonomous = true)` as an explicit declaration that their

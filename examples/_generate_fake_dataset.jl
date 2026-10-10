@@ -30,11 +30,9 @@ const OUT_PATH = joinpath(@__DIR__, "fake-experimental-dataset.csv")
 # Truth parameters and kinetics
 # ----------------------------------------------------------------------
 
-const θ_TRUTH = [38.0, 0.0006, 1e-9 / 60, 3.0]
-nucl_f = nucl_CNT()
-gr_f   = growth_empirical()
-agg_f  = noaggregation()
-br_f   = nobreakage()
+const TRUTH_MODEL = CrystallisationModel(LysozymeSystem();
+    nucleation = nucl_CNT(ln_nucleation_prefactor = 38.0, surface_energy = 0.0006),
+    growth = growth_empirical(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
 solver = MoM()
 
 # ----------------------------------------------------------------------
@@ -98,14 +96,8 @@ for (idx, (T_K, c0)) in enumerate(exp_conditions)
     times = build_time_grid(rng, idx)
 
     # Run truth simulation at the requested temperature with the given save grid
-    problem, solution = runsimulation(
-        θ_TRUTH;
-        nucl = nucl_f, gr = gr_f, agg = agg_f, br = br_f,
-        solver = solver,
-        initial_concentration = c0,
-        save_idx = times,
-        temp_profile = CriSTool.ConstantTemperature(T_K),
-    )
+    solution = simulate(TRUTH_MODEL, RunConditions(temperature = T_K, concentration = c0);
+        solver, saveat = times)
 
     @assert solution.success "Simulation failed for exp $idx"
     @assert length(solution.concentration) == length(times)

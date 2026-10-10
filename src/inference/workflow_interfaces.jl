@@ -107,7 +107,9 @@ _covers_save_times(::TransientMode, sample_solution, saved_times) =
     first(sample_solution.time) <= first(saved_times) && last(sample_solution.time) >= last(saved_times)
 
 # Every built-in trajectory, configured solvent value and, for a flowing reactor, the volume.
-function _default_prediction_names(prepared_run::PreparedRun, reference_solution)
+function _default_prediction_names(prepared_run::PreparedRun, reference_result)
+    # A steady result names its observables through its endpoint trajectory.
+    reference_solution = _projection_trajectory(reference_result)
     named_physical_values = merge(state_vars(reference_solution), reactor_vars(reference_solution),
         size_metrics(reference_solution))
     builtin_names = Tuple(observable_name for observable_name in propertynames(named_physical_values)

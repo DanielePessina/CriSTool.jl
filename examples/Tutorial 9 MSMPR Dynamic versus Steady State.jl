@@ -17,7 +17,7 @@ ways to obtain that operating point:
 2. `solve_steadystate(problem)`, the explicit steady-state route for a constant
    autonomous MSMPR. It relaxes the dynamics until the scaled full-state RHS
    residual is within tolerance and returns a `CrystallisationSteadyStateSolution`:
-   scalar observables (`steady.concentration`, `steady.d43`), product flows in
+   equilibrium values through `equilibrium(steady)` (`.concentration`, `.d43`), product flows in
    `steady.product`, and residual / mass-balance checks in `steady.diagnostics`.
 
 The steady state is the feed condition: concentration `C_f` and the feed
@@ -57,7 +57,7 @@ function main()
     tau = operation.volume / operation.inflow      # residence time = 4 s
     c_ss = operation.feed.concentration
     c_oracle(t) = c_ss + (initial_concentration(problem) - c_ss) * exp(-t / tau)
-    m0_trajectory = solution.moments[1, :]
+    m0_trajectory = solution.population.moments[1, :]
     m0_feed_fraction = 0.05 / 0.5                  # feed carries 1/10 of the seed mass
     m0_oracle(t) = m0_trajectory[1] * (m0_feed_fraction +
                                        (1 - m0_feed_fraction) * exp(-t / tau))
@@ -73,9 +73,10 @@ function main()
 
     # Explicit steady-state solve on the same configured problem.
     steady = solve_steadystate(problem)
+    steady_values = equilibrium(steady)
     @assert steady.success && steady.diagnostics.converged
-    @assert isapprox(steady.concentration, c_ss; rtol = 1e-6)
-    @assert isapprox(steady.moments[1], m0_trajectory[1] * m0_feed_fraction; rtol = 1e-6)
+    @assert isapprox(steady_values.concentration, c_ss; rtol = 1e-6)
+    @assert isapprox(steady_values.moments[1], m0_trajectory[1] * m0_feed_fraction; rtol = 1e-6)
     @assert steady.diagnostics.scaled_residual_norm < 1e-6
     @assert steady.hydraulics == (volume = 2.0, inflow = 0.5, outflow = 0.5,
                                   residence_time = 4.0)
@@ -84,8 +85,8 @@ function main()
     println("MSMPR (V = $(operation.volume) m³, Q = $(operation.inflow) m³/s, τ = $(tau) s)")
     println("  dynamic: C(T) = $c_relaxed kg/m³,  scaled residual |C(T) − C_ss|/C_ss = $scaled_c_residual")
     println("           M₀(T)/M₀(0) = $m0_relaxed_fraction (steady feed fraction $m0_feed_fraction)")
-    println("  steady : C_ss = $(steady.concentration) kg/m³,  scaled residual norm = $(steady.diagnostics.scaled_residual_norm)")
-    println("           M₀_ss = $(steady.moments[1]) (feed load),  d43 = $(steady.d43) m")
+    println("  steady : C_ss = $(steady_values.concentration) kg/m³,  scaled residual norm = $(steady.diagnostics.scaled_residual_norm)")
+    println("           M₀_ss = $(steady_values.moments[1]) (feed load),  d43 = $(steady_values.d43) m")
     println("  product dissolved-solute flow = $(steady.product.dissolved_solute_flow) kg/s  (Q·C_ss)")
     println("  hydraulics: ", steady.hydraulics)
 
@@ -106,7 +107,7 @@ function main()
     lines!(ax_c, solution.time ./ 60, c_oracle.(solution.time), color = :crimson,
            linestyle = :dash, label = "analytic approach")
     hlines!(ax_c, [c_ss], color = :black, linestyle = :dot, label = "C_ss")
-    scatter!(ax_c, [save_grid[end] ./ 60], [steady.concentration],
+    scatter!(ax_c, [save_grid[end] ./ 60], [steady_values.concentration],
              color = :seagreen, label = "solve_steadystate")
     axislegend(ax_c; position = :rt)
 

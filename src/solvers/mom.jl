@@ -98,38 +98,35 @@ end
 _solvent_solution_index(problem::CrystallisationProblem, solution, name::Symbol) =
     _solvent_state_index(problem, name)
 
-function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, GrF, nobreakage,
-                                                                       noaggregation, MoM,
-                                                                       NuP, GrP, BrP, AggP,
-                                                                       TP},
-                                    saveat) where {NuclF <:
-                                                   AbstractNucleationFunction,
-                                                   GrF <:
-                                                   AbstractGrowthFunction,
-                                                   NuP <:
-                                                   AbstractVector{<:Real},
-                                                   GrP <:
-                                                   AbstractVector{<:Real},
-                                                   BrP <:
-                                                   AbstractVector{<:Real},
-                                                   AggP <:
-                                                   AbstractVector{<:Real},
-                                                   TP <:
-                                                   AbstractTemperature}
-    n_mom = CryProblem.solver.nmoments
-    @assert n_mom >= 2 "MoM solver requires nmoments >= 2 (concentration closure uses µ2)"
-    if (CryProblem.kinetics_growthfunction isa AbstractFPLengthGrowthFunction ||
-        CryProblem.kinetics_growthfunction isa AbstractFPLengthDissolutionFunction ||
-        CryProblem.kinetics_dissolutionfunction isa AbstractFPLengthDissolutionFunction)
-        throw(ArgumentError("Length-dependent kinetics are not supported by MoM; " *
-                            "use FiniteVol or WENO."))
-    end
-    if ((!(CryProblem.kinetics_dissolutionfunction isa nodissolution) &&
-         CryProblem.kinetics_dissolutionfunction isa AbstractFPScalarDissolutionFunction) ||
-        CryProblem.kinetics_growthfunction isa AbstractFPScalarDissolutionFunction) && n_mom < 3
-        throw(ArgumentError("MoM dissolution requires nmoments >= 3 to track crystal volume."))
-    end
+"""
+    _validate_solver_kinetics(solver, problem)
 
+Solver-specific kinetic contract, checked once by `_validate_crystallisation_problem`
+and again when the solver's ODE problem is built. Only `MoM` restricts the
+kinetic families here; the quadrature solvers validate their closures when
+the ODE problem is built.
+"""
+_validate_solver_kinetics(solver::AbstractSolver, problem::CrystallisationProblem) = nothing
+function _validate_solver_kinetics(solver::MoM, problem::CrystallisationProblem)
+    solver.nmoments >= 2 ||
+        throw(ArgumentError("MoM requires nmoments >= 2 (the concentration closure uses µ2)."))
+    if problem.kinetics_growthfunction isa AbstractFPLengthGrowthFunction ||
+       problem.kinetics_growthfunction isa AbstractFPLengthDissolutionFunction ||
+       problem.kinetics_dissolutionfunction isa AbstractFPLengthDissolutionFunction
+        throw(ArgumentError("MoM requires scalar kinetics; choose DQMOM for length growth or a mesh solver."))
+    end
+    problem.kinetics_aggregationfunction isa noaggregation &&
+        problem.kinetics_breakagefunction isa nobreakage ||
+        throw(ArgumentError("MoM does not support aggregation or breakage; choose a quadrature or discretised solver."))
+    signed_dissolution = !(problem.kinetics_dissolutionfunction isa nodissolution) ||
+                         problem.kinetics_growthfunction isa AbstractFPScalarDissolutionFunction
+    signed_dissolution && solver.nmoments < 3 &&
+        throw(ArgumentError("MoM dissolution requires nmoments >= 3 to track crystal volume."))
+    return nothing
+end
+
+function crystallisation_odeproblem(solver::MoM, CryProblem::CrystallisationProblem, saveat)
+    _validate_solver_kinetics(solver, CryProblem)
     feed_population = _operation_feed_population(CryProblem)
     function MoM_model(u, p, t)
         scalar_growth_rate = net_growth_rate(CryProblem.kinetics_growthfunction,
@@ -152,67 +149,25 @@ function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, Gr
                        diss = CryProblem.parameterset_dissolution)
 
     ET = eltype(CryProblem.parameterset_nucleation)
-    n_mom = CryProblem.solver.nmoments
     u0_vec = ET.(_get_initial_state(CryProblem))
-    n_states = n_mom + 1 + _operation_state_count(CryProblem.operation) + length(propertynames(CryProblem.initial_solvent_state))
+    n_states = moment_count(solver) + _operation_state_count(CryProblem.operation) +
+               length(propertynames(CryProblem.initial_solvent_state))
     u0_typed = SVector(ntuple(k -> u0_vec[k], Val(n_states)))
     ODEprob = ODEProblem(MoM_model,
                          u0_typed,
                          (saveat[1], saveat[end]),
                          θ;
                          callback = _mom_extinction_callback(CryProblem))
-
-    tstep_solver = _resolve_timestepping_algorithm(CryProblem.solver, :tsit5)
-    return (ODEprob, tstep_solver)
+    return (ODEprob, _timestepping_algorithm(solver, Tsit5()))
 end
 
-function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, GrF, nobreakage,
-                                                                       noaggregation, MoM,
-                                                                       NuP, GrP, BrP, AggP,
-                                                                       TP},
-                                    saveat) where {NuclF <: AbstractNucleationFunction,
-                                                   GrF <: AbstractFPLengthGrowthFunction,
-                                                   NuP <: AbstractVector{<:Real},
-                                                   GrP <: AbstractVector{<:Real},
-                                                   BrP <: AbstractVector{<:Real},
-                                                   AggP <: AbstractVector{<:Real},
-                                                   TP <: AbstractTemperature}
-    throw(ArgumentError("$(GrF) is length-dependent and is not supported by MoM; " *
-                        "use FiniteVol or WENO."))
+function _wrap_solution(solver::MoM, problem::CrystallisationProblem, ode_solution,
+                        boundary_flow_state::NamedTuple)
+    # State k holds µ_{k-1}; untracked ratios (nmoments < 4) are NaN.
+    moment_matrix = Array(ode_solution[1:moment_count(solver), :])
+    return _crystallisation_solution(problem, ode_solution, MomentPopulation(moment_matrix),
+                                     _raw_moment_size_metrics(moment_matrix),
+                                     collect(ode_solution[:, end]),
+                                     merge(_reactor_solution_state(problem, ode_solution),
+                                           boundary_flow_state))
 end
-
-function _wrap_solution(CryProblem::CrystallisationProblem{<:Any, <:Any, <:Any, <:Any, MoM},
-                        sol)
-    final_state = collect(sol[:, end])
-
-    n_mom = CryProblem.solver.nmoments
-    n_states = n_mom + 1 + _operation_state_count(CryProblem.operation) + length(propertynames(CryProblem.initial_solvent_state))
-    # Fixed moment indices: state k holds µ_{k-1}; µ2 = state 3, µ3 = state 4,
-    # µ4 = state 5. Higher moments (if any) do not change these metrics.
-    d32 = n_mom >= 3 ?
-          [_safe_moment_size_ratio(sol[4, index], sol[3, index], sol[1, index])
-           for index in eachindex(sol.t)] :
-          fill(NaN, length(sol.t))
-    d43 = n_mom >= 4 ?
-          [_safe_moment_size_ratio(sol[5, index], sol[4, index], sol[1, index])
-           for index in eachindex(sol.t)] :
-          fill(NaN, length(sol.t))
-    moment2 = n_mom >= 2 ? sol[3, :] : fill(NaN, length(sol.t))
-    solvent_solution_state = _solvent_solution_state(CryProblem, sol)
-
-    return CrystallisationMoMSolution(sol.t,
-                                      solvent_solution_state.concentration,
-                                      [_safe_moment_size_ratio(sol[2, index],
-                                                               sol[1, index],
-                                                               sol[1, index])
-                                       for index in eachindex(sol.t)],
-                                      d32,
-                                      d43,
-                                      moment2,
-                                      solvent_solution_state,
-                                      final_state,
-                                      sol.stats,
-                                      OrdinaryDiffEq.SciMLBase.successful_retcode(sol.retcode),
-                                      _reactor_solution_state(CryProblem, sol))
-end
-

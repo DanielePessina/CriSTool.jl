@@ -98,15 +98,16 @@ steady-state runner on a problem built from the model and run:
 msmpr_problem = CrystallisationProblem(msmpr_model, msmpr_run; solver = MoM())
 steady = solve_steadystate(msmpr_problem;
     options = SteadyStateOptions(relaxation_horizon = 400.0))
-steady.concentration                  # scalar kg/m³
-steady.d43                            # scalar m
+equilibrium(steady).concentration     # scalar kg/m³
+equilibrium(steady).d43               # scalar m
 steady.product.dissolved_solute_flow  # kg/s leaving in the liquid
 steady.diagnostics.converged
 ```
 
 `solve_steadystate` relaxes the generated dynamics until the scaled full-state
-RHS residual is within tolerance. Scalar observables are plain values
-(`steady.concentration`, `steady.d43`); `steady.moments` is one vector. Product
+RHS residual is within tolerance. `equilibrium(steady)` returns the
+equilibrium as plain values (`.concentration`, `.d43`); `.moments` is one
+vector. Product
 flows sit in `steady.product` (`dissolved_solute_flow`, `solid_mass_flow`), the
 hydraulics in `steady.hydraulics`, and convergence, residual norms and balance
 checks in `steady.diagnostics`; `steady.solution` is the endpoint as a

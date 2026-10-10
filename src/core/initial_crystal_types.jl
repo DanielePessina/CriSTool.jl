@@ -45,3 +45,51 @@ struct GaussianInitialCrystals{Mass, D43, Width} <: AbstractInitialCrystals
 end
 GaussianInitialCrystals(; mass_concentration, d43, standard_deviation) = GaussianInitialCrystals(
     _seed_field_value(mass_concentration), _seed_field_value(d43), _seed_field_value(standard_deviation))
+
+"""
+    DistributionInitialCrystals(distribution; mass_concentration, weighting=:number,
+        quadrature_rtol=1e-8, mass_loss_tolerance=1e-4)
+
+A continuous distribution of positive lengths in metres, weighted by number
+(`weighting = :number`) or volume (`weighting = :volume`), and solid mass
+concentration in kg/m³. No hidden truncation is applied.
+
+The weighting is stored as `number_density_power`: the number density is
+proportional to `pdf(distribution, L) * L^number_density_power` (0 for number
+weighting, -3 for volume weighting). `d43` is resolved once on construction.
+"""
+struct DistributionInitialCrystals{Distribution, Mass} <: AbstractInitialCrystals
+    distribution::Distribution
+    mass_concentration::Mass
+    number_density_power::Int
+    quadrature_rtol::Float64
+    mass_loss_tolerance::Float64
+    d43::Float64
+end
+
+_number_density_power(weighting::Symbol) =
+    weighting === :number ? 0 : weighting === :volume ? -3 :
+    throw(ArgumentError("weighting must be :number or :volume."))
+
+function DistributionInitialCrystals(length_distribution::Distributions.ContinuousUnivariateDistribution;
+        mass_concentration::Union{Real, FromObservation}, weighting::Symbol = :number,
+        quadrature_rtol::Real = 1e-8, mass_loss_tolerance::Real = 1e-4)
+    number_density_power = _number_density_power(weighting)
+    _validate_seed_mass(mass_concentration)
+    minimum(length_distribution) >= 0 || throw(ArgumentError(
+        "Length distribution has negative support; truncate it explicitly."))
+    maximum(length_distribution) > 0 || throw(ArgumentError("Length distribution has no positive support."))
+    0 < quadrature_rtol < 1 && 0 <= mass_loss_tolerance < 1 ||
+        throw(ArgumentError("Invalid quadrature or mass-loss tolerance."))
+    # The characteristic size is resolved once; it also verifies the required integrals.
+    unsized_seed = DistributionInitialCrystals(length_distribution, _seed_field_value(mass_concentration),
+        number_density_power, Float64(quadrature_rtol), Float64(mass_loss_tolerance), NaN)
+    seed_d43 = _seed_raw_moment(unsized_seed, 4) / _seed_raw_moment(unsized_seed, 3)
+    return DistributionInitialCrystals(length_distribution, unsized_seed.mass_concentration,
+        number_density_power, Float64(quadrature_rtol), Float64(mass_loss_tolerance), seed_d43)
+end
+
+_validate_seed_mass(mass_concentration::FromObservation) = mass_concentration
+_validate_seed_mass(mass_concentration::Real) =
+    isfinite(mass_concentration) && mass_concentration > 0 ? mass_concentration :
+    throw(ArgumentError("Distribution seeds require positive finite mass_concentration."))

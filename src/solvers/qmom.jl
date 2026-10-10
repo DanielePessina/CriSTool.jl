@@ -21,9 +21,6 @@ side.
         throw(ArgumentError("QMOM node_coalescence_tolerance must be finite and nonnegative."))
     isfinite(solver.minimum_size) && solver.minimum_size >= 0.0 ||
         throw(ArgumentError("QMOM minimum_size must be finite and nonnegative."))
-    solver.inversion_algorithm === :wheeler ||
-        throw(ArgumentError("Unsupported QMOM inversion algorithm: $(solver.inversion_algorithm). " *
-                            "Only :wheeler is currently implemented."))
     return solver
 end
 
@@ -683,19 +680,7 @@ This specialized six-moment/seven-state form also keeps the derivative in an
 end
 
 """Construct the QMOM ODE problem and selected time-stepping algorithm."""
-function crystallisation_odeproblem(problem::CrystallisationProblem{NuclF, GrF, BrF,
-                                                                    AggF, QMOM,
-                                                                    NuP, GrP, BrP,
-                                                                    AggP, TP},
-                                    saveat) where {NuclF <: AbstractNucleationFunction,
-                                                   GrF <: AbstractGrowthFunction,
-                                                   BrF <: AbstractBreakageFunction,
-                                                   AggF <: AbstractAggregationFunction,
-                                                   NuP <: AbstractVector{<:Real},
-                                                   GrP <: AbstractVector{<:Real},
-                                                   BrP <: AbstractVector{<:Real},
-                                                   AggP <: AbstractVector{<:Real},
-                                                   TP <: AbstractTemperature}
+function crystallisation_odeproblem(solver::QMOM, problem::CrystallisationProblem, saveat)
     _validate_qmom_problem(problem)
     length(saveat) >= 2 ||
         throw(ArgumentError("saveat must contain at least two time points."))
@@ -811,105 +796,55 @@ function crystallisation_odeproblem(problem::CrystallisationProblem{NuclF, GrF, 
                              (saveat[1], saveat[end]),
                              parameters;
                              callback = _qmom_extinction_callback(problem))
-    time_step_solver = _resolve_timestepping_algorithm(problem.solver, :tsit5)
-    return ode_problem, time_step_solver
+    return ode_problem, _timestepping_algorithm(solver, Tsit5())
 end
 
-function _wrap_solution(problem::CrystallisationProblem{<:Any, <:Any, <:Any, <:Any, QMOM},
-                        solution)
-    n_moments = moment_count(problem.solver)
-    n_solvent = length(propertynames(problem.initial_solvent_state))
-    moment_matrix = Array(solution[1:n_moments, :])
-    time_points = collect(solution.t)
-    n_time_points = length(time_points)
-    n_nodes = problem.solver.nquadrature
-    element_type = eltype(moment_matrix)
-    node_matrix = zeros(element_type, n_nodes, n_time_points)
-    weight_matrix = zeros(element_type, n_nodes, n_time_points)
-    diagnostics = Vector{Any}(undef, n_time_points)
-
-    for time_index in 1:n_time_points
-        reconstructed_rule = invert_moments(view(moment_matrix, :, time_index),
-                                             problem.solver)
+function _wrap_solution(solver::QMOM, problem::CrystallisationProblem, solution,
+                        boundary_flow_state::NamedTuple)
+    moment_matrix = Array(solution[1:moment_count(solver), :])
+    saved_count = size(moment_matrix, 2)
+    reconstructed_rules = [invert_moments(view(moment_matrix, :, time_index), solver)
+                           for time_index in 1:saved_count]
+    # Inactive nodes of an empty or deflated rule are stored as zeros.
+    node_matrix = zeros(eltype(moment_matrix), solver.nquadrature, saved_count)
+    weight_matrix = zeros(eltype(moment_matrix), solver.nquadrature, saved_count)
+    for (time_index, reconstructed_rule) in enumerate(reconstructed_rules)
         active_nodes = reconstructed_rule.active_nodes
-        diagnostics[time_index] = reconstructed_rule.diagnostics
-        if active_nodes > 0
-            node_matrix[1:active_nodes, time_index] .= reconstructed_rule.nodes
-            weight_matrix[1:active_nodes, time_index] .= reconstructed_rule.weights
-        end
+        node_matrix[1:active_nodes, time_index] .= reconstructed_rule.nodes
+        weight_matrix[1:active_nodes, time_index] .= reconstructed_rule.weights
     end
-
-    d10 = [_safe_moment_size_ratio(moment_matrix[2, index],
-                                   moment_matrix[1, index], moment_matrix[1, index])
-           for index in 1:n_time_points]
-    d32 = [_safe_moment_size_ratio(moment_matrix[4, index],
-                                   moment_matrix[3, index], moment_matrix[1, index])
-           for index in 1:n_time_points]
-    d43 = n_moments >= 5 ?
-          [_safe_moment_size_ratio(moment_matrix[5, index],
-                                   moment_matrix[4, index], moment_matrix[1, index])
-           for index in 1:n_time_points] :
-          zeros(element_type, n_time_points)
-    moment2 = collect(@view moment_matrix[3, :])
-    solvent_solution_state = _solvent_solution_state(problem, solution)
-    final_state = collect(solution[:, end])
-    successful = OrdinaryDiffEq.SciMLBase.successful_retcode(solution.retcode)
-
-    return CrystallisationQMOMSolution(time_points,
-                                       solvent_solution_state.concentration,
-                                       moment_matrix,
-                                       node_matrix,
-                                       weight_matrix,
-                                       d10,
-                                       d32,
-                                       d43,
-                                       moment2,
-                                       solvent_solution_state,
-                                       final_state,
-                                       solution.stats,
-                                       successful,
-                                       _reactor_solution_state(problem, solution),
-                                       diagnostics)
+    population = QuadraturePopulation(moment_matrix, node_matrix, weight_matrix,
+                                      [reconstructed_rule.diagnostics
+                                       for reconstructed_rule in reconstructed_rules])
+    return _crystallisation_solution(problem, solution, population,
+                                     _raw_moment_size_metrics(moment_matrix),
+                                     collect(solution[:, end]),
+                                     merge(_reactor_solution_state(problem, solution),
+                                           boundary_flow_state))
 end
 
-
-"""Reconstruct a saved QMOM rule at one trajectory index."""
-function quadrature(solution::CrystallisationQMOMSolution, time_index::Integer)
-    1 <= time_index <= length(solution.time) ||
-        throw(BoundsError(solution.time, time_index))
-    diagnostic = solution.inversion_diagnostics[time_index]
-    active_nodes = diagnostic.active_nodes
-    return QMOMQuadrature(collect(view(solution.quadrature_nodes, 1:active_nodes,
-                                    time_index)),
-                          collect(view(solution.quadrature_weights, 1:active_nodes,
-                                       time_index)),
-                          active_nodes,
-                          diagnostic)
-end
-
-quadrature(solution::CrystallisationQMOMSolution) =
-    [quadrature(solution, index) for index in eachindex(solution.time)]
 """
-    qmom_quadrature(solution::CrystallisationQMOMSolution, time_index::Integer)
+    quadrature(solution, time_index) -> QMOMQuadrature
+    quadrature(solution) -> Vector{QMOMQuadrature}
 
-Compatibility alias for `quadrature(solution, time_index)`.
+Quadrature rule of a QMOM or DQMOM solution at one saved time (or at every
+saved time). Inactive QMOM nodes are dropped; DQMOM rules keep every node.
 """
-qmom_quadrature(solution::CrystallisationQMOMSolution, time_index::Integer) =
-    quadrature(solution, time_index)
+quadrature(solution::CrystallisationSolution{<:QuadraturePopulation}, time_index::Integer) =
+    _saved_quadrature(solution.population, time_index)
+quadrature(solution::CrystallisationSolution{<:QuadraturePopulation}) =
+    [quadrature(solution, time_index) for time_index in eachindex(solution.time)]
 
-time(solution::CrystallisationQMOMSolution) = solution.time
-state_vars(solution::CrystallisationQMOMSolution) =
-    merge(solution.solvent_state, reactor_vars(solution),
-          (; moments = solution.moments,
-             quadrature_nodes = solution.quadrature_nodes,
-             quadrature_weights = solution.quadrature_weights))
-size_metrics(solution::CrystallisationQMOMSolution) =
-    (; d10 = solution.d10, d32 = solution.d32, d43 = solution.d43,
-       moment2 = solution.moment2)
-get_characteristic_size(solution::CrystallisationQMOMSolution) = solution.d43[end]
-_size_trajectory(solution::CrystallisationQMOMSolution) = solution.d43
-
-function getmomentsizes(problem::CrystallisationProblem,
-                        solution::CrystallisationQMOMSolution)
-    return size_metrics(solution)
+function _saved_quadrature(population::QuadraturePopulation, time_index::Integer)
+    checkbounds(population.nodes, :, time_index)
+    diagnostic = _saved_diagnostic(population.diagnostics, time_index)
+    active_nodes = _active_node_count(diagnostic, size(population.nodes, 1))
+    return QMOMQuadrature(population.nodes[1:active_nodes, time_index],
+                          population.weights[1:active_nodes, time_index],
+                          active_nodes, diagnostic)
 end
+
+_saved_diagnostic(diagnostics::AbstractVector, time_index) = diagnostics[time_index]
+_saved_diagnostic(diagnostics::Nothing, time_index) = nothing
+_active_node_count(diagnostic::QMOMInversionDiagnostics, node_count) = diagnostic.active_nodes
+_active_node_count(diagnostic, node_count) = node_count

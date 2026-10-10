@@ -36,17 +36,10 @@ const operations_mesh_solvers = (FiniteVol(meshsize = 24, lmax = 40e-6, reltol =
     WENO(meshsize = 24, lmax = 40e-6, reltol = 1e-10, abstol = 1e-12))
 
 # Population representation at every saved time: raw moments 0:4 for moment
-# solvers (MoM exposes m2 and the d32/d43 ratios), the density for meshes.
-function operations_population(trajectory)
-    hasproperty(trajectory, :numberdensity) && return trajectory.numberdensity
-    hasproperty(trajectory, :moments) && return trajectory.moments[1:5, :]
-    second_moment = trajectory.moment2
-    third_moment = trajectory.d32 .* second_moment
-    return permutedims(hcat(fill(NaN, length(second_moment)), fill(NaN, length(second_moment)),
-        second_moment, third_moment, trajectory.d43 .* third_moment))
-end
-operations_compared_rows(trajectory) = hasproperty(trajectory, :numberdensity) ||
-    hasproperty(trajectory, :moments) ? Colon() : 3:5
+# solvers, the density for meshes.
+operations_population(trajectory::CrystallisationSolution{<:MeshPopulation}) =
+    trajectory.population.numberdensity
+operations_population(trajectory::CrystallisationSolution) = trajectory.population.moments[1:5, :]
 
 # Closed-form initial population: lognormal moments for moment solvers, the
 # solver's own discretisation (a batch at t = 0) for meshes.
@@ -54,7 +47,7 @@ operations_seed_population(numerical_solver, seed_description) =
     numerical_solver isa CriSTool.AbstractDiscretisedSolver ?
     simulate(fixture_translation_model(speed = 0.0), RunConditions(temperature = 293.15,
         concentration = 2.0, crystals = seed_description); solver = numerical_solver,
-        saveat = [0.0]).numberdensity[:, 1] :
+        saveat = [0.0]).population.numberdensity[:, 1] :
     operations_lognormal_moments(seed_description)[1:5]
 
 @testset "Operation inputs reject unphysical hydraulics" begin
@@ -89,7 +82,7 @@ end
             @test fed_trajectory.success
             @test observable_values(fed_trajectory, :volume) ≈ fed_volume rtol = 1e-9
             @test fed_trajectory.concentration ≈ (16.0 .+ operations_times) ./ fed_volume rtol = 1e-9
-            @test fed_trajectory.numberdensity ≈ hcat(((2.0 .* tank_population .+ 0.5 * elapsed_time .* inlet_population) ./
+            @test fed_trajectory.population.numberdensity ≈ hcat(((2.0 .* tank_population .+ 0.5 * elapsed_time .* inlet_population) ./
                 (2.0 + 0.5 * elapsed_time) for elapsed_time in operations_times)...) rtol = 5e-7 atol = 1e-10
             # No growth means nothing crosses the size-domain boundaries.
             @test all(iszero, reactor_vars(fed_trajectory).size_boundary_upper_solid_mass_flow)
@@ -102,7 +95,7 @@ end
             @test msmpr_trajectory.success
             @test observable_values(msmpr_trajectory, :volume) == fill(2.0, length(operations_times))
             @test msmpr_trajectory.concentration ≈ 2.0 .+ 6.0 .* washout_factor rtol = 1e-9
-            @test msmpr_trajectory.numberdensity ≈ hcat((inlet_population .+ (tank_population .- inlet_population) .* factor
+            @test msmpr_trajectory.population.numberdensity ≈ hcat((inlet_population .+ (tank_population .- inlet_population) .* factor
                 for factor in washout_factor)...) rtol = 5e-7 atol = 1e-10
         end
     end
@@ -155,9 +148,8 @@ end
                 @test trajectory.success
                 @test trajectory.concentration ≈ expected_concentration rtol = 1e-7
                 @test trajectory.d43 ≈ expected_moments[5, :] ./ expected_moments[4, :] rtol = 1e-7
-                compared_rows = operations_compared_rows(trajectory)
-                @test operations_population(trajectory)[compared_rows, :] ≈
-                      expected_moments[compared_rows, :] rtol = 1e-7
+                @test operations_population(trajectory) ≈
+                      expected_moments[1:5, :] rtol = 1e-7
             end
         end
     end
@@ -194,9 +186,8 @@ end
             inlet_population = operations_seed_population(numerical_solver, operations_inlet_seed)
             expected_population = hcat(((2.0 .* tank_population .+ elapsed_time^2 / 8 .* inlet_population) ./
                 (2.0 + elapsed_time^2 / 8) for elapsed_time in tracer_times)...)
-            compared_rows = operations_compared_rows(trajectory)
-            @test operations_population(trajectory)[compared_rows, :] ≈
-                  expected_population[compared_rows, :] rtol = 1e-6 atol = 1e-10
+            @test operations_population(trajectory) ≈
+                  expected_population rtol = 1e-6 atol = 1e-10
         end
     end
 end
@@ -217,7 +208,7 @@ end
                     operation = BatchOperation(volume = 2.0));
                 solver = mesh_solver, saveat = boundary_times)
             solid_mass = [operations_density_kv * mesh_solver.cell_dL *
-                          sum(trajectory.numberdensity[:, time_index] .* mesh_solver.cell_centre .^ 3)
+                          sum(trajectory.population.numberdensity[:, time_index] .* mesh_solver.cell_centre .^ 3)
                           for time_index in eachindex(boundary_times)]
             total_solute = trajectory.concentration .+ solid_mass
             boundary_flows = reactor_vars(trajectory)

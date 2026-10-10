@@ -86,3 +86,32 @@ their conditions must not contain placeholders.
 
 `PredictionEnsemble` is no longer an `AbstractSolution`. Observable weights are
 resolved once when the loss is prepared and stored with the prepared setup.
+
+## One solution type and method-based solvers
+
+The four solver-specific result types were merged, and solver configuration
+flags became values rather than symbols.
+
+| Before | After |
+| --- | --- |
+| `CrystallisationMoMSolution`, `CrystallisationFVSolution`, `CrystallisationQMOMSolution`, `CrystallisationDQMOMSolution` | `CrystallisationSolution{Population}` with `population::MomentPopulation`, `MeshPopulation` or `QuadraturePopulation`; dispatch on `CrystallisationSolution{<:MeshPopulation}` |
+| `solution.numberdensity`, `solution.voldensity`, `solution.d50q` | `solution.population.numberdensity` (etc.), or `state_vars(solution)` / `size_metrics(solution)` |
+| `solution.moments`, `solution.nodes`, `solution.weights` | `solution.population.moments` / `.nodes` / `.weights`; MoM solutions now also carry `moments` |
+| `solution.quadrature_nodes`, `solution.quadrature_weights`, `inversion_diagnostics`, `projection_diagnostics` | `solution.population.nodes`, `.weights`, `.diagnostics` |
+| `qmom_quadrature(solution, i)`, `dqmom_quadrature(solution, i)` | `quadrature(solution, i)` |
+| `getmomentsizes(problem, solution)` | `size_metrics(solution)` |
+| `get_characteristic_size(solution)` | `solution.d43[end]` or `solution.population.d50q[end]` |
+| `nmoments(::QMOM)` | `moment_order(solver)` |
+| `steady.concentration`, `steady.d43`, `steady.time`, `steady.moments` | `equilibrium(steady).concentration` (etc.); `steady.solution` is the one-sample `CrystallisationSolution` |
+| `timestepping_algorithm = :ssprk43` (`:auto`) | `timestepping_algorithm = SSPRK43()` (`nothing`) |
+| `tolerance_mode = :auto` (`:scalar`) | `auto_abstol = true` (`false`) |
+| `QMOM(inversion_algorithm = :wheeler)`, solver `string` fields | removed |
+| `runsimulation(params, nucl, gr, agg, br, c0; ...)`, `runsimulation(params; nucl, gr, ..., initial_crystals)` | `runsimulation(params, problem; save_idx)` or `simulate(model, conditions; solver, saveat)` |
+| `DistributionInitialCrystals(...).weighting` | `number_density_power` (`0` for `:number`, `-3` for `:volume`); the `weighting` keyword is unchanged |
+
+Every seed description now passes through one resolution. Lognormal and
+Gaussian seeds become a `DistributionInitialCrystals`, and mesh solvers
+receive exact cell integrals of its density whichever entry point built the
+state (model conditions, experiments, `initial_state_from_characteristics` or
+feeds). Previously experiment seeds were point-sampled on the cell centres and
+rescaled to the target mass.

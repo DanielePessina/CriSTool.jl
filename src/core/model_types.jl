@@ -200,7 +200,7 @@ function CrystallisationProblem(crystal_model::CrystallisationModel, run_conditi
     _validate_crystallisation_problem(configured_run)
     if run_conditions.crystals !== nothing
         configured_run = _problem_with_initial_state(configured_run,
-            initial_state_from_characteristics(configured_run, _checked_seed_description(run_conditions.crystals)))
+            initial_state_from_characteristics(configured_run, run_conditions.crystals))
         _validate_crystallisation_problem(configured_run)
     end
     return configured_run

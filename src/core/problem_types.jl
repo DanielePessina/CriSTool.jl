@@ -20,24 +20,25 @@ function (::DefaultSolventDynamics)(problem, state, time, growth)
     concentration_position === nothing &&
         throw(ArgumentError("initial_solvent_state must define :concentration."))
 
-    population_count = _population_state_count(problem.solver)
-    if problem.solver isa AbstractMomentSolver
-        moment_order(problem.solver) >= 2 ||
-            throw(ArgumentError("Moment solver must track at least the second raw moment."))
-        growth isa Number ||
-            throw(ArgumentError("Moment-solver solvent coupling requires a scalar growth rate."))
-        depletion = 3 * problem.volume_shape_factor * problem.crystal_density * growth * state[3]
-    else
-        population = @view state[1:population_count]
-        depletion = 3 * problem.volume_shape_factor * problem.crystal_density *
-                    _concentration_depletion(problem.solver.cell_dL,
-                                              population,
-                                              growth,
-                                              problem.solver.cell_centre)
-    end
-    derivatives[concentration_position] = -depletion
+    derivatives[concentration_position] = -3 * problem.volume_shape_factor * problem.crystal_density *
+                                           _growth_surface_rate(problem.solver, state, growth)
     return SVector(derivatives)
 end
+
+"""
+    _growth_surface_rate(solver, state, growth)
+
+`∫ G(L) L² n(L) dL` for the solver's population state: `G µ2` for a scalar
+growth rate on a moment or quadrature state, a mesh quadrature otherwise.
+"""
+_growth_surface_rate(solver::Union{MoM, QMOM}, state, growth::Number) = growth * state[3]
+_growth_surface_rate(solver::DQMOM, state, growth::Number) =
+    growth * _dqmom_physical_moment(solver, state, 2)
+_growth_surface_rate(solver::AbstractMomentSolver, state, growth) =
+    throw(ArgumentError("Moment-solver solvent coupling requires a scalar growth rate."))
+_growth_surface_rate(solver::AbstractDiscretisedSolver, state, growth) =
+    _concentration_depletion(solver.cell_dL, view(state, 1:solver.meshsize), growth,
+                             solver.cell_centre)
 
 const default_solvent_dynamics = DefaultSolventDynamics()
 
@@ -217,16 +218,7 @@ function _validate_crystallisation_problem(problem::CrystallisationProblem)
             _validate_required_material_property(kinetic_law, required_name, required_value)
         end
     end
-    if problem.solver isa MoM && (problem.kinetics_growthfunction isa AbstractFPLengthGrowthFunction ||
-            problem.kinetics_growthfunction isa AbstractFPLengthDissolutionFunction ||
-            problem.kinetics_dissolutionfunction isa AbstractFPLengthDissolutionFunction)
-        throw(ArgumentError("MoM requires scalar kinetics; choose DQMOM for length growth or a mesh solver."))
-    end
-    if problem.solver isa MoM &&
-       (!(problem.kinetics_aggregationfunction isa noaggregation) ||
-        !(problem.kinetics_breakagefunction isa nobreakage))
-        throw(ArgumentError("MoM does not support aggregation or breakage; choose a quadrature or discretised solver."))
-    end
+    _validate_solver_kinetics(problem.solver, problem)
     solvent_names = propertynames(problem.initial_solvent_state)
     concentration_position = findfirst(==(Symbol(:concentration)), solvent_names)
     concentration_position === nothing &&
@@ -278,10 +270,8 @@ function _validate_crystallisation_problem(problem::CrystallisationProblem)
             throw(ArgumentError("initial_state must contain only finite values."))
         initial_concentration(problem) >= 0 ||
             throw(ArgumentError("Explicit initial-state concentration must be nonnegative."))
-        if problem.solver isa AbstractDiscretisedSolver
-            any(value -> value < 0.0, @view problem.initial_state[1:population_state_count]) &&
-                throw(ArgumentError("initial number density must be nonnegative."))
-        end
+        _validate_initial_population(problem.solver,
+                                     view(problem.initial_state, 1:population_state_count))
     end
 
     _validate_operation(problem, problem.operation)
@@ -290,6 +280,14 @@ function _validate_crystallisation_problem(problem::CrystallisationProblem)
     isfinite(saturation_value) && saturation_value > 0.0 ||
         throw(ArgumentError("saturation concentration must be finite and strictly positive at t=0."))
     return problem
+end
+
+"""Solver-specific check of an explicit initial population block."""
+_validate_initial_population(solver::AbstractSolver, population) = nothing
+function _validate_initial_population(solver::AbstractDiscretisedSolver, population)
+    any(value -> value < 0.0, population) &&
+        throw(ArgumentError("initial number density must be nonnegative."))
+    return nothing
 end
 
 """
