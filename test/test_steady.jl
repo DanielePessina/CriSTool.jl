@@ -94,17 +94,18 @@ end
     # 0.048 kg/s, dissolved Q C* = 0.152 kg/s; together they return the 0.2 kg/s fed.
     expected_moments = steady_ideal_moment.(0:5)
     expected_concentration = steady_ideal_concentration()
-    # A 40-cell mesh inserts nuclei and transports mass with an O(dL) to O(dL²)
-    # flow-balance defect (~3e-3 for FiniteVol, ~4e-4 for WENO here; it shrinks
-    # with refinement), so meshes get a matching balance_reltol and tolerance.
-    for (steady_solver, solver_rtol, balance_reltol) in (
-            (MoM(reltol = 1e-10, abstol = 1e-24), 2e-6, 1e-5), (QMOM(), 2e-6, 1e-5),
-            (FiniteVol(meshsize = 40, lmax = 40e-6), 0.05, 5e-3), (WENO(meshsize = 40, lmax = 40e-6), 0.05, 5e-3))
+    # Meshes differ from the closed form by their 40-cell discretisation
+    # (solver_rtol 0.05), but their solute coupling is the exact discrete
+    # change of the cell-centre µ3, so the steady flow balance closes to the
+    # residual tolerance and every solver passes the default balance_reltol = 1e-5.
+    balance_reltol = 1e-5
+    for (steady_solver, solver_rtol) in (
+            (MoM(reltol = 1e-10, abstol = 1e-24), 2e-6), (QMOM(), 2e-6),
+            (FiniteVol(meshsize = 40, lmax = 40e-6), 0.05), (WENO(meshsize = 40, lmax = 40e-6), 0.05))
         @testset "$(nameof(typeof(steady_solver)))" begin
             steady_result = solve_steadystate(
                 CrystallisationProblem(steady_msmpr_model(), steady_msmpr_conditions(); solver = steady_solver);
-                options = SteadyStateOptions(autonomous = true, residual_reltol = 1e-8, residual_abstol = 1e-10,
-                    balance_reltol = balance_reltol))
+                options = SteadyStateOptions(autonomous = true, residual_reltol = 1e-8, residual_abstol = 1e-10))
             @test steady_result.success
             @test steady_result.equilibrium.d43 ≈ steady_ideal_d43() rtol = solver_rtol
             @test steady_result.equilibrium.concentration ≈ expected_concentration rtol = solver_rtol

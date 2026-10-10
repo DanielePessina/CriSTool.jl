@@ -212,18 +212,8 @@ function _finite_volume_odeproblem(length_growth::Val{false},
         # Calculate dstdt for numberdensity part
         dstdt_nd_view = crystal_state(CryProblem, dstdt)
 
-        if _fused_solvent_coupling_enabled(CryProblem)
-            depletion = _fused_depletion_divergence!(dstdt_nd_view, _flux_cache,
-                                                     numberdensity,
-                                                     CryProblem.solver.cell_centre,
-                                                     CryProblem.solver.cell_dL,
-                                                     scalar_growth_rate)
-        else
-            for i in 1:length(dstdt_nd_view) # i is cell index
-                dstdt_nd_view[i] = -(_flux_cache[i + 1] - _flux_cache[i]) /
-                                   CryProblem.solver.cell_dL
-            end
-        end
+        solid_volume_rate = _mesh_transport_divergence!(dstdt_nd_view, _flux_cache,
+                                                        CryProblem.solver)
 
         # Add aggregation and breakage terms
         agg_rate = aggregationrate(CryProblem.model.aggregation.law,
@@ -240,14 +230,8 @@ function _finite_volume_odeproblem(length_growth::Val{false},
             dstdt_nd_view .+= br_rate
         end
 
-        if _fused_solvent_coupling_enabled(CryProblem)
-            depletion_coupled = 3 * CryProblem.model.system.volume_shape_factor *
-                                CryProblem.model.system.crystal_density * depletion
-            dstdt[end] = -depletion_coupled
-        else
-            solvent_rates = _solvent_derivatives(CryProblem, st, t, scalar_growth_rate)
-            _write_solvent_derivatives!(dstdt, CryProblem, solvent_rates)
-        end
+        _write_mesh_solvent_derivatives!(dstdt, CryProblem, st, t, scalar_growth_rate,
+                                         solid_volume_rate)
 
         _add_operation_transport!(dstdt, st, CryProblem, t, feed_population)
 
@@ -306,18 +290,8 @@ function _finite_volume_odeproblem(length_growth::Val{true},
         # Calculate dstdt for numberdensity part
         dstdt_nd_view = crystal_state(CryProblem, dstdt)
 
-        if _fused_solvent_coupling_enabled(CryProblem)
-            depletion = _fused_depletion_divergence!(dstdt_nd_view, _flux_cache,
-                                                     numberdensity,
-                                                     CryProblem.solver.cell_centre,
-                                                     CryProblem.solver.cell_dL,
-                                                     net_growth_rates)
-        else
-            for i in 1:length(dstdt_nd_view) # i is cell index
-                dstdt_nd_view[i] = -(_flux_cache[i + 1] - _flux_cache[i]) /
-                                   CryProblem.solver.cell_dL
-            end
-        end
+        solid_volume_rate = _mesh_transport_divergence!(dstdt_nd_view, _flux_cache,
+                                                        CryProblem.solver)
 
         # Add aggregation and breakage terms
         agg_rate = aggregationrate(CryProblem.model.aggregation.law,
@@ -334,14 +308,8 @@ function _finite_volume_odeproblem(length_growth::Val{true},
             dstdt_nd_view .+= br_rate
         end
 
-        if _fused_solvent_coupling_enabled(CryProblem)
-            depletion_coupled = 3 * CryProblem.model.system.volume_shape_factor *
-                                CryProblem.model.system.crystal_density * depletion
-            dstdt[end] = -depletion_coupled
-        else
-            solvent_rates = _solvent_derivatives(CryProblem, st, t, net_growth_rates)
-            _write_solvent_derivatives!(dstdt, CryProblem, solvent_rates)
-        end
+        _write_mesh_solvent_derivatives!(dstdt, CryProblem, st, t, net_growth_rates,
+                                         solid_volume_rate)
 
         _add_operation_transport!(dstdt, st, CryProblem, t, feed_population)
 

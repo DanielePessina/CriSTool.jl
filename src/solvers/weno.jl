@@ -1,29 +1,11 @@
-"""Fused divergence sweep + aggregation/breakage sources + solvent tail.
-
-When the default single-concentration solvent coupling is active, the
-concentration depletion is accumulated inside the divergence pass (one array
-sweep instead of two).  Otherwise the sweep and the `_solvent_derivatives`
-pass run exactly as before.
-"""
+"""Transport divergence, aggregation/breakage sources and solvent block of a WENO RHS."""
 @inline function _weno_divergence_sweep!(dstdt, st, p, t, flux_cache, CryProblem,
                                          growth_rate)
-    dstdt_nd_view = crystal_state(CryProblem, dstdt)
-    numberdensity = crystal_state(CryProblem, st)
-    if _fused_solvent_coupling_enabled(CryProblem)
-        fused_depletion = _fused_depletion_divergence!(dstdt_nd_view, flux_cache,
-                                                       numberdensity,
-                                                       CryProblem.solver.cell_centre,
-                                                       CryProblem.solver.cell_dL,
-                                                       growth_rate)
-    else
-        for i in eachindex(dstdt_nd_view)
-            dstdt_nd_view[i] = -(flux_cache[i + 1] - flux_cache[i]) /
-                               CryProblem.solver.cell_dL
-        end
-        fused_depletion = nothing
-    end
+    solid_volume_rate = _mesh_transport_divergence!(crystal_state(CryProblem, dstdt),
+                                                    flux_cache, CryProblem.solver)
     _weno_apply_sources!(dstdt, st, p, t, CryProblem)
-    _weno_solvent_tail!(dstdt, st, p, t, CryProblem, growth_rate, fused_depletion)
+    _write_mesh_solvent_derivatives!(dstdt, CryProblem, st, t, growth_rate,
+                                     solid_volume_rate)
     return nothing
 end
 
@@ -39,26 +21,6 @@ function _weno_apply_sources!(dstdt, st, p, t, CryProblem)
     end
     if !(typeof(br_rate) <: Real && br_rate == 0.0)
         dstdt_nd_view .+= br_rate
-    end
-    return nothing
-end
-
-"""Fused default-solvent RHS tail for the WENO sweeps.
-
-The depletion came from the fused divergence sweep; the solvent slot receives
-`-(3 * kv * rho * depletion)` with the same operation order as
-`DefaultSolventDynamics` (bit-identical).  Non-default solvent couplings keep
-the separate `_solvent_derivatives` pass.
-"""
-@inline function _weno_solvent_tail!(dstdt, st, p, t, CryProblem, growth_rate,
-                                     fused_depletion)
-    if fused_depletion === nothing
-        solvent_rates = _solvent_derivatives(CryProblem, st, t, growth_rate)
-        _write_solvent_derivatives!(dstdt, CryProblem, solvent_rates)
-    else
-        depletion_coupled = 3 * CryProblem.model.system.volume_shape_factor *
-                            CryProblem.model.system.crystal_density * fused_depletion
-        dstdt[end] = -depletion_coupled
     end
     return nothing
 end

@@ -77,12 +77,10 @@ function forwardsensitivity(solver::FiniteVol, CryProblem::CrystallisationProble
                            CryProblem, st, t) : zero(scalargrowth)
         _fill_fv_scalar_flux!(flux, numberdensity, scalargrowth, boundary_nucleation_rate)
 
-        @inbounds for index in eachindex(numberdensity)
-            dstdt[index] = -(flux[index + 1] - flux[index]) /
-                           CryProblem.solver.cell_dL
-        end
-        solvent_rates = _solvent_derivatives(CryProblem, st, t, scalargrowth)
-        _write_solvent_derivatives!(dstdt, CryProblem, solvent_rates)
+        solid_volume_rate = _mesh_transport_divergence!(crystal_state(CryProblem, dstdt),
+                                                        flux, CryProblem.solver)
+        _write_mesh_solvent_derivatives!(dstdt, CryProblem, st, t, scalargrowth,
+                                         solid_volume_rate)
 
     end
 

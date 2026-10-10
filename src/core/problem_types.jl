@@ -24,6 +24,13 @@ end
 
 `∫ G(L) L² n(L) dL` for the solver's population state: `G µ2` for a scalar
 growth rate on a moment or quadrature state, a mesh quadrature otherwise.
+
+Mesh RHS evaluations do not use the mesh quadrature: with the default
+dynamics they couple the solute to the exact discrete µ3 change of their face
+fluxes (`_write_mesh_solvent_derivatives!`). The quadrature is reached only
+when a custom `solvent_dynamics` calls `default_solvent_dynamics` on a mesh
+state, where the fluxes are not available; it is first-order consistent but
+not discretely conservative.
 """
 _growth_surface_rate(solver::Union{MoM, QMOM}, state, growth::Number) = growth * state[3]
 _growth_surface_rate(solver::DQMOM, state, growth::Number) =

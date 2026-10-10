@@ -22,11 +22,16 @@ simulate_raw_moment(trajectory::CrystallisationSolution{<:MeshPopulation}, solve
     expected_d43 = fixture_translation_d43.(simulate_translation_times)
     concentration_drop = 20.0 - expected_concentration[end]   # ≈ 0.05 kg/m³
     # Moment methods are exact for constant growth: only ODE tolerance
-    # (reltol ≤ 1e-7) remains. Mesh methods carry the seed's 40-cell
-    # projection and numerical diffusion: measured ≤ 1e-3 relative on the
-    # concentration drop and ≤ 5e-3 on d43, asserted with ~3x margin.
+    # (reltol ≤ 1e-7) remains. Mesh solvers conserve C + ρkv·µ3 exactly, so
+    # the concentration drop equals their discrete solid gain. On 40 cells the
+    # scheme smears the sharp-edged uniform seed, and the smeared population
+    # holds more third moment than the rigidly shifted one: measured 3.5%
+    # (FiniteVol) / 3.4% (WENO) excess on the drop, first order in ΔL (0.53% /
+    # 0.45% at 160 cells, 0.075% / 0.055% at 640), and ≤ 5e-3 on d43. Asserted
+    # with 1.4x / 3x margin; the 160-cell check below confirms convergence.
     for (solver, drop_rtol, d43_rtol) in ((MoM(), 1e-6, 1e-8), (QMOM(), 1e-5, 1e-6), (DQMOM(), 1e-5, 1e-6),
-            (simulate_mesh_solvers[1], 3e-3, 1.5e-2), (simulate_mesh_solvers[2], 3e-3, 1.5e-2))
+            (simulate_mesh_solvers[1], 5e-2, 1.5e-2), (simulate_mesh_solvers[2], 5e-2, 1.5e-2),
+            (FiniteVol(meshsize = 160, lmax = 40e-6), 8e-3, 3e-3))
         translation_trajectory = simulate(fixture_translation_model(), fixture_seeded_conditions();
             solver, saveat = simulate_translation_times)
         @test maximum(abs.(translation_trajectory.concentration .- expected_concentration)) <=
@@ -155,17 +160,47 @@ end
     @test all(iszero, moment_extinction.final_state[1:5])
     @test moment_extinction.d43[end] == 0.0
 
-    # KNOWN SOURCE DEFECT (reported, not fixed here): the mesh solute
-    # coupling is not discretely conservative under dissolution, so
-    # C + ρkv·µ3 drifts upward. At 60 s the excess over the seed mass is 9.4%
-    # / 2.3% / 0.6% at 40 / 160 / 640 cells (first order in ΔL; WENO at 40
-    # cells: 1.7%). Total solute can never exceed 5.25, so a 1% bound on the
-    # seed mass is physical truth, marked broken until the coupling is fixed.
-    mesh_extinction = simulate(extinction_problem(simulate_mesh_solvers[1]); saveat = [0.0, 60.0])
-    @test_broken abs(mesh_extinction.concentration[end] - 5.25) <= 0.01 * fixture_seed_mass
+    # Mesh solvers take the solute from the exact discrete change of the
+    # cell-centre third moment plus the crystal volume crossing the size
+    # boundaries at face size (zero at lmin = 0), so C + ρkv·µ3 is a linear
+    # invariant of the RHS: Runge-Kutta steps preserve it to round-off
+    # (measured ≤ 3e-14 relative; 1e-11 allows accumulation over the steps).
+    # The inventory is the seed as projected on the 40 cells (0.24975, not
+    # 0.25 kg/m³), and at 60 s the first-order tail still holds ≤ 1.2e-5
+    # kg/m³, so C itself is within 0.2% of the seed mass of 5.25 (measured 0.1%).
+    for mesh_solver in simulate_mesh_solvers
+        mesh_extinction = simulate(extinction_problem(mesh_solver); saveat = [0.0, 30.0, 60.0])
+        mesh_inventory = mesh_extinction.concentration .+
+                         1000.0 .* simulate_mesh_moment(mesh_extinction, mesh_solver, 3)
+        @test mesh_inventory ≈ fill(mesh_inventory[1], 3) rtol = 1e-11
+        @test abs(mesh_extinction.concentration[end] - 5.25) <= 2e-3 * fixture_seed_mass
+    end
     # Scalar dissolution would collapse DQMOM nodes; it is rejected rather
     # than integrated into a non-physical state.
     @test_throws DomainError simulate(extinction_model, extinction_conditions; solver = DQMOM(), saveat = [0.0, 60.0])
+end
+
+@testset "Mesh nucleation and growth conserve solute" begin
+    # Supersaturated growth (G = 1e-8 m/s at S = 2) with constant nucleation
+    # B = 1e10 #/m³/s inserting nuclei at L = 0. Over 60 s no crystal reaches
+    # lmax = 40 µm and nothing crosses lmin = 0 with volume, so total solute
+    # C + ρkv·µ3 (cell-centre µ3) is invariant. The former continuous
+    # 3ρkv·G·µ2 coupling ignored the nuclei and the cell-to-cell volume steps
+    # and drifted by 7e-5 of the inventory (4.7% of the solute consumed); the
+    # flux-consistent coupling holds it to round-off (measured ≤ 7e-16;
+    # 1e-11 as in the extinction check, still 1e-8 of the solute consumed).
+    growing_model = CrystallisationModel(fixture_system;
+        nucleation = fixture_constant_nucleation(birth_rate = 1e10),
+        growth = EmpiricalGrowth(growth_coefficient = 1e-8, growth_order = 1.0))
+    for mesh_solver in simulate_mesh_solvers
+        growing_trajectory = simulate(growing_model, fixture_seeded_conditions(concentration = 20.0);
+            solver = mesh_solver, saveat = [0.0, 30.0, 60.0])
+        growing_inventory = growing_trajectory.concentration .+
+                            1000.0 .* simulate_mesh_moment(growing_trajectory, mesh_solver, 3)
+        # Guard against a vacuous invariant: solute is really consumed.
+        @test growing_trajectory.concentration[end] < 20.0 - 0.02
+        @test growing_inventory ≈ fill(growing_inventory[1], 3) rtol = 1e-11
+    end
 end
 
 @testset "Frozen nonlinear lysozyme regression" begin
