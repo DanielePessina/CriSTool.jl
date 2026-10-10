@@ -30,7 +30,7 @@ replacements are:
 | Removed | Replacement |
 | --- | --- |
 | `PE_Routine`, `PE_Routine_Optimisation`, `MH_minimizer` | `fit(prepare_fit(model, experiments, OptimisationSpec(; bounds, algorithm)))`; the minimiser is `result.parameters` |
-| `batchLF_procSO`, `batchLF_procMO` | `loss(prepared_fit, values)` and `loss_terms(loss, setup, values)` |
+| `batchLF_procSO`, `batchLF_procMO` | `loss(prepared_fit, values)` and `loss_terms(prepared_fit, values)` |
 | `MCMC_Routine`, positional `nuts_model(experiments, prior, nucl, ...)` | `fit(prepare_fit(model, experiments, BayesianSpec(; priors)))` |
 | `run_abc`, `ABCDE_Routine`, `ABCDE_Turner_Routine` | `fit(prepare_fit(model, experiments, ABCSpec(; priors, target, sampler)))` with `ABCDESampler()` or `ABCDETurnerSampler()` |
 | `kinetic_parameter_symbols` | named paths in `result.samples.names` |
@@ -70,3 +70,19 @@ moved study settings into the specifications.
 Placeholders are resolved per experiment and the time-zero observations they
 consume are not scored. Steady fits relax from explicit numeric conditions, so
 their conditions must not contain placeholders.
+
+## Simulation modes and prepared losses
+
+| Before | After |
+| --- | --- |
+| `prepare_fit(...; mode = :steady, steady_options = SteadyStateOptions(...))` | `prepare_fit(...; mode = SteadyMode(SteadyStateOptions(...)))` |
+| `predict(model, runs, samples; solver, mode = :steady, steady_options)` | `predict(model, runs, samples; solver, mode = SteadyMode(...))` |
+| `mode = :transient` | `mode = TransientMode()` (the default) |
+| `loss(lf, problem, params, experiments)` on a template problem | `loss(prepare_fit(model, experiments, spec), values)` |
+| `logMLE().string`, `logMLE().symbols`, `mae().string` | removed |
+| `logMLE(weighting = [1.0, 1.0])` default | `weighting = (;)`: every observable weighs 1 |
+| `ensemble.concentration` on a `PredictionEnsemble` | `observable_values(ensemble, :concentration)` |
+| `prepare_fit(...; initial_time)` (always rejected) | not a keyword; runs start at time zero |
+
+`PredictionEnsemble` is no longer an `AbstractSolution`. Observable weights are
+resolved once when the loss is prepared and stored with the prepared setup.
