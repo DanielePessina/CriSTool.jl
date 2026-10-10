@@ -2,35 +2,30 @@
     runsimulation(problem::CrystallisationProblem; save_idx, algorithm=nothing,
                   solve_options=(;), callback_factory=nothing)
 
-Simulate a configured physical problem without rebuilding its system properties.
+Simulate a configured physical problem with its model's bound kinetic values.
 Returns `(problem, solution)`. `initial_concentration(problem)` exposes the
 configured initial input separately from the evolving solution concentration.
 """
-function runsimulation(problem::CrystallisationProblem;
+runsimulation(problem::CrystallisationProblem; kwargs...) =
+    runsimulation(kinetic_parameter_vector(problem), problem; kwargs...)
+
+"""
+    runsimulation(parameters, problem::CrystallisationProblem; save_idx, algorithm=nothing,
+                  solve_options=(;), callback_factory=nothing)
+
+Simulate a configured problem with the kinetic values `parameters` in place
+of the model's bound values. Parameter order is the composite
+`paramaxis(problem)` order; the element type may be a dual number, so this is
+the low-level differentiable interface. Returns `(problem, solution)`.
+"""
+function runsimulation(parameters::AbstractVector, problem::CrystallisationProblem;
                        save_idx = 0:300.0:28_800.0, algorithm = nothing,
                        solve_options = (;), callback_factory = nothing)
     _validate_crystallisation_problem(problem)
+    kinetic_values = _validate_kinetic_values(problem, _params_to_p(problem, parameters))
     save_times = _validate_save_times(save_idx)
-    return problem, _simulatecrystallisation(problem, save_times;
+    return problem, _simulatecrystallisation(problem, save_times, kinetic_values;
         algorithm, solve_options, callback_factory)
-end
-
-"""
-    runsimulation(parameters, problem::CrystallisationProblem; kwargs...)
-
-Replace only the kinetic parameter blocks of a configured problem and simulate.
-Parameter order is the composite `paramaxis(problem)` order.
-"""
-function runsimulation(parameters::AbstractVector, problem::CrystallisationProblem;
-                       kwargs...)
-    parameter_blocks = _params_to_p(problem, parameters)
-    parameter_problem = _copy_crystallisation_problem(problem;
-        parameterset_nucleation = parameter_blocks.nucl,
-        parameterset_growth = parameter_blocks.gr,
-        parameterset_dissolution = parameter_blocks.diss,
-        parameterset_aggregation = parameter_blocks.agg,
-        parameterset_breakage = parameter_blocks.br)
-    return runsimulation(parameter_problem; kwargs...)
 end
 
 """

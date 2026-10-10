@@ -8,6 +8,7 @@ AbstractLengthGrowthFunction
 AbstractDissolutionFunction
 AbstractScalarDissolutionFunction
 AbstractLengthDissolutionFunction
+NoNucleation
 NoDissolution
 AbstractAggregationFunction
 AbstractBreakageFunction

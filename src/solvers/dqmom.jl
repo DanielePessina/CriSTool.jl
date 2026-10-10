@@ -29,9 +29,9 @@ end
 function _validate_dqmom_public_state(problem::CrystallisationProblem)
     solver = problem.solver
     _validate_dqmom_solver(solver)
-    problem.initial_state === nothing &&
+    problem.initial_population === nothing &&
         throw(ArgumentError("DQMOM requires a nonempty seeded initial population. " *
-                            "Provide initial_crystals or a direct [weights; nodes] initial_state."))
+                            "Provide seed crystals in the run conditions."))
 
     direct_state = _get_initial_state(problem)
     nquadrature = solver.nquadrature
@@ -64,10 +64,10 @@ end
 function _validate_dqmom_problem(problem::CrystallisationProblem)
     _validate_dqmom_public_state(problem)
 
-    _is_length_law(problem.kinetics_dissolutionfunction) &&
+    _is_length_law(problem.model.dissolution.law) &&
         throw(ArgumentError("Length-dependent dissolution is not supported by DQMOM; " *
                             "use FiniteVol or WENO."))
-    for binary_law in (problem.kinetics_aggregationfunction, problem.kinetics_breakagefunction)
+    for binary_law in (problem.model.aggregation.law, problem.model.breakage.law)
         _has_moment_closure(binary_law) ||
             throw(ArgumentError("$(typeof(binary_law)) has no validated DQMOM moment closure."))
     end
@@ -93,31 +93,31 @@ breakage sources appear here.
                            state[6] / state[3])
     physical_nodes = coordinate_scale .* scaled_nodes
     growth_rates = SVector(
-        net_growth_rate_at_length(problem.kinetics_growthfunction,
+        net_growth_rate_at_length(problem.model.growth.law,
                                   parameters.gr,
-                                  problem.kinetics_dissolutionfunction,
+                                  problem.model.dissolution.law,
                                   parameters.diss,
                                   problem,
                                   state,
                                   time,
                                   physical_nodes[1]),
-        net_growth_rate_at_length(problem.kinetics_growthfunction,
+        net_growth_rate_at_length(problem.model.growth.law,
                                   parameters.gr,
-                                  problem.kinetics_dissolutionfunction,
+                                  problem.model.dissolution.law,
                                   parameters.diss,
                                   problem,
                                   state,
                                   time,
                                   physical_nodes[2]),
-        net_growth_rate_at_length(problem.kinetics_growthfunction,
+        net_growth_rate_at_length(problem.model.growth.law,
                                   parameters.gr,
-                                  problem.kinetics_dissolutionfunction,
+                                  problem.model.dissolution.law,
                                   parameters.diss,
                                   problem,
                                   state,
                                   time,
                                   physical_nodes[3]))
-    nucleation_rate_value = nucleationrate(problem.kinetics_nucleationfunction,
+    nucleation_rate_value = nucleationrate(problem.model.nucleation.law,
                                            parameters.nucl,
                                            problem,
                                            state,
@@ -137,8 +137,8 @@ breakage sources appear here.
                          2 * scaled_nodes[3]^3 * direct_rates[3] +
                          3 * scaled_nodes[3]^2 * direct_rates[6]
     physical_volume_rate = weight_scale * coordinate_scale^3 * scaled_volume_rate
-    concentration_rate = -problem.crystal_density *
-                         problem.volume_shape_factor * physical_volume_rate
+    concentration_rate = -problem.model.system.crystal_density *
+                         problem.model.system.volume_shape_factor * physical_volume_rate
     return SVector(direct_rates[1], direct_rates[2], direct_rates[3],
                    direct_rates[4], direct_rates[5], direct_rates[6],
                    concentration_rate)
@@ -283,31 +283,31 @@ function _dqmom_rhs_no_binary_n3!(destination,
                            state[6] / state[3])
     physical_nodes = coordinate_scale .* scaled_nodes
     growth_rates = SVector(
-        net_growth_rate_at_length(problem.kinetics_growthfunction,
+        net_growth_rate_at_length(problem.model.growth.law,
                                   parameters.gr,
-                                  problem.kinetics_dissolutionfunction,
+                                  problem.model.dissolution.law,
                                   parameters.diss,
                                   problem,
                                   state,
                                   time,
                                   physical_nodes[1]),
-        net_growth_rate_at_length(problem.kinetics_growthfunction,
+        net_growth_rate_at_length(problem.model.growth.law,
                                   parameters.gr,
-                                  problem.kinetics_dissolutionfunction,
+                                  problem.model.dissolution.law,
                                   parameters.diss,
                                   problem,
                                   state,
                                   time,
                                   physical_nodes[2]),
-        net_growth_rate_at_length(problem.kinetics_growthfunction,
+        net_growth_rate_at_length(problem.model.growth.law,
                                   parameters.gr,
-                                  problem.kinetics_dissolutionfunction,
+                                  problem.model.dissolution.law,
                                   parameters.diss,
                                   problem,
                                   state,
                                   time,
                                   physical_nodes[3]))
-    nucleation_rate_value = nucleationrate(problem.kinetics_nucleationfunction,
+    nucleation_rate_value = nucleationrate(problem.model.nucleation.law,
                                            parameters.nucl,
                                            problem,
                                            state,
@@ -335,15 +335,15 @@ function _dqmom_rhs_no_binary_n3!(destination,
     first_solvent = 7
     n_solvent = length(propertynames(problem.initial_solvent_state))
     if n_solvent == 1 && problem.solvent_dynamics isa DefaultSolventDynamics
-        destination[first_solvent] = -problem.crystal_density *
-                                     problem.volume_shape_factor *
+        destination[first_solvent] = -problem.model.system.crystal_density *
+                                     problem.model.system.volume_shape_factor *
                                      physical_volume_rate
     else
-        growth_context = _is_length_law(problem.kinetics_growthfunction) ?
+        growth_context = _is_length_law(problem.model.growth.law) ?
                          growth_rates :
-                         net_growth_rate(problem.kinetics_growthfunction,
+                         net_growth_rate(problem.model.growth.law,
                                          parameters.gr,
-                                         problem.kinetics_dissolutionfunction,
+                                         problem.model.dissolution.law,
                                          parameters.diss,
                                          problem,
                                          state,
@@ -434,15 +434,15 @@ function _dqmom_source_vector(problem::CrystallisationProblem,
     end
 
     aggregation_source = _aggregation_moment_source(
-        problem.kinetics_aggregationfunction,
+        problem.model.aggregation.law,
         parameters.agg,
         physical_nodes,
         scaled_weights,
         maximum_order;
-        shape_factor = problem.volume_shape_factor,
+        shape_factor = problem.model.system.volume_shape_factor,
         pair_weight_scale = weight_scale)
     breakage_source = _breakage_moment_source(
-        problem.kinetics_breakagefunction,
+        problem.model.breakage.law,
         parameters.br,
         physical_nodes,
         scaled_weights,
@@ -469,7 +469,7 @@ function _dqmom_solvent_derivatives(problem::CrystallisationProblem,
 
     element_type = promote_type(eltype(state), typeof(volume_moment_rate))
     rates = zeros(element_type, n_solvent)
-    concentration_rate = -problem.crystal_density * problem.volume_shape_factor *
+    concentration_rate = -problem.model.system.crystal_density * problem.model.system.volume_shape_factor *
                          volume_moment_rate
     rates[concentration_position] = concentration_rate
 
@@ -520,16 +520,16 @@ function _dqmom_rhs!(destination,
                                                                              nquadrature)
     @inbounds for node_index in 1:nquadrature
         growth_rates[node_index] = net_growth_rate_at_length(
-            problem.kinetics_growthfunction,
+            problem.model.growth.law,
             parameters.gr,
-            problem.kinetics_dissolutionfunction,
+            problem.model.dissolution.law,
             parameters.diss,
             problem,
             state,
             time,
             physical_nodes[node_index])
     end
-    nucleation_rate_value = nucleationrate(problem.kinetics_nucleationfunction,
+    nucleation_rate_value = nucleationrate(problem.model.nucleation.law,
                                            parameters.nucl,
                                            problem,
                                            state,
@@ -567,12 +567,12 @@ function _dqmom_rhs!(destination,
     physical_volume_rate = solver.weight_scale * solver.coordinate_scale^3 *
                             internal_third_moment_rate
 
-    growth_context = if _is_length_law(problem.kinetics_growthfunction)
+    growth_context = if _is_length_law(problem.model.growth.law)
         growth_rates
     else
-        net_growth_rate(problem.kinetics_growthfunction,
+        net_growth_rate(problem.model.growth.law,
                         parameters.gr,
-                        problem.kinetics_dissolutionfunction,
+                        problem.model.dissolution.law,
                         parameters.diss,
                         problem,
                         state,
@@ -592,24 +592,14 @@ function _dqmom_rhs!(destination,
 end
 
 """Construct the DQMOM ODE problem and selected time-stepping algorithm."""
-function crystallisation_odeproblem(solver::DQMOM, problem::CrystallisationProblem, saveat)
+function crystallisation_odeproblem(solver::DQMOM, problem::CrystallisationProblem, saveat, kinetic_values)
     _validate_dqmom_problem(problem)
     length(saveat) >= 2 ||
         throw(ArgumentError("saveat must contain at least two time points."))
 
-    parameters = ComponentArray(; nucl = problem.parameterset_nucleation,
-                                gr = problem.parameterset_growth,
-                                diss = problem.parameterset_dissolution,
-                                agg = problem.parameterset_aggregation,
-                                br = problem.parameterset_breakage)
+    parameters = kinetic_values
     internal_values = _dqmom_direct_state(problem)
-    element_type = promote_type(eltype(internal_values),
-                                eltype(problem.parameterset_nucleation),
-                                eltype(problem.parameterset_growth),
-                                eltype(problem.parameterset_dissolution),
-                                eltype(problem.parameterset_aggregation),
-                                eltype(problem.parameterset_breakage),
-                                Float64)
+    element_type = promote_type(eltype(internal_values), eltype(kinetic_values), Float64)
     initial_values = element_type.(internal_values)
 
     n_solvent = length(propertynames(problem.initial_solvent_state))

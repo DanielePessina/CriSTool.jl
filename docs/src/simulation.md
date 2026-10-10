@@ -80,4 +80,16 @@ from public weights and nodes; preserve that contract when solving directly.
 
 `runsimulation` is the low-level interface for automatic differentiation and
 sensitivity work: it takes a flat or `ComponentArray` kinetic parameter vector
-and returns `(problem, solution)`. Use `simulate` for ordinary simulations.
+and returns `(problem, solution)`. `kinetic_parameter_vector(problem)` is the
+model's bound vector on `paramaxis(problem)`, the default `runsimulation(problem)`
+uses. Use `simulate` for ordinary simulations.
+
+A configured problem stores each value once: `problem.model` (material system
+and bound kinetic laws), `problem.temp_profile`, `problem.initial_solvent_state`
+(read the concentration with `initial_concentration(problem)`),
+`problem.initial_population` (the seeded solver population block, or `nothing`),
+`problem.operation`, `problem.solver`, `problem.solvent_dynamics` and
+`problem.solid_mass_concentration_threshold`. Material properties are read
+from the system, e.g. `problem.model.system.crystal_density`. The gas and
+Boltzmann constants are the module constants `CriSTool.CRISTOOL_GAS_CONSTANT`
+and `CriSTool.CRISTOOL_BOLTZMANN_CONSTANT`.

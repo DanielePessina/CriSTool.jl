@@ -72,8 +72,7 @@ end
     sensitivity_times = [0.0, 3600.0, 7200.0, 10800.0]
     _, sensitivity_columns = CriSTool.extract_local_sensitivities(
         CriSTool.forwardsensitivity(sensitivity_problem, sensitivity_times))
-    sensitivity_values = collect(sensitivity_problem.parameterset_nucleation)
-    sensitivity_values = vcat(sensitivity_values, collect(sensitivity_problem.parameterset_growth))
+    sensitivity_values = collect(kinetic_parameter_vector(sensitivity_problem))
     final_concentration_of(kinetic_values) =
         last(runsimulation(kinetic_values, sensitivity_problem; save_idx = sensitivity_times)).concentration[end]
     # Only the O(1) parameters (ln prefactor, growth order) are differenced directly.
@@ -156,8 +155,11 @@ end
 
 @testset "Rate-kernel gradients (length growth, binary moment sources)" begin
     kernel_mesh = [0.5e-6, 1.0e-6, 2.0e-6]
-    kernel_problem = CrystallisationProblem(kinetics_growthfunction = EmpiricalLengthGrowth(Lref = 1e-6),
-        saturation_model = ConstantSolubility(10.0), initial_concentration = 10.0,
+    kernel_problem = CrystallisationProblem(CrystallisationModel(
+            LysozymeSystem(saturation_model = ConstantSolubility(10.0));
+            growth = EmpiricalLengthGrowth(Lref = 1e-6, growth_coefficient = 3e-8, growth_order = 1.4,
+                size_dependence_coefficient = 0.45, size_dependence_exponent = 1.3)),
+        RunConditions(temperature = 293.15, concentration = 10.0);
         solver = FiniteVol(meshsize = length(kernel_mesh), lmax = 3e-6))
     kernel_state = [zeros(length(kernel_mesh)); 15.0]
     function length_growth_objective(growth_values)

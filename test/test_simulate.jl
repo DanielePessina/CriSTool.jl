@@ -70,7 +70,7 @@ end
             seeded_problem = CrystallisationProblem(fixture_translation_model(speed = 0.0),
                 RunConditions(temperature = 293.15, concentration = 20.0, crystals = seed_description); solver)
             seeded_start = simulate(seeded_problem; saveat = [0.0, 1.0])
-            seeded_mass = solver isa MoM ? 1000.0 * seeded_problem.initial_state[4] :
+            seeded_mass = solver isa MoM ? 1000.0 * seeded_problem.initial_population[4] :
                           1000.0 * first(simulate_raw_moment(seeded_start, solver, 3))
             @test seeded_mass ≈ 0.25 rtol = mass_rtol
             @test seeded_start.d43 ≈ [12e-6, 12e-6] rtol = d43_rtol
@@ -86,8 +86,8 @@ end
         mass_concentration = 0.25, weighting = :volume)
     @test number_weighted(volume_seed).distribution == number_seed.distribution
     distribution_conditions(seed_description) = RunConditions(temperature = 293.15, concentration = 20.0, crystals = seed_description)
-    @test CrystallisationProblem(fixture_translation_model(), distribution_conditions(number_seed)).initial_state ≈
-          CrystallisationProblem(fixture_translation_model(), distribution_conditions(volume_seed)).initial_state rtol = 1e-12
+    @test CrystallisationProblem(fixture_translation_model(), distribution_conditions(number_seed)).initial_population ≈
+          CrystallisationProblem(fixture_translation_model(), distribution_conditions(volume_seed)).initial_population rtol = 1e-12
     @test DistributionInitialCrystals(Uniform(10e-6, 20e-6); mass_concentration = 0.25, weighting = :volume).d43 ≈
           15e-6 rtol = 1e-9
 
@@ -98,7 +98,8 @@ end
         unseeded_problem = CrystallisationProblem(fixture_translation_model(),
             RunConditions(temperature = 293.15, concentration = 20.0); solver)
         @test initial_state_from_characteristics(unseeded_problem, lognormal_seed) ==
-              CrystallisationProblem(fixture_translation_model(), distribution_conditions(lognormal_seed); solver).initial_state
+              CriSTool._get_initial_state(CrystallisationProblem(fixture_translation_model(),
+                  distribution_conditions(lognormal_seed); solver))
     end
 
     # An empty seed (zero mass) is a valid empty population.
@@ -117,7 +118,7 @@ end
     # compile cost to one RHS per solver.
     aggregation_kernel = 1.5e-13
     breakage_selection = 0.01
-    event_model = CrystallisationModel(fixture_system; nucleation = fixture_no_nucleation,
+    event_model = CrystallisationModel(fixture_system;
         growth = fixture_constant_growth(speed = 0.0),
         aggregation = ConstantAggregation(log10_aggregation_coefficient = log10(aggregation_kernel)),
         breakage = EmpiricalBreakage(breakage_coefficient = breakage_selection, breakage_size_exponent = 0.0))
@@ -142,7 +143,7 @@ end
     # C = 5 < C_sat = 10: the 0.25 kg/m³ seed dissolves completely within
     # seconds and cannot regrow (5.25 < 10), so the closed-form end state is
     # an empty population at C = 5 + 0.25.
-    extinction_model = CrystallisationModel(fixture_system; nucleation = fixture_no_nucleation,
+    extinction_model = CrystallisationModel(fixture_system;
         growth = EmpiricalGrowth(growth_coefficient = 1e-8, growth_order = 1.0),
         dissolution = ArrheniusDissolution(dissolution_coefficient = 1e-6, activation_energy = 0.0, dissolution_order = 1.0))
     extinction_conditions = fixture_seeded_conditions(concentration = 5.0)
@@ -203,7 +204,7 @@ CriSTool.growthrate(::SimulateLinearGrowth, kinetic_parameters, configured_run::
     # Hand value at 303.15 K: 0.25·30 + 2 = 9.5 kg/m³.
     @test saturation_concentration(custom_solubility, ConstantTemperature(303.15), 0.0) == 9.5
     custom_system = CrystallisationSystem(saturation_model = custom_solubility, crystal_density = 1000.0, volume_shape_factor = 1.0)
-    custom_model = CrystallisationModel(custom_system; nucleation = fixture_no_nucleation,
+    custom_model = CrystallisationModel(custom_system;
         growth = KineticModel(SimulateLinearGrowth(); parameters = (linear_growth_coefficient = 1e-5,)))
     # Extra species: d(tracer)/dt = -1e4·G, so tracer(t) = 1 - 1e4·∫G dt, and
     # ∫G dt is exactly the shift of the mean length d10 = µ1/µ0 (no nucleation).
@@ -227,12 +228,12 @@ CriSTool.growthrate(::SimulateLinearGrowth, kinetic_parameters, configured_run::
     # and a law requiring an absent property is rejected up front.
     property_system = CrystallisationSystem(saturation_model = ConstantSolubility(10.0), crystal_density = 1000.0,
         volume_shape_factor = 1.0, properties = (; seed_translation_speed = 1e-8))
-    property_growth(required_names) = CallableGrowth((rate_values, rate_context) -> rate_context.system.seed_translation_speed;
+    property_growth(required_names) = CallableGrowth((rate_values, rate_context) -> rate_context.system.properties.seed_translation_speed;
         parameters = (;), required = required_names)
-    property_trajectory = simulate(CrystallisationModel(property_system; nucleation = fixture_no_nucleation,
+    property_trajectory = simulate(CrystallisationModel(property_system;
         growth = property_growth((:seed_translation_speed,))), fixture_seeded_conditions(); saveat = [0.0, 100.0])
     @test property_trajectory.concentration[end] ≈ fixture_translation_concentration(100.0) rtol = 1e-9
-    propertyless_model = CrystallisationModel(fixture_system; nucleation = fixture_no_nucleation,
+    propertyless_model = CrystallisationModel(fixture_system;
         growth = property_growth((:seed_translation_speed,)))
     @test_throws ArgumentError CrystallisationProblem(propertyless_model, fixture_seeded_conditions())
 
@@ -272,7 +273,7 @@ end
     end
     for transport_speed in (1.0, -1.0)
         cfl_problem = CrystallisationProblem(
-            CrystallisationModel(cfl_system; nucleation = fixture_no_nucleation, growth = fixture_constant_growth(speed = transport_speed)),
+            CrystallisationModel(cfl_system; growth = fixture_constant_growth(speed = transport_speed)),
             cfl_conditions; solver = WENO(meshsize = 10, lmax = 100e-6, timestepping_algorithm = transport_speed < 0 ? CriSTool.OrdinaryDiffEq.SSPRK43() : nothing))
         @test largest_accepted_step(cfl_problem) <= 9.0 + 1e-12
         # A tighter user dtmax wins; it must not leak into the next solve.
@@ -283,7 +284,7 @@ end
     end
     # Length-dependent G = 2 µm/s · L/10 µm peaks at the last centre (95 µm):
     # Gmax = 19 µm/s, cap 9/19 s.
-    length_cfl_problem = CrystallisationProblem(CrystallisationModel(cfl_system; nucleation = fixture_no_nucleation,
+    length_cfl_problem = CrystallisationProblem(CrystallisationModel(cfl_system;
             growth = CallableLengthGrowth((rate_values, rate_context, crystal_length) ->
                 rate_values.speed * 1e-6 * 2 * crystal_length / 10e-6; parameters = (; speed = 1.0))),
         cfl_conditions; solver = WENO(meshsize = 10, lmax = 100e-6))
@@ -312,7 +313,7 @@ end
     @test_throws ArgumentError CrystallisationProblem(fixture_translation_model(), RunConditions(temperature = 293.15,
         concentration = 20.0, crystals = LogNormalInitialCrystals(mass_concentration = 0.25, d43 = 12e-6, geometric_std = 1.0)))
     # Length-dependent laws need a size coordinate: no MoM.
-    @test_throws ArgumentError CrystallisationProblem(CrystallisationModel(fixture_system; nucleation = fixture_no_nucleation,
+    @test_throws ArgumentError CrystallisationProblem(CrystallisationModel(fixture_system;
         growth = CallableLengthGrowth((rate_values, rate_context, crystal_length) -> rate_values.speed * 1e-6;
             parameters = (; speed = 0.01))), fixture_seeded_conditions())
     # DQMOM has no empty-population representation.

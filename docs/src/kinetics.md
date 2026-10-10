@@ -36,13 +36,13 @@ A built-in law called with no keywords, such as `EmpiricalGrowth()`, is the
 unbound law. Called with all of its parameter names it returns a bound
 `KineticModel`; a partial set of names is an error. Keywords naming a struct
 field, such as `Lref` on `EmpiricalLengthGrowth`, configure the law rather
-than bind a parameter. Laws without parameters (`NoAggregation()`,
-`NoBreakage()`, `NoDissolution()`) are bound automatically when placed in a
-`CrystallisationModel`.
+than bind a parameter. Laws without parameters (`NoNucleation()`,
+`NoDissolution()`, `NoAggregation()`, `NoBreakage()`) are bound automatically
+when placed in a `CrystallisationModel`, and are its defaults: only `growth`
+is required, so a growth-only model omits `nucleation`.
 
 Unlisted parameters in a fitting specification remain fixed, so no separate
-fixed kinetic variants exist. To switch nucleation off, use a callable law
-that returns zero, `CallableNucleation((values, context) -> 0.0; parameters = (;))`. For a simple custom
+fixed kinetic variants exist. For a simple custom
 law use `CallableGrowth`, `CallableNucleation` or `CallableLengthGrowth`; see
 [Bringing your own system](bring-your-own-system.md) and Tutorial 4.
 The dispatch-based interface below remains available for advanced extensions.

@@ -117,6 +117,15 @@ empty axis. `paramaxis` is the single source of truth for a law's parameters.
 _parameter_count(kinetic_law) = ComponentArrays.last_index(paramaxis(kinetic_law))
 
 """
+    NoNucleation <: AbstractNucleationFunction
+
+Zero-rate nucleation law without parameters, for growth-only models.
+"""
+@kinetic_law struct NoNucleation <: AbstractNucleationFunction end
+
+paramaxis(::NoNucleation) = ComponentArrays.Axis()
+
+"""
     NoDissolution <: AbstractScalarDissolutionFunction
 
 Zero-rate dissolution law without parameters.
@@ -395,11 +404,11 @@ _is_length_law(::AbstractLengthDissolutionFunction) = true
 """
     _is_null_kinetic(kinetic_law) -> Bool
 
-Whether a law is a zero-rate placeholder (`NoDissolution`, `NoAggregation`,
-`NoBreakage`), letting solvers skip the corresponding source.
+Whether a law is a zero-rate placeholder (`NoNucleation`, `NoDissolution`,
+`NoAggregation`, `NoBreakage`), letting solvers skip the corresponding source.
 """
 _is_null_kinetic(kinetic_law) = false
-_is_null_kinetic(::Union{NoDissolution, NoAggregation, NoBreakage}) = true
+_is_null_kinetic(::Union{NoNucleation, NoDissolution, NoAggregation, NoBreakage}) = true
 
 """
     _has_moment_closure(kinetic_law) -> Bool
@@ -420,7 +429,7 @@ callables and custom types default to `false`; steady solves then require
 `autonomous = true`.
 """
 _is_time_invariant(model_component) = false
-_is_time_invariant(::Union{CNTNucleation, EmpiricalNucleation, ArrheniusNucleation, CNTNucleationNoSupersaturation,
+_is_time_invariant(::Union{NoNucleation, CNTNucleation, EmpiricalNucleation, ArrheniusNucleation, CNTNucleationNoSupersaturation,
                            SecondaryNucleation, EmpiricalGrowth, EmpiricalLengthGrowth,
                            ArrheniusGrowth, BCFGrowth, BirthSpreadGrowth, NoDissolution,
                            ArrheniusDissolution, ArrheniusLengthDissolution,

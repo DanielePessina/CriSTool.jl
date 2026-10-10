@@ -2,10 +2,13 @@
 # known quadratures, convergence orders and conservation identities that the
 # end-to-end simulations in test_simulate.jl cannot localise.
 
-# Minimal problem carrying only what the kernels read: solubility, solver mesh
-# and (for CNT) the default molecular volume and temperature.
-numerics_problem(; solver = FiniteVol(meshsize = 3, lmax = 3e-6), kwargs...) =
-    CrystallisationProblem(; saturation_model = ConstantSolubility(10.0), solver, kwargs...)
+# Minimal problem carrying only what the kernels read: solubility (C_sat = 10),
+# solver mesh, and (for CNT) the lysozyme molecular volume at 293.15 K.
+const numerics_system = LysozymeSystem(saturation_model = ConstantSolubility(10.0))
+numerics_problem(; solver = FiniteVol(meshsize = 3, lmax = 3e-6), concentration = 20.0) =
+    CrystallisationProblem(CrystallisationModel(numerics_system;
+            growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 1.0)),
+        RunConditions(temperature = 293.15, concentration = concentration); solver)
 # Population block of `population_count` zeros followed by concentration C;
 # with C_sat = 10 the supersaturation is C / 10.
 numerics_state(population_count, concentration) = [zeros(population_count); concentration]
@@ -148,8 +151,7 @@ end
 
 @testset "FV aggregation and breakage kernels" begin
     # Three unit cells on [0, 3]: centres 0.5, 1.5, 2.5; faces cubed 0, 1, 8, 27.
-    kernel_problem(meshsize = 3, lmax = 3.0) = CrystallisationProblem(;
-        solver = FiniteVol(; meshsize, lmax), initial_solvent_state = (; concentration = 1.0))
+    kernel_problem(meshsize = 3, lmax = 3.0) = numerics_problem(; solver = FiniteVol(; meshsize, lmax), concentration = 1.0)
     kernel_solver = kernel_problem().solver
 
     # One parent in cell 1, K = 1: hand rate [-27/52, 1/52, 0] (fixed-pivot
@@ -318,15 +320,16 @@ function CriSTool.growthrate!(destination::AbstractVector, ::NumericsBoundaryLen
 end
 
 # Four cells on [1, 5] (faces 1..5), rho·kv = 1500·0.5 = 750, batch volume 2.5.
-function numerics_boundary_problem(growth_law, growth_parameters; solver = WENO(meshsize = 4, lmin = 1.0, lmax = 5.0),
-        operation = BatchOperation(volume = 2.5))
-    return CrystallisationProblem(; operation, solver, crystal_density = 1500.0, volume_shape_factor = 0.5,
-        initial_concentration = 5.0, saturation_model = ConstantSolubility(1.0),
-        kinetics_nucleationfunction = NumericsBoundaryNucleation(), parameterset_nucleation = [8.0],
-        kinetics_growthfunction = growth_law, parameterset_growth = growth_parameters)
+const numerics_boundary_system = CrystallisationSystem(saturation_model = ConstantSolubility(1.0),
+    crystal_density = 1500.0, volume_shape_factor = 0.5)
+function numerics_boundary_problem(growth_law, growth_parameters::NamedTuple;
+        solver = WENO(meshsize = 4, lmin = 1.0, lmax = 5.0), operation = BatchOperation(volume = 2.5))
+    boundary_model = CrystallisationModel(numerics_boundary_system;
+        nucleation = KineticModel(NumericsBoundaryNucleation(); parameters = (; boundary_birth = 8.0)),
+        growth = KineticModel(growth_law; parameters = growth_parameters))
+    return CrystallisationProblem(boundary_model, RunConditions(; temperature = 293.15, concentration = 5.0, operation); solver)
 end
-numerics_saved_solution(problem, saved_times, saved_states; parameters = (; nucl = problem.parameterset_nucleation,
-        gr = problem.parameterset_growth, diss = problem.parameterset_dissolution)) =
+numerics_saved_solution(problem, saved_times, saved_states; parameters = CriSTool.kinetic_parameter_vector(problem)) =
     (; t = saved_times, u = saved_states, prob = (; p = parameters))
 numerics_boundary_flows(problem, saved_times, saved_states; kwargs...) = CriSTool._mesh_boundary_flow_state(
     problem.solver, problem, numerics_saved_solution(problem, saved_times, saved_states; kwargs...))
@@ -334,14 +337,14 @@ numerics_boundary_flows(problem, saved_times, saved_states; kwargs...) = CriSToo
 @testset "Mesh boundary mass flows" begin
     # Density [2,3,4,5]: upper linear trace 5.5; lower face L³ = 1, upper 125.
     # Mass flows are rho·kv·V·L³·flux = 1875 · L³ · flux.
-    scalar_problem = numerics_boundary_problem(NumericsBoundaryScalarGrowth(), [0.25])
+    scalar_problem = numerics_boundary_problem(NumericsBoundaryScalarGrowth(), (; boundary_speed = 0.25))
     scalar_flows = numerics_boundary_flows(scalar_problem, [0.0, 2.0], [[2.0, 3.0, 4.0, 5.0, 5.0], [2.0, 3.0, 4.0, 5.0, 7.0]])
     @test scalar_flows.size_boundary_lower_solid_mass_flow ≈ [-15_000.0, -18_000.0]   # birth 8, 9.6
     @test scalar_flows.size_boundary_upper_solid_mass_flow ≈ fill(322_265.625, 2)     # 0.25·5.5·125·1875
     # Trace 1 + 0.5(1 - 4) < 0 is clipped: no upper outflow.
     @test numerics_boundary_flows(scalar_problem, [0.0], [[2.0, 3.0, 4.0, 1.0, 5.0]]).size_boundary_upper_solid_mass_flow == [0.0]
     # Dissolving (G = -0.5): lower outflow 0.5·2·1·1875, no upper inflow.
-    dissolving_flows = numerics_boundary_flows(numerics_boundary_problem(NumericsBoundaryScalarGrowth(), [-0.5]),
+    dissolving_flows = numerics_boundary_flows(numerics_boundary_problem(NumericsBoundaryScalarGrowth(), (; boundary_speed = -0.5)),
         [0.0], [[2.0, 3.0, 4.0, 5.0, 5.0]])
     @test dissolving_flows.size_boundary_lower_solid_mass_flow == [1875.0]
     @test dissolving_flows.size_boundary_upper_solid_mass_flow == [0.0]
@@ -350,7 +353,7 @@ numerics_boundary_flows(problem, saved_times, saved_states; kwargs...) = CriSToo
     # template value. Hand rates: lower ≈ 1.5e-3 > 0 (birth 8, 9.6), upper
     # 4.5000053e-3 and 4.4999043e-3 with traces 5.5 and 6.5.
     length_parameters = [-0.2e-6, 0.1e-6, -0.1e-6, 0.3e-6, 0.2e-6, 0.0, 0.0, -0.2e-6]
-    fed_problem = numerics_boundary_problem(NumericsBoundaryLengthGrowth(8), length_parameters;
+    fed_problem = numerics_boundary_problem(NumericsBoundaryLengthGrowth(8), (; boundary_cell_rates = length_parameters);
         operation = FedBatchOperation(initial_volume = 2.0, inflow = 0.5, feed = CrystallisationFeed(concentration = 4.0)))
     fed_flows = numerics_boundary_flows(fed_problem, [0.0, 2.0], [[2.0, 3.0, 4.0, 5.0, 2.0, 5.0], [3.0, 4.0, 5.0, 6.0, 3.0, 4.0]])
     @test fed_flows.size_boundary_lower_solid_mass_flow ≈ [-12_000.0, -21_600.0]
@@ -358,7 +361,7 @@ numerics_boundary_flows(problem, saved_times, saved_states; kwargs...) = CriSToo
 
     # Candidate kinetics override the template for both FV and WENO.
     for mesh_solver in (FiniteVol(meshsize = 4, lmin = 1.0, lmax = 5.0), WENO(meshsize = 4, lmin = 1.0, lmax = 5.0))
-        candidate_template = numerics_boundary_problem(NumericsBoundaryScalarGrowth(), [0.25]; solver = mesh_solver)
+        candidate_template = numerics_boundary_problem(NumericsBoundaryScalarGrowth(), (; boundary_speed = 0.25); solver = mesh_solver)
         growing_flows = numerics_boundary_flows(candidate_template, [0.0], [[2.0, 3.0, 4.0, 5.0, 5.0]];
             parameters = (; nucl = [16.0], gr = [0.5], diss = Float64[]))
         @test growing_flows.size_boundary_lower_solid_mass_flow == [-30_000.0]    # 16·1875

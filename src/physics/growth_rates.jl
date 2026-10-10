@@ -68,7 +68,7 @@ end
     temperature_value = temperature(problem.temp_profile, time)
     return -named_parameters.dissolution_coefficient *
            exp(-named_parameters.activation_energy /
-               (problem.R_gas_constant * temperature_value)) *
+               (CRISTOOL_GAS_CONSTANT * temperature_value)) *
            driving_force^named_parameters.dissolution_order
 end
 
@@ -494,7 +494,7 @@ function growthrate(gf::ArrheniusGrowth, parameters::T, prob::CrystallisationPro
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
     return _growth_energy_rate(p.log10_growth_coefficient, p.growth_order,
-                               p.activation_energy, S, temp, prob.R_gas_constant)
+                               p.activation_energy, S, temp, CRISTOOL_GAS_CONSTANT)
 end
 
 """
@@ -641,5 +641,5 @@ function dissolutionrate(gf::ArrheniusDissolution, parameters::T, prob::Crystall
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
     return _dissolution_rate(p.dissolution_coefficient, p.activation_energy,
-                             p.dissolution_order, S, temp, prob.R_gas_constant)
+                             p.dissolution_order, S, temp, CRISTOOL_GAS_CONSTANT)
 end

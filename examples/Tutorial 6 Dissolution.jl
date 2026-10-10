@@ -18,7 +18,6 @@ function main()
     # activation energy and order. Growth is zero below saturation, so only
     # dissolution acts here.
     crystal_model = CrystallisationModel(LysozymeSystem(saturation_model = ConstantSolubility(10.0));
-        nucleation = CallableNucleation((rate_values, rate_context) -> 0.0; parameters = (;)),
         growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 1.0),
         dissolution = ArrheniusDissolution(dissolution_coefficient = 2e-9 / 60, activation_energy = 0.0,
             dissolution_order = 1.5))

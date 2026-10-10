@@ -31,14 +31,14 @@ function _mom_extinction_callback(CryProblem::CrystallisationProblem)
     solid_mass_concentration_threshold = _validate_solid_mass_concentration_threshold(CryProblem)
 
     condition = (state, time, integrator) ->
-        CryProblem.crystal_density * CryProblem.volume_shape_factor * state[4] - solid_mass_concentration_threshold
+        CryProblem.model.system.crystal_density * CryProblem.model.system.volume_shape_factor * state[4] - solid_mass_concentration_threshold
     affect! = integrator -> nothing
     affect_neg! = integrator -> begin
         state = integrator.u
         # Transfer the actual residual solid mass represented by µ3.  Do not
         # clamp it: an unexpected negative crossing must remain observable as
         # a failed physical state rather than being silently hidden.
-        residual_mass = CryProblem.crystal_density * CryProblem.volume_shape_factor * state[4]
+        residual_mass = CryProblem.model.system.crystal_density * CryProblem.model.system.volume_shape_factor * state[4]
         integrator.u = SVector(ntuple(Val(n_states)) do index
             if index <= n_population
                 zero(state[index])
@@ -115,30 +115,25 @@ function _validate_solver_kinetics(solver::MoM, problem::CrystallisationProblem)
     return nothing
 end
 
-function crystallisation_odeproblem(solver::MoM, CryProblem::CrystallisationProblem, saveat)
+function crystallisation_odeproblem(solver::MoM, CryProblem::CrystallisationProblem, saveat, kinetic_values)
     _validate_solver_kinetics(solver, CryProblem)
     feed_population = _operation_feed_population(CryProblem)
     function MoM_model(u, p, t)
-        scalar_growth_rate = net_growth_rate(CryProblem.kinetics_growthfunction,
+        scalar_growth_rate = net_growth_rate(CryProblem.model.growth.law,
                                              p.gr,
-                                             CryProblem.kinetics_dissolutionfunction,
+                                             CryProblem.model.dissolution.law,
                                              p.diss,
                                              CryProblem,
                                              u,
                                              t)
-        B = nucleationrate(CryProblem.kinetics_nucleationfunction, p.nucl,
+        B = nucleationrate(CryProblem.model.nucleation.law, p.nucl,
                            CryProblem, u, t)
         solvent_rates = _solvent_derivatives(CryProblem, u, t, scalar_growth_rate)
         internal_rates = _mom_rhs(CryProblem, scalar_growth_rate, B, solvent_rates, u)
         return _compose_operation_rhs(CryProblem, u, t, internal_rates, feed_population)
     end
 
-    θ = ComponentArray(;
-                       nucl = CryProblem.parameterset_nucleation,
-                       gr = CryProblem.parameterset_growth,
-                       diss = CryProblem.parameterset_dissolution)
-
-    ET = eltype(CryProblem.parameterset_nucleation)
+    ET = eltype(kinetic_values)
     u0_vec = ET.(_get_initial_state(CryProblem))
     n_states = moment_count(solver) + _operation_state_count(CryProblem.operation) +
                length(propertynames(CryProblem.initial_solvent_state))
@@ -146,7 +141,7 @@ function crystallisation_odeproblem(solver::MoM, CryProblem::CrystallisationProb
     ODEprob = ODEProblem(MoM_model,
                          u0_typed,
                          (saveat[1], saveat[end]),
-                         θ;
+                         kinetic_values;
                          callback = _mom_extinction_callback(CryProblem))
     return (ODEprob, _timestepping_algorithm(solver, Tsit5()))
 end

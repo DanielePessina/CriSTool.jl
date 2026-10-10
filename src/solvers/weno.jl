@@ -29,9 +29,9 @@ end
 
 function _weno_apply_sources!(dstdt, st, p, t, CryProblem)
     dstdt_nd_view = crystal_state(CryProblem, dstdt)
-    agg_rate = aggregationrate(CryProblem.kinetics_aggregationfunction, p.agg,
+    agg_rate = aggregationrate(CryProblem.model.aggregation.law, p.agg,
                                CryProblem, st, t)
-    br_rate = breakagerate(CryProblem.kinetics_breakagefunction, p.br,
+    br_rate = breakagerate(CryProblem.model.breakage.law, p.br,
                            CryProblem, st, t)
 
     if !(typeof(agg_rate) <: Real && agg_rate == 0.0)
@@ -56,8 +56,8 @@ the separate `_solvent_derivatives` pass.
         solvent_rates = _solvent_derivatives(CryProblem, st, t, growth_rate)
         _write_solvent_derivatives!(dstdt, CryProblem, solvent_rates)
     else
-        depletion_coupled = 3 * CryProblem.volume_shape_factor *
-                            CryProblem.crystal_density * fused_depletion
+        depletion_coupled = 3 * CryProblem.model.system.volume_shape_factor *
+                            CryProblem.model.system.crystal_density * fused_depletion
         dstdt[end] = -depletion_coupled
     end
     return nothing
@@ -359,20 +359,20 @@ function _mesh_boundary_flow_state(solver::WENO, problem, ode_solution)
     parameters = ode_solution.prob.p
     lower_length = first(solver.cell_face)
     upper_length = last(solver.cell_face)
-    mass_scale = problem.crystal_density * problem.volume_shape_factor
+    mass_scale = problem.model.system.crystal_density * problem.model.system.volume_shape_factor
 
     for time_index in eachindex(saved_times)
         numerical_state = ode_solution.u[time_index]
         numberdensity = crystal_state(problem, numerical_state)
         simulation_time = saved_times[time_index]
-        nucleation_rate_value = nucleationrate(problem.kinetics_nucleationfunction,
+        nucleation_rate_value = nucleationrate(problem.model.nucleation.law,
                                                parameters.nucl, problem,
                                                numerical_state, simulation_time)
 
         if !_uses_length_rates(problem)
             scalar_growth_rate = net_growth_rate(
-                problem.kinetics_growthfunction, parameters.gr,
-                problem.kinetics_dissolutionfunction, parameters.diss,
+                problem.model.growth.law, parameters.gr,
+                problem.model.dissolution.law, parameters.diss,
                 problem, numerical_state, simulation_time)
             if scalar_growth_rate > zero(scalar_growth_rate)
                 # Only the boundary values are reported. The positive scalar
@@ -397,8 +397,8 @@ function _mesh_boundary_flow_state(solver::WENO, problem, ode_solution)
             # Preserve the model's full mesh, state, and time context. Custom
             # length-dependent laws need not support pointwise endpoint calls.
             net_growth_rate!(growth_rate_cache,
-                             problem.kinetics_growthfunction, parameters.gr,
-                             problem.kinetics_dissolutionfunction, parameters.diss,
+                             problem.model.growth.law, parameters.gr,
+                             problem.model.dissolution.law, parameters.diss,
                              problem, numerical_state, simulation_time,
                              solver.cell_centre)
 
@@ -440,18 +440,18 @@ end
 function _weno_rhs!(dstdt, st, p, t, CryProblem, growthfunction, length_growth::Val{false},
                     flux_cache, ndens_pad_cache, growth_rate_cache)
     numberdensity = crystal_state(CryProblem, st)
-    if _is_length_law(CryProblem.kinetics_dissolutionfunction)
+    if _is_length_law(CryProblem.model.dissolution.law)
         net_growth_rates = get_tmp(growth_rate_cache, st)
         net_growth_rate!(net_growth_rates,
                                growthfunction,
                                p.gr,
-                               CryProblem.kinetics_dissolutionfunction,
+                               CryProblem.model.dissolution.law,
                                p.diss,
                                CryProblem,
                                st,
                                t,
                                CryProblem.solver.cell_centre)
-        inflowbc = nucleationrate(CryProblem.kinetics_nucleationfunction, p.nucl,
+        inflowbc = nucleationrate(CryProblem.model.nucleation.law, p.nucl,
                                   CryProblem, st, t)
         _fill_signed_weno_flux!(flux_cache,
                                 numberdensity,
@@ -464,12 +464,12 @@ function _weno_rhs!(dstdt, st, p, t, CryProblem, growthfunction, length_growth::
 
     scalar_growth_rate = net_growth_rate(growthfunction,
                                          p.gr,
-                                         CryProblem.kinetics_dissolutionfunction,
+                                         CryProblem.model.dissolution.law,
                                          p.diss,
                                          CryProblem,
                                          st,
                                          t)
-    inflowbc = nucleationrate(CryProblem.kinetics_nucleationfunction, p.nucl,
+    inflowbc = nucleationrate(CryProblem.model.nucleation.law, p.nucl,
                               CryProblem, st, t)
 
     if scalar_growth_rate > zero(scalar_growth_rate)
@@ -503,13 +503,13 @@ function _weno_rhs!(dstdt, st, p, t, CryProblem, growthfunction, length_growth::
     net_growth_rate!(net_growth_rates,
                            growthfunction,
                            p.gr,
-                           CryProblem.kinetics_dissolutionfunction,
+                           CryProblem.model.dissolution.law,
                            p.diss,
                            CryProblem,
                            st,
                            t,
                            CryProblem.solver.cell_centre)
-    inflowbc = nucleationrate(CryProblem.kinetics_nucleationfunction, p.nucl,
+    inflowbc = nucleationrate(CryProblem.model.nucleation.law, p.nucl,
                               CryProblem, st, t)
 
     # Length-dependent transport remains a WENO transport solve: each face
@@ -526,13 +526,13 @@ function _weno_rhs!(dstdt, st, p, t, CryProblem, growthfunction, length_growth::
     return nothing
 end
 
-function crystallisation_odeproblem(solver::WENO, CryProblem::CrystallisationProblem, saveat)
+function crystallisation_odeproblem(solver::WENO, CryProblem::CrystallisationProblem, saveat, kinetic_values)
     # Pre-allocate caches using DiffCache for ForwardDiff compatibility.
     _flux_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 1))
     _ndens_pad_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 4))
     _growth_rate_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize))
     feed_population = _operation_feed_population(CryProblem)
-    length_growth = Val(_is_length_law(CryProblem.kinetics_growthfunction))
+    length_growth = Val(_is_length_law(CryProblem.model.growth.law))
 
     function WENO_Model(dstdt, st, p, t)
         _weno_rhs!(dstdt,
@@ -540,7 +540,7 @@ function crystallisation_odeproblem(solver::WENO, CryProblem::CrystallisationPro
                    p,
                    t,
                    CryProblem,
-                   CryProblem.kinetics_growthfunction,
+                   CryProblem.model.growth.law,
                    length_growth,
                    get_tmp(_flux_cache_dc, st),
                    get_tmp(_ndens_pad_cache_dc, st),
@@ -549,23 +549,16 @@ function crystallisation_odeproblem(solver::WENO, CryProblem::CrystallisationPro
         return nothing
     end
 
-    θ = (;
-         nucl = CryProblem.parameterset_nucleation,
-         gr = CryProblem.parameterset_growth,
-         diss = CryProblem.parameterset_dissolution,
-         br = CryProblem.parameterset_breakage,
-         agg = CryProblem.parameterset_aggregation)
-
-    ET = eltype(CryProblem.parameterset_nucleation)
+    ET = eltype(kinetic_values)
     utyped = ET.(_get_initial_state(CryProblem))
     function weno_cfl_bound(numerical_state, kinetic_parameters, simulation_time)
-        growthfunction = CryProblem.kinetics_growthfunction
+        growthfunction = CryProblem.model.growth.law
         if _uses_length_rates(CryProblem)
             net_growth_rates = get_tmp(_growth_rate_cache_dc, numerical_state)
             net_growth_rate!(net_growth_rates,
                                    growthfunction,
                                    kinetic_parameters.gr,
-                                   CryProblem.kinetics_dissolutionfunction,
+                                   CryProblem.model.dissolution.law,
                                    kinetic_parameters.diss,
                                    CryProblem,
                                    numerical_state,
@@ -576,7 +569,7 @@ function crystallisation_odeproblem(solver::WENO, CryProblem::CrystallisationPro
         return _signed_cfl(CryProblem.solver.cell_dL,
                            net_growth_rate(growthfunction,
                                                   kinetic_parameters.gr,
-                                                  CryProblem.kinetics_dissolutionfunction,
+                                                  CryProblem.model.dissolution.law,
                                                   kinetic_parameters.diss,
                                                   CryProblem,
                                                   numerical_state,
@@ -604,7 +597,7 @@ function crystallisation_odeproblem(solver::WENO, CryProblem::CrystallisationPro
     solve_cfl_callback = DiscreteCallback(cfl_step_callback.condition,
         cfl_step_callback.affect!; initialize = initialize_weno_cfl,
         save_positions = (false, false))
-    ODEprob = ODEProblem(WENO_Model, utyped, (saveat[1], saveat[end]), θ;
+    ODEprob = ODEProblem(WENO_Model, utyped, (saveat[1], saveat[end]), kinetic_values;
                          callback = solve_cfl_callback)
     return (ODEprob, _timestepping_algorithm(solver, signed_growth_transport ? SSPRK43() : Tsit5()))
 end

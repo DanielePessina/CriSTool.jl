@@ -19,13 +19,13 @@ function forwardsensitivity(solver::MoM, CryProblem::CrystallisationProblem, sav
         throw(ArgumentError("forwardsensitivity currently supports batch operations; differentiate runsimulation for flow operations."))
 
     function MoM_model(du, u, p, t)
-        scalargrowth = net_growth_rate(CryProblem.kinetics_growthfunction,
+        scalargrowth = net_growth_rate(CryProblem.model.growth.law,
                                        p.gr,
-                                       CryProblem.kinetics_dissolutionfunction,
+                                       CryProblem.model.dissolution.law,
                                        p.diss, CryProblem, u, t)
 
         n_mom = solver.nmoments
-        du[1] = nucleationrate(CryProblem.kinetics_nucleationfunction,
+        du[1] = nucleationrate(CryProblem.model.nucleation.law,
                                p.nucl, CryProblem, u, t)
         for k in 2:(n_mom + 1)
             du[k] = (k - 1) * scalargrowth * u[k - 1]
@@ -34,11 +34,8 @@ function forwardsensitivity(solver::MoM, CryProblem::CrystallisationProblem, sav
         _write_solvent_derivatives!(du, CryProblem, solvent_rates)
     end
 
-    θ = ComponentArray(nucl = CryProblem.parameterset_nucleation,
-                       gr = CryProblem.parameterset_growth,
-                       diss = CryProblem.parameterset_dissolution)
-
-    ET = eltype(CryProblem.parameterset_nucleation)
+    θ = kinetic_parameter_vector(CryProblem)
+    ET = eltype(θ)
     u0_typed = ET.(_get_initial_state(CryProblem))
     ODEprob = ODEForwardSensitivityProblem(MoM_model,
                                            u0_typed,
@@ -71,12 +68,12 @@ function forwardsensitivity(solver::FiniteVol, CryProblem::CrystallisationProble
         flux = Vector{promote_type(eltype(st), eltype(p))}(undef,
                                                             length(numberdensity) + 1)
 
-        scalargrowth = net_growth_rate(CryProblem.kinetics_growthfunction, p.gr,
-                                       CryProblem.kinetics_dissolutionfunction,
+        scalargrowth = net_growth_rate(CryProblem.model.growth.law, p.gr,
+                                       CryProblem.model.dissolution.law,
                                        p.diss, CryProblem, st, t)
 
         boundary_nucleation_rate = scalargrowth > zero(scalargrowth) ?
-            nucleationrate(CryProblem.kinetics_nucleationfunction, p.nucl,
+            nucleationrate(CryProblem.model.nucleation.law, p.nucl,
                            CryProblem, st, t) : zero(scalargrowth)
         _fill_fv_scalar_flux!(flux, numberdensity, scalargrowth, boundary_nucleation_rate)
 
@@ -89,11 +86,7 @@ function forwardsensitivity(solver::FiniteVol, CryProblem::CrystallisationProble
 
     end
 
-    θ = ComponentArray(nucl = CryProblem.parameterset_nucleation,
-                       gr = CryProblem.parameterset_growth,
-                       diss = CryProblem.parameterset_dissolution,
-                       br = CryProblem.parameterset_breakage,
-                       agg = CryProblem.parameterset_aggregation)
+    θ = kinetic_parameter_vector(CryProblem)
     ODEprob = ODEForwardSensitivityProblem(HRFV_FLWmodel,
                                            Float64.(_get_initial_state(CryProblem)),
                                            (0.0, saveat[end]), θ)

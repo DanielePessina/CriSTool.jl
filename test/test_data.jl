@@ -92,8 +92,8 @@ end
           GaussianInitialCrystals(mass_concentration = 0.25, d43 = 12e-6, standard_deviation = 2e-6)
     # The mapped seed carries its mass and d43 into the moment state (rho*kv = 1000).
     seeded_problem = CrystallisationProblem(fixture_translation_model(), merge(seeded_run.conditions; concentration = 18.0))
-    @test 1000.0 * seeded_problem.initial_state[4] ≈ 0.25 rtol = 1e-12
-    @test seeded_problem.initial_state[5] / seeded_problem.initial_state[4] ≈ 12e-6 rtol = 1e-12
+    @test 1000.0 * seeded_problem.initial_population[4] ≈ 0.25 rtol = 1e-12
+    @test seeded_problem.initial_population[5] / seeded_problem.initial_population[4] ≈ 12e-6 rtol = 1e-12
 
     # Temperature comes from exactly one place.
     @test_throws ArgumentError experiments_from_table(seed_table; metadata_cols = (temperature = :Temperature,),
