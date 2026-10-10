@@ -351,12 +351,13 @@ sequence is handed to `_qmom_inversion_failure` for `inversion_policy`.
     # reproduces r₀:r₂ₘ₋₁; the higher moments of a deflated measure were
     # already judged consistent by the deflation criterion.
     reconstruction_error = zero(T)
+    reconstructed_moments = zero(SVector{M, T})
+    for node_index in 1:active_nodes
+        reconstructed_moments += (weights[node_index] / first_moment) .*
+                                 _ascending_powers(nodes[node_index] / coordinate_scale, Val(M))
+    end
     for moment_index in 0:(2 * active_nodes - 1)
-        reconstructed = zero(T)
-        for node_index in 1:active_nodes
-            reconstructed += (weights[node_index] / first_moment) *
-                             (nodes[node_index] / coordinate_scale)^moment_index
-        end
+        reconstructed = reconstructed_moments[moment_index + 1]
         # Relative to rₖ: scaled moments grow like (L/coordinate_scale)ᵏ, so an
         # absolute bound would be below roundoff for the top moments.
         reconstruction_error = max(reconstruction_error,
@@ -446,6 +447,30 @@ end
 ## QMOM population-balance integration
 
 """
+    _ascending_powers(base, Val(K)) -> SVector{K}
+
+`base⁰, base¹, …, base^(K-1)` by repeated multiplication. The moment sources
+need every power of each node; `^` with an integer exponent costs a
+compensated power evaluation per entry, which dominated the quadrature
+right-hand sides.
+"""
+@inline _ascending_powers(base, ::Val{K}) where {K} =
+    accumulate(*, SVector{K}(ntuple(power_position -> power_position == 1 ? one(base) : base,
+                                    Val(K))))
+
+"""`Σᵢ wᵢ xᵢᵏ gᵢ` for `k = 0:K-1` over the first `node_count` nodes."""
+@inline function _weighted_power_sums(weights, nodes, node_rates, node_count::Int,
+                                      ::Val{K}) where {K}
+    sum_type = promote_type(eltype(weights), eltype(nodes), eltype(node_rates))
+    power_sums = zero(SVector{K, sum_type})
+    for node_index in 1:node_count
+        power_sums += (weights[node_index] .* _ascending_powers(nodes[node_index], Val(K))) .*
+                      node_rates[node_index]
+    end
+    return power_sums
+end
+
+"""
     _aggregation_moment_source(aggregationfunction, parameters,
                                nodes, weights, maximum_order;
                                shape_factor=1, pair_weight_scale=1)
@@ -501,6 +526,7 @@ function _aggregation_moment_source(aggregationfunction::AbstractAggregationFunc
     @inbounds for first_node in eachindex(nodes, weights)
         first_length = nodes[first_node]
         first_weight = weights[first_node]
+        first_powers = _ascending_powers(first_length, Val(K))
         for second_node in eachindex(nodes, weights)
             second_length = nodes[second_node]
             second_weight = weights[second_node]
@@ -511,12 +537,9 @@ function _aggregation_moment_source(aggregationfunction::AbstractAggregationFunc
                                              first_length,
                                              second_length)
             product_length = (first_length^3 + second_length^3)^(one(source_type) / 3)
-            source += SVector{K}(ntuple(Val(K)) do moment_position
-                moment_index = moment_position - 1
-                event_rate * (product_length^moment_index -
-                              first_length^moment_index -
-                              second_length^moment_index)
-            end)
+            source += event_rate .* (_ascending_powers(product_length, Val(K)) .-
+                                     first_powers .-
+                                     _ascending_powers(second_length, Val(K)))
         end
     end
     return source
@@ -594,13 +617,15 @@ function _breakage_moment_source(breakagefunction::AbstractBreakageFunction,
                      _breakage_frequency(breakagefunction,
                                          named_parameters,
                                          crystal_length)
-        source += SVector{K}(ntuple(Val(K)) do moment_position
-            moment_index = moment_position - 1
-            event_rate * ((6 / (moment_index + 3) - 1) * crystal_length^moment_index)
-        end)
+        source += event_rate .* (_breakage_daughter_factors(Val(K)) .*
+                                 _ascending_powers(crystal_length, Val(K)))
     end
     return source
 end
+
+"""Uniform-in-volume daughter factors `6/(k+3) - 1` for `k = 0:K-1`."""
+@inline _breakage_daughter_factors(::Val{K}) where {K} =
+    SVector{K}(ntuple(moment_position -> 6 / (moment_position + 2) - 1, Val(K)))
 
 """
     breakage_moment_source(breakagefunction, parameters, quadrature,
@@ -647,16 +672,13 @@ function _qmom_growth_moment_source(quadrature::QMOMQuadrature{<:SVector{N}},
                                eltype(quadrature.weights),
                                typeof(nucleation_rate_value),
                                eltype(node_growth_rates))
+    # growth_integrals[k] = Σᵢ wᵢ Lᵢᵏ⁻¹ Gᵢ feeds moment k.
+    growth_integrals = _weighted_power_sums(quadrature.weights, quadrature.nodes,
+                                            node_growth_rates, quadrature.active_nodes,
+                                            Val(2 * N))
     return SVector{2 * N, source_type}(ntuple(Val(2 * N)) do moment_position
-        moment_index = moment_position - 1
-        moment_index == 0 && return convert(source_type, nucleation_rate_value)
-        growth_integral = zero(source_type)
-        for node_index in 1:quadrature.active_nodes
-            growth_integral += quadrature.weights[node_index] *
-                               quadrature.nodes[node_index]^(moment_index - 1) *
-                               node_growth_rates[node_index]
-        end
-        moment_index * growth_integral
+        moment_position == 1 ? nucleation_rate_value :
+        (moment_position - 1) * growth_integrals[moment_position - 1]
     end)
 end
 

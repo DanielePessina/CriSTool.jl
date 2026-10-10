@@ -76,18 +76,19 @@ end
 
 """Static scaled DQMOM projection matrix `[(1-k) xᵢᵏ | k xᵢᵏ⁻¹]` for dimensionless nodes."""
 @inline function _dqmom_projection_matrix(scaled_nodes::SVector{N, T}) where {N, T}
+    node_powers = map(scaled_node -> _ascending_powers(scaled_node, Val(2 * N)), scaled_nodes)
     projection_values = ntuple(Val(4 * N * N)) do linear_index
         row_index = ((linear_index - 1) % (2 * N)) + 1
         column_index = ((linear_index - 1) ÷ (2 * N)) + 1
         moment_index = row_index - 1
         node_index = column_index <= N ? column_index : column_index - N
-        scaled_node = scaled_nodes[node_index]
+        powers = node_powers[node_index]
         if column_index <= N
             moment_index == 0 ? one(T) :
-                (one(T) - moment_index) * scaled_node^moment_index
+                (one(T) - moment_index) * powers[moment_index + 1]
         else
             moment_index == 0 ? zero(T) :
-                moment_index * scaled_node^(moment_index - 1)
+                moment_index * powers[moment_index]
         end
     end
     return SMatrix{2 * N, 2 * N, T}(projection_values)
@@ -170,24 +171,17 @@ function _dqmom_moment_source(problem::CrystallisationProblem,
         scaled_weights,
         Val(2 * N))
 
+    # growth_integrals[k] = Σᵢ wᵢ xᵢᵏ⁻¹ Gᵢ / coordinate_scale feeds moment k.
+    growth_integrals = _weighted_power_sums(scaled_weights, scaled_nodes,
+                                            growth_rates ./ coordinate_scale, N, Val(2 * N))
+    physical_scales = _ascending_powers(coordinate_scale, Val(2 * N))
     return SVector{2 * N, element_type}(ntuple(Val(2 * N)) do moment_position
-        moment_index = moment_position - 1
         # Boundary-at-zero nucleation changes the number moment only.  A finite
         # nucleus would instead add J * L_nucleus^k to every moment here.
-        kinetic_source = if moment_index == 0
-            convert(element_type, nucleation_rate_value / weight_scale)
-        else
-            growth_integral = zero(element_type)
-            for node_index in 1:N
-                growth_integral += scaled_weights[node_index] *
-                                   scaled_nodes[node_index]^(moment_index - 1) *
-                                   (growth_rates[node_index] / coordinate_scale)
-            end
-            moment_index * growth_integral
-        end
-        physical_scale = coordinate_scale^moment_index
+        kinetic_source = moment_position == 1 ? nucleation_rate_value / weight_scale :
+                         (moment_position - 1) * growth_integrals[moment_position - 1]
         kinetic_source + (aggregation_source[moment_position] +
-                          breakage_source[moment_position]) / physical_scale
+                          breakage_source[moment_position]) / physical_scales[moment_position]
     end)
 end
 
