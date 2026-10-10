@@ -167,6 +167,21 @@ end
 end
 
 """
+    _givens_radius(first_value, second_value)
+
+`hypot` for the QL rotations: the plain `sqrt(x² + y²)` when the sum of
+squares is safely inside the normal range (then neither square can have lost
+precision to underflow), the overflow- and underflow-safe `hypot` otherwise.
+`hypot` was 40% of the eigen-solve.
+"""
+@inline function _givens_radius(first_value, second_value)
+    sum_of_squares = first_value * first_value + second_value * second_value
+    primal_sum = _qmom_primal(sum_of_squares)
+    return floatmin(primal_sum) / eps(primal_sum) < primal_sum < floatmax(primal_sum) ?
+           sqrt(sum_of_squares) : hypot(first_value, second_value)
+end
+
+"""
     _qmom_golub_welsch(diagonal, subdiagonal, active_nodes)
 
 Eigenvalues and first eigenvector components of the leading `active_nodes`
@@ -207,7 +222,7 @@ function _qmom_golub_welsch(diagonal::SVector{N, T}, subdiagonal::SVector{N, T},
 
             shift_ratio = (eigenvalues[lower_index + 1] - eigenvalues[lower_index]) /
                           (2 * offdiagonal[lower_index])
-            shift_radius = hypot(shift_ratio, one(T))
+            shift_radius = _givens_radius(shift_ratio, one(T))
             signed_radius = shift_ratio >= zero(T) ? shift_radius : -shift_radius
             shifted_value = eigenvalues[upper_index] - eigenvalues[lower_index] +
                             offdiagonal[lower_index] / (shift_ratio + signed_radius)
@@ -219,7 +234,7 @@ function _qmom_golub_welsch(diagonal::SVector{N, T}, subdiagonal::SVector{N, T},
             while row_index >= lower_index
                 rotation_input = sine_value * offdiagonal[row_index]
                 rotation_coupling = cosine_value * offdiagonal[row_index]
-                rotation_radius = hypot(rotation_input, shifted_value)
+                rotation_radius = _givens_radius(rotation_input, shifted_value)
                 offdiagonal = setindex(offdiagonal, rotation_radius, row_index + 1)
                 if iszero(_qmom_primal(rotation_radius))
                     # Recover from underflow: the block splits here.
