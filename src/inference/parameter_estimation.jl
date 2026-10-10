@@ -260,7 +260,7 @@ function _params_to_p(prob::CrystallisationProblem, params)
     # ComponentArray with the composite kinetic axis: `p.nucl`/`p.gr` are
     # views, so the rate functions' `_named_params` short-circuits without
     # rebuilding the parameter container on every ODE step.
-    return ComponentArray(params, paramaxis(prob))
+    return ComponentArray(params isa ComponentArray ? getdata(params) : params, paramaxis(prob))
 end
 
 """

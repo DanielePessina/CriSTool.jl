@@ -150,16 +150,16 @@ function _steady_state_autonomy_issues(problem::CrystallisationProblem)
         all(value -> value isa Real, values(operation.feed.solvent_state)) ||
         push!(issues, :feed_profile)
     _is_time_invariant(problem.temp_profile) || push!(issues, :temperature_profile)
-    _is_time_invariant(problem.saturation_model) || push!(issues, :saturation_model)
+    _is_time_invariant(problem.model.system.saturation_model) || push!(issues, :saturation_model)
     problem.solvent_dynamics === default_solvent_dynamics ||
         push!(issues, :solvent_dynamics)
     isnothing(operation.feed.transport) || push!(issues, :feed_transport)
 
-    for (name, kinetic_model) in ((:nucleation_kinetics, problem.kinetics_nucleationfunction),
-                                  (:growth_kinetics, problem.kinetics_growthfunction),
-                                  (:dissolution_kinetics, problem.kinetics_dissolutionfunction),
-                                  (:aggregation_kinetics, problem.kinetics_aggregationfunction),
-                                  (:breakage_kinetics, problem.kinetics_breakagefunction))
+    for (name, kinetic_model) in ((:nucleation_kinetics, problem.model.nucleation.law),
+                                  (:growth_kinetics, problem.model.growth.law),
+                                  (:dissolution_kinetics, problem.model.dissolution.law),
+                                  (:aggregation_kinetics, problem.model.aggregation.law),
+                                  (:breakage_kinetics, problem.model.breakage.law))
         _is_time_invariant(kinetic_model) || push!(issues, name)
     end
     return unique(issues)
@@ -359,7 +359,7 @@ function _steady_product_diagnostics(problem, raw_state, physical_result,
     moment3 = _third_raw_moment(problem.solver, _final_population_values(physical_result.population))
     feed_moment3 = _third_raw_moment(problem.solver, _operation_feed_population(problem))
     concentration = raw_state[_solvent_state_index(problem, :concentration)]
-    density = problem.crystal_density * problem.volume_shape_factor
+    density = problem.model.system.crystal_density * problem.model.system.volume_shape_factor
     inlet_dissolved_flow = flows.inflow * _feed_concentration(operation.feed, simulation_time)
     outlet_dissolved_flow = flows.outflow * concentration
     inlet_solid_flow = flows.inflow * density * feed_moment3
@@ -532,8 +532,7 @@ function solve_steadystate(problem::CrystallisationProblem;
     solve_problem = if isnothing(initial_guess)
         problem
     else
-        guessed_problem = _copy_crystallisation_problem(
-            problem; initial_state = collect(initial_guess))
+        guessed_problem = _problem_with_initial_state(problem, collect(initial_guess))
         _validate_crystallisation_problem(guessed_problem)
         guessed_problem
     end

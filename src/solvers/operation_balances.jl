@@ -67,9 +67,6 @@ function _validate_operation(problem::CrystallisationProblem,
         throw(ArgumentError("Extra solvent variables require an explicit feed transport hook; " *
                             "derived variables such as pH cannot be mixed as concentrations."))
     end
-    if !isnothing(problem.initial_state) && operation isa FedBatchOperation
-        _validate_operation_volume(reactor_volume(problem, problem.initial_state))
-    end
     return nothing
 end
 

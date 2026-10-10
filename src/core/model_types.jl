@@ -1,9 +1,11 @@
 """
     CrystallisationSystem(; saturation_model, crystal_density, volume_shape_factor,
-                          molecular_volume=nothing)
+                          molecular_volume=nothing, properties=(;))
 
 Material properties in SI units. Missing optional properties are `nothing`;
 selected kinetic laws declare their requirements through `required_properties`.
+Additional named material values live in `properties` and are read as
+`system.properties.name`.
 """
 Base.@kwdef struct CrystallisationSystem{Solubility, MolecularVolume, Properties <: NamedTuple}
     saturation_model::Solubility
@@ -13,12 +15,18 @@ Base.@kwdef struct CrystallisationSystem{Solubility, MolecularVolume, Properties
     properties::Properties = (;)
 end
 
-function Base.getproperty(material_system::CrystallisationSystem, field_name::Symbol)
-    field_name in fieldnames(typeof(material_system)) && return getfield(material_system, field_name)
-    return getproperty(getfield(material_system, :properties), field_name)
+"""
+    _material_property(system, property_name) -> value or nothing
+
+Look up a property a kinetic law requires: a named system field first, then
+the system's additional `properties`. Missing properties are `nothing`.
+"""
+function _material_property(material_system::CrystallisationSystem, property_name::Symbol)
+    hasfield(typeof(material_system), property_name) && return getfield(material_system, property_name)
+    return get(material_system.properties, property_name, nothing)
 end
-Base.propertynames(material_system::CrystallisationSystem) =
-    (fieldnames(typeof(material_system))..., keys(getfield(material_system, :properties))...)
+_material_property(material_system, property_name::Symbol) =
+    hasproperty(material_system, property_name) ? getproperty(material_system, property_name) : nothing
 
 
 """`LysozymeSystem(; kwargs...)` returns an ordinary material system with lysozyme defaults."""
@@ -77,6 +85,10 @@ function _canonical_kinetic_parameters(declared_values, supplied_tree::NamedTupl
         if declared_value isa ComponentArray
             supplied_value isa NamedTuple || throw(ArgumentError("Nested kinetic parameters require a NamedTuple."))
             return _canonical_kinetic_parameters(declared_value, supplied_value)
+        elseif declared_value isa AbstractVector
+            supplied_value isa AbstractVector{<:Real} && length(supplied_value) == length(declared_value) ||
+                throw(ArgumentError("Kinetic parameter $declared_name requires a real vector of length $(length(declared_value))."))
+            return supplied_value
         end
         supplied_value isa Real || throw(ArgumentError("Kinetic values must be real scalars."))
         supplied_value
@@ -152,63 +164,40 @@ function _validate_material_model(crystal_model::CrystallisationModel)
         bound_kinetic isa KineticModel && bound_kinetic.law isa expected_family ||
             throw(ArgumentError("$slot_name requires a KineticModel of $expected_family."))
         for required_name in required_properties(bound_kinetic.law)
-            hasproperty(material_system, required_name) ||
-                throw(ArgumentError("Material system lacks required property $required_name."))
-            required_value = getproperty(material_system, required_name)
-            _validate_required_material_property(bound_kinetic.law, required_name, required_value)
+            _validate_required_material_property(bound_kinetic.law, required_name,
+                _material_property(material_system, required_name))
         end
     end
     return crystal_model
 end
 
-_bound_parameter_vector(bound_kinetic::KineticModel) =
-    isempty(bound_kinetic.parameters) ? Float64[] : ComponentArray(; bound_kinetic.parameters...)
-
-
 """
-    CrystallisationProblem(model, conditions; solver=MoM(), kwargs...)
+    CrystallisationProblem(model, conditions; solver=MoM(),
+                           solvent_dynamics=default_solvent_dynamics,
+                           solid_mass_concentration_threshold=1e-12)
 
 Configure a model under numeric `RunConditions` for simulation or steady
-solving. A missing seed means an empty population. Remaining keywords are
-numerical settings; material, kinetic and condition fields cannot be overridden.
+solving. A missing seed means an empty population. The keywords are the only
+numerical settings; material, kinetic and run conditions come from `model` and
+`conditions`.
 """
 function CrystallisationProblem(crystal_model::CrystallisationModel, run_conditions::RunConditions;
-        solver::AbstractSolver = MoM(), kwargs...)
-    _validate_material_model(crystal_model)
+        solver::AbstractSolver = MoM(), solvent_dynamics = default_solvent_dynamics,
+        solid_mass_concentration_threshold::Real = 1e-12, unsupported_settings...)
+    isempty(unsupported_settings) || throw(ArgumentError(
+        "Unsupported problem settings $(Tuple(keys(unsupported_settings))); material, kinetic and run " *
+        "conditions are set by the model and conditions."))
     unresolved_sources = observation_sources(run_conditions)
     isempty(unresolved_sources) || throw(ArgumentError(
         "Conditions read $(Tuple(unresolved_sources)) from observations; supply numbers or use an experiment."))
-    initial_solvent = run_conditions.solvent
-    model_settings = (;
-        crystal_density = crystal_model.system.crystal_density,
-        volume_shape_factor = crystal_model.system.volume_shape_factor,
-        molecular_volume = crystal_model.system.molecular_volume,
-        saturation_model = crystal_model.system.saturation_model,
-        material_system = crystal_model.system,
-        kinetics_nucleationfunction = crystal_model.nucleation.law,
-        parameterset_nucleation = _bound_parameter_vector(crystal_model.nucleation),
-        kinetics_growthfunction = crystal_model.growth.law,
-        parameterset_growth = _bound_parameter_vector(crystal_model.growth),
-        kinetics_dissolutionfunction = crystal_model.dissolution.law,
-        parameterset_dissolution = _bound_parameter_vector(crystal_model.dissolution),
-        kinetics_aggregationfunction = crystal_model.aggregation.law,
-        parameterset_aggregation = _bound_parameter_vector(crystal_model.aggregation),
-        kinetics_breakagefunction = crystal_model.breakage.law,
-        parameterset_breakage = _bound_parameter_vector(crystal_model.breakage),
-        initial_concentration = initial_solvent.concentration,
-        initial_solvent_state = initial_solvent, temp_profile = run_conditions.temperature, solver,
-        operation = run_conditions.operation)
-    reserved_settings = intersect((keys(model_settings)..., :initial_state), keys(kwargs))
-    isempty(reserved_settings) || throw(ArgumentError(
-        "Material, kinetic and run conditions are set by the model and conditions: $(Tuple(reserved_settings))."))
-    configured_run = CrystallisationProblem(; model_settings..., kwargs...)
+    configured_run = CrystallisationProblem(crystal_model, run_conditions.temperature, run_conditions.solvent,
+        nothing, run_conditions.operation, solver, solvent_dynamics, Float64(solid_mass_concentration_threshold))
     _validate_crystallisation_problem(configured_run)
-    if run_conditions.crystals !== nothing
-        configured_run = _problem_with_initial_state(configured_run,
-            initial_state_from_characteristics(configured_run, run_conditions.crystals))
-        _validate_crystallisation_problem(configured_run)
-    end
-    return configured_run
+    run_conditions.crystals === nothing && return configured_run
+    seeded_state = initial_state_from_characteristics(configured_run, run_conditions.crystals)
+    seeded_run = _problem_with_initial_values(configured_run,
+        Vector{Float64}(seeded_state[_population_state_range(configured_run)]), configured_run.initial_solvent_state)
+    return _validate_crystallisation_problem(seeded_run)
 end
 
 """
@@ -231,7 +220,7 @@ struct KineticContext{Problem, State, Time, System}
     system::System
 end
 KineticContext(configured_run::CrystallisationProblem, numerical_state, clock_time) =
-    KineticContext(configured_run, numerical_state, clock_time, configured_run.material_system)
+    KineticContext(configured_run, numerical_state, clock_time, configured_run.model.system)
 supersaturation(rate_context::KineticContext) =
     supersaturation(rate_context.problem, rate_context.state, rate_context.time)
 temperature(rate_context::KineticContext) = temperature(rate_context.problem.temp_profile, rate_context.time)

@@ -59,6 +59,12 @@ const CRISTOOL_MAX_PREPARED_SOLVER_SECONDS = 5.0
 const CRISTOOL_MAX_OPTIMISER_CALLS = 1e18
 const CRISTOOL_PRIOR_PLOT_SAMPLES = 2^18
 
+# Universal physical constants (SI).
+"""Molar gas constant R (J/mol/K) used by Arrhenius rate laws."""
+const CRISTOOL_GAS_CONSTANT = 8.314
+"""Boltzmann constant k_B (J/K) used by classical nucleation theory."""
+const CRISTOOL_BOLTZMANN_CONSTANT = 1.380649e-23
+
 ## Export stuff
 export CrystallisationSolution, AbstractPopulationTrajectory, MeshPopulation,
        MomentPopulation, QuadraturePopulation,
@@ -91,7 +97,7 @@ export AbstractNucleationFunction, AbstractGrowthFunction,
 export AbstractAggregationFunction, AbstractBreakageFunction, NoBreakage,
        EmpiricalBreakage, UniformBreakage, NoAggregation,
        ConstantAggregation, SizeSumAggregation, VolumeSumAggregation, AverageAggregation
-export runsimulation, paramaxis, crystallisation_odeproblem,
+export runsimulation, paramaxis, kinetic_parameter_vector, crystallisation_odeproblem,
        crystallisation_solution,
        solve_steadystate,
        initial_state_from_characteristics

@@ -20,8 +20,10 @@ const BENCHMARK_MESHES = (50, 100, 250, 500)
 
 function benchmark_problem(meshsize)
     solver = FiniteVol(meshsize = meshsize, lmax = 50e-6)
-    problem = CrystallisationProblem(; solver = solver,
-                                     initial_solvent_state = (; concentration = 1.0))
+    kernel_model = CrystallisationModel(LysozymeSystem();
+        growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 1.0))
+    problem = CrystallisationProblem(kernel_model, RunConditions(temperature = 293.15, concentration = 1.0);
+                                     solver = solver)
     state = [abs(sin(index)) for index in 1:meshsize]
     return problem, solver, [state; 1.0]
 end

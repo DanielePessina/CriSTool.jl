@@ -70,7 +70,7 @@ end
             seeded_problem = CrystallisationProblem(fixture_translation_model(speed = 0.0),
                 RunConditions(temperature = 293.15, concentration = 20.0, crystals = seed_description); solver)
             seeded_start = simulate(seeded_problem; saveat = [0.0, 1.0])
-            seeded_mass = solver isa MoM ? 1000.0 * seeded_problem.initial_state[4] :
+            seeded_mass = solver isa MoM ? 1000.0 * seeded_problem.initial_population[4] :
                           1000.0 * first(simulate_raw_moment(seeded_start, solver, 3))
             @test seeded_mass ≈ 0.25 rtol = mass_rtol
             @test seeded_start.d43 ≈ [12e-6, 12e-6] rtol = d43_rtol
@@ -86,8 +86,8 @@ end
         mass_concentration = 0.25, weighting = :volume)
     @test number_weighted(volume_seed).distribution == number_seed.distribution
     distribution_conditions(seed_description) = RunConditions(temperature = 293.15, concentration = 20.0, crystals = seed_description)
-    @test CrystallisationProblem(fixture_translation_model(), distribution_conditions(number_seed)).initial_state ≈
-          CrystallisationProblem(fixture_translation_model(), distribution_conditions(volume_seed)).initial_state rtol = 1e-12
+    @test CrystallisationProblem(fixture_translation_model(), distribution_conditions(number_seed)).initial_population ≈
+          CrystallisationProblem(fixture_translation_model(), distribution_conditions(volume_seed)).initial_population rtol = 1e-12
     @test DistributionInitialCrystals(Uniform(10e-6, 20e-6); mass_concentration = 0.25, weighting = :volume).d43 ≈
           15e-6 rtol = 1e-9
 
@@ -98,7 +98,8 @@ end
         unseeded_problem = CrystallisationProblem(fixture_translation_model(),
             RunConditions(temperature = 293.15, concentration = 20.0); solver)
         @test initial_state_from_characteristics(unseeded_problem, lognormal_seed) ==
-              CrystallisationProblem(fixture_translation_model(), distribution_conditions(lognormal_seed); solver).initial_state
+              CriSTool._get_initial_state(CrystallisationProblem(fixture_translation_model(),
+                  distribution_conditions(lognormal_seed); solver))
     end
 
     # An empty seed (zero mass) is a valid empty population.

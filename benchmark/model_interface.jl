@@ -20,7 +20,7 @@ function benchmark_model_interface()
     full_preparation = selected_preparation.setup
     @test loss(selected_preparation, [3.]) ≈ loss(GaussianNLL(), full_preparation, native_parameters) atol = 1e-10
 
-    named_growth_values = benchmark_run.parameterset_growth
+    named_growth_values = kinetic_parameter_vector(benchmark_run).gr
     rate_state = CriSTool._get_initial_state(benchmark_run)
     builtin_growth_law = benchmark_model.growth.law
     callable_growth_law = CallableGrowth((rate_values, rate_context) -> begin

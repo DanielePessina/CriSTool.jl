@@ -41,11 +41,11 @@ function paramaxis(nucl::AbstractNucleationFunction,
                       paramaxis(br)))
 end
 
-paramaxis(prob::CrystallisationProblem) = paramaxis(prob.kinetics_nucleationfunction,
-                                                    prob.kinetics_growthfunction,
-                                                    prob.kinetics_dissolutionfunction,
-                                                    prob.kinetics_aggregationfunction,
-                                                    prob.kinetics_breakagefunction)
+paramaxis(prob::CrystallisationProblem) = paramaxis(prob.model.nucleation.law,
+                                                    prob.model.growth.law,
+                                                    prob.model.dissolution.law,
+                                                    prob.model.aggregation.law,
+                                                    prob.model.breakage.law)
 
 
 """

@@ -152,7 +152,7 @@ _require_fourth_raw_moment(solver::AbstractMomentSolver) =
 """Raw moments `µ0..µ_{count-1}` (SI) of a seed scaled to its solid mass concentration."""
 function _seed_raw_moments(problem::CrystallisationProblem, seed_description::DistributionInitialCrystals,
                            moment_total::Integer)
-    target_mu3 = seed_description.mass_concentration / (problem.crystal_density * problem.volume_shape_factor)
+    target_mu3 = seed_description.mass_concentration / (problem.model.system.crystal_density * problem.model.system.volume_shape_factor)
     number_scale = target_mu3 / _seed_raw_moment(seed_description, 3)
     return [number_scale * _seed_raw_moment(seed_description, moment_index)
             for moment_index in 0:(moment_total - 1)]
@@ -241,6 +241,3 @@ function _initial_state_from_seed(problem::CrystallisationProblem,
                 _operation_initial_state(problem.operation),
                 Float64.(collect(values(problem.initial_solvent_state))))
 end
-
-_problem_with_initial_state(problem::CrystallisationProblem, state) =
-    _copy_crystallisation_problem(problem; initial_state = state)

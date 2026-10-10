@@ -345,7 +345,7 @@ aggregation_moment_source(aggregationfunction::AbstractAggregationFunction,
                           maximum_order::Integer,
                           problem::CrystallisationProblem) =
     aggregation_moment_source(aggregationfunction, parameters, quadrature,
-                              maximum_order; shape_factor = problem.volume_shape_factor)
+                              maximum_order; shape_factor = problem.model.system.volume_shape_factor)
 
 """
     _breakage_moment_source(breakagefunction, parameters,
@@ -520,7 +520,7 @@ function _qmom_solvent_derivatives(problem::CrystallisationProblem,
     concentration_position === nothing &&
         throw(ArgumentError("initial_solvent_state must define :concentration."))
     solvent_count = length(names)
-    concentration_rate = -problem.crystal_density * problem.volume_shape_factor * quadrature_volume_rate
+    concentration_rate = -problem.model.system.crystal_density * problem.model.system.volume_shape_factor * quadrature_volume_rate
 
     if problem.solvent_dynamics isa DefaultSolventDynamics
         return ntuple(index -> index == concentration_position ? concentration_rate :
@@ -544,11 +544,11 @@ function _qmom_extinction_callback(problem::CrystallisationProblem)
     concentration_index = _solvent_state_index(problem, :concentration)
     state_count = n_moments + _operation_state_count(problem.operation) + length(names)
     threshold = _validate_solid_mass_concentration_threshold(problem)
-    condition = (state, time, integrator) -> problem.crystal_density * problem.volume_shape_factor * state[4] - threshold
+    condition = (state, time, integrator) -> problem.model.system.crystal_density * problem.model.system.volume_shape_factor * state[4] - threshold
     affect! = integrator -> nothing
     affect_neg! = integrator -> begin
         state = integrator.u
-        residual_mass = problem.crystal_density * problem.volume_shape_factor * state[4]
+        residual_mass = problem.model.system.crystal_density * problem.model.system.volume_shape_factor * state[4]
         integrator.u = SVector(ntuple(Val(state_count)) do state_index
             if state_index <= n_moments
                 zero(state[state_index])
@@ -566,12 +566,12 @@ end
 
 function _validate_qmom_problem(problem::CrystallisationProblem)
     _validate_qmom_solver(problem.solver)
-    for rate_law in (problem.kinetics_growthfunction, problem.kinetics_dissolutionfunction)
+    for rate_law in (problem.model.growth.law, problem.model.dissolution.law)
         _is_length_law(rate_law) &&
             throw(ArgumentError("$(typeof(rate_law)) is length-dependent and is not supported by QMOM; " *
                                 "use FiniteVol or WENO."))
     end
-    for binary_law in (problem.kinetics_aggregationfunction, problem.kinetics_breakagefunction)
+    for binary_law in (problem.model.aggregation.law, problem.model.breakage.law)
         _has_moment_closure(binary_law) ||
             throw(ArgumentError("$(typeof(binary_law)) has no validated QMOM moment closure."))
     end
@@ -623,19 +623,19 @@ This specialized six-moment/seven-state form also keeps the derivative in an
                                       state,
                                       parameters,
                                       time)
-    scalar_growth_rate = net_growth_rate(problem.kinetics_growthfunction,
+    scalar_growth_rate = net_growth_rate(problem.model.growth.law,
                                           parameters.gr,
-                                          problem.kinetics_dissolutionfunction,
+                                          problem.model.dissolution.law,
                                           parameters.diss,
                                           problem,
                                           state,
                                           time)
-    nucleation_rate_value = nucleationrate(problem.kinetics_nucleationfunction,
+    nucleation_rate_value = nucleationrate(problem.model.nucleation.law,
                                            parameters.nucl,
                                            problem,
                                            state,
                                            time)
-    concentration_rate = -3 * problem.volume_shape_factor * problem.crystal_density * scalar_growth_rate * state[3]
+    concentration_rate = -3 * problem.model.system.volume_shape_factor * problem.model.system.crystal_density * scalar_growth_rate * state[3]
     return SVector(nucleation_rate_value,
                    scalar_growth_rate * state[1],
                    2 * scalar_growth_rate * state[2],
@@ -646,7 +646,7 @@ This specialized six-moment/seven-state form also keeps the derivative in an
 end
 
 """Construct the QMOM ODE problem and selected time-stepping algorithm."""
-function crystallisation_odeproblem(solver::QMOM, problem::CrystallisationProblem, saveat)
+function crystallisation_odeproblem(solver::QMOM, problem::CrystallisationProblem, saveat, kinetic_values)
     _validate_qmom_problem(problem)
     length(saveat) >= 2 ||
         throw(ArgumentError("saveat must contain at least two time points."))
@@ -674,14 +674,14 @@ function crystallisation_odeproblem(solver::QMOM, problem::CrystallisationProble
     else
         function QMOM_model(state, parameters, time)
             moment_values = @view state[1:n_moments]
-            scalar_growth_rate = net_growth_rate(problem.kinetics_growthfunction,
+            scalar_growth_rate = net_growth_rate(problem.model.growth.law,
                                                  parameters.gr,
-                                                 problem.kinetics_dissolutionfunction,
+                                                 problem.model.dissolution.law,
                                                  parameters.diss,
                                                  problem,
                                                  state,
                                                  time)
-            nucleation_rate_value = nucleationrate(problem.kinetics_nucleationfunction,
+            nucleation_rate_value = nucleationrate(problem.model.nucleation.law,
                                                    parameters.nucl,
                                                    problem,
                                                    state,
@@ -698,9 +698,9 @@ function crystallisation_odeproblem(solver::QMOM, problem::CrystallisationProble
                                                              problem.solver)
                 moment_derivatives = _qmom_growth_moment_source(
                     reconstructed_rule,
-                    problem.kinetics_growthfunction,
+                    problem.model.growth.law,
                     parameters.gr,
-                    problem.kinetics_dissolutionfunction,
+                    problem.model.dissolution.law,
                     parameters.diss,
                     problem,
                     state,
@@ -708,20 +708,20 @@ function crystallisation_odeproblem(solver::QMOM, problem::CrystallisationProble
                     nucleation_rate_value,
                     moment_order(problem.solver))
                 moment_derivatives .+= aggregation_moment_source(
-                    problem.kinetics_aggregationfunction,
+                    problem.model.aggregation.law,
                     parameters.agg,
                     reconstructed_rule,
                     moment_order(problem.solver);
-                    shape_factor = problem.volume_shape_factor)
+                    shape_factor = problem.model.system.volume_shape_factor)
                 moment_derivatives .+= breakage_moment_source(
-                    problem.kinetics_breakagefunction,
+                    problem.model.breakage.law,
                     parameters.br,
                     reconstructed_rule,
                     moment_order(problem.solver))
                 volume_rate = _qmom_volume_rate(reconstructed_rule,
-                                                problem.kinetics_growthfunction,
+                                                problem.model.growth.law,
                                                 parameters.gr,
-                                                problem.kinetics_dissolutionfunction,
+                                                problem.model.dissolution.law,
                                                 parameters.diss,
                                                 problem,
                                                 state,
@@ -743,17 +743,8 @@ function crystallisation_odeproblem(solver::QMOM, problem::CrystallisationProble
         end
     end
 
-    parameters = ComponentArray(; nucl = problem.parameterset_nucleation,
-                                gr = problem.parameterset_growth,
-                                diss = problem.parameterset_dissolution,
-                                agg = problem.parameterset_aggregation,
-                                br = problem.parameterset_breakage)
-    element_type = promote_type(eltype(problem.parameterset_nucleation),
-                                eltype(problem.parameterset_growth),
-                                eltype(problem.parameterset_dissolution),
-                                eltype(problem.parameterset_aggregation),
-                                eltype(problem.parameterset_breakage),
-                                Float64)
+    parameters = kinetic_values
+    element_type = promote_type(eltype(kinetic_values), Float64)
     initial_values = element_type.(_get_initial_state(problem))
     initial_state = SVector(ntuple(index -> initial_values[index], Val(n_states)))
     ode_problem = ODEProblem(QMOM_model,

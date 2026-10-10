@@ -85,27 +85,27 @@ function _mesh_boundary_flow_state(solver::FiniteVol, problem, ode_solution)
     parameters = ode_solution.prob.p
     lower_length = first(solver.cell_face)
     upper_length = last(solver.cell_face)
-    mass_scale = problem.crystal_density * problem.volume_shape_factor
+    mass_scale = problem.model.system.crystal_density * problem.model.system.volume_shape_factor
 
     for time_index in eachindex(saved_times)
         numerical_state = ode_solution.u[time_index]
         numberdensity = crystal_state(problem, numerical_state)
         simulation_time = saved_times[time_index]
-        nucleation_rate_value = nucleationrate(problem.kinetics_nucleationfunction,
+        nucleation_rate_value = nucleationrate(problem.model.nucleation.law,
                                                parameters.nucl, problem,
                                                numerical_state, simulation_time)
 
         if !_uses_length_rates(problem)
             scalar_growth_rate = _fv_scalar_net_growth_rate(
-                problem.kinetics_growthfunction, parameters.gr,
-                problem.kinetics_dissolutionfunction, parameters.diss,
+                problem.model.growth.law, parameters.gr,
+                problem.model.dissolution.law, parameters.diss,
                 problem, numerical_state, simulation_time)
             _fill_fv_scalar_flux!(flux_cache, numberdensity,
                                   scalar_growth_rate, nucleation_rate_value)
         else
             net_growth_rate!(growth_rate_cache,
-                             problem.kinetics_growthfunction, parameters.gr,
-                             problem.kinetics_dissolutionfunction, parameters.diss,
+                             problem.model.growth.law, parameters.gr,
+                             problem.model.dissolution.law, parameters.diss,
                              problem, numerical_state, simulation_time,
                              solver.cell_centre)
             _fill_signed_first_order_flux!(flux_cache, numberdensity,
@@ -130,7 +130,7 @@ function _wrap_solution(solver::AbstractDiscretisedSolver, problem::Crystallisat
     cell_centre = solver.cell_centre
     nd_matrix = ode_solution[_population_state_range(problem), :]
     vol_weighted_dens = volumeweighteddensity(cell_centre, nd_matrix,
-                                              problem.volume_shape_factor)
+                                              problem.model.system.volume_shape_factor)
     population = MeshPopulation(nd_matrix, vol_weighted_dens,
                                 quantilecalculator(cell_centre, vol_weighted_dens, 0.1),
                                 quantilecalculator(cell_centre, vol_weighted_dens, 0.5),
@@ -148,12 +148,13 @@ end
 High-resolution (OSPRE-limited) transport for scalar growth, first-order
 signed upwinding for length-dependent growth; selected by the growth law.
 """
-crystallisation_odeproblem(solver::FiniteVol, problem::CrystallisationProblem, saveat) =
-    _finite_volume_odeproblem(Val(_is_length_law(problem.kinetics_growthfunction)), solver, problem, saveat)
+crystallisation_odeproblem(solver::FiniteVol, problem::CrystallisationProblem, saveat, kinetic_values) =
+    _finite_volume_odeproblem(Val(_is_length_law(problem.model.growth.law)), solver, problem, saveat, kinetic_values)
 
 """Build the high-resolution FV ODE for scalar growth."""
 function _finite_volume_odeproblem(length_growth::Val{false},
-                                   solver::FiniteVol, CryProblem::CrystallisationProblem, saveat)
+                                   solver::FiniteVol, CryProblem::CrystallisationProblem, saveat,
+                                   kinetic_values)
     # Pre-allocate flux cache using DiffCache for ForwardDiff compatibility
     # DiffCache automatically handles type conversion for dual numbers during AD
     _flux_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 1))
@@ -167,12 +168,12 @@ function _finite_volume_odeproblem(length_growth::Val{false},
     numberdensity = crystal_state(CryProblem, st)
 
         cell_centre = CryProblem.solver.cell_centre
-        dissolutionfunction = CryProblem.kinetics_dissolutionfunction
+        dissolutionfunction = CryProblem.model.dissolution.law
 
         if _is_length_law(dissolutionfunction)
             net_growth_rates = get_tmp(_growth_rate_cache_dc, st)
             net_growth_rate!(net_growth_rates,
-                                   CryProblem.kinetics_growthfunction,
+                                   CryProblem.model.growth.law,
                                    p.gr,
                                    dissolutionfunction,
                                    p.diss,
@@ -183,7 +184,7 @@ function _finite_volume_odeproblem(length_growth::Val{false},
             _fill_signed_first_order_flux!(_flux_cache,
                                            numberdensity,
                                            net_growth_rates,
-                                           nucleationrate(CryProblem.kinetics_nucleationfunction,
+                                           nucleationrate(CryProblem.model.nucleation.law,
                                                           p.nucl,
                                                           CryProblem,
                                                           st,
@@ -196,7 +197,7 @@ function _finite_volume_odeproblem(length_growth::Val{false},
             # the independent contribution is evaluated only when a model was
             # explicitly supplied in the `diss` slot.
             scalar_growth_rate = _fv_scalar_net_growth_rate(
-                CryProblem.kinetics_growthfunction,
+                CryProblem.model.growth.law,
                 p.gr,
                 dissolutionfunction,
                 p.diss,
@@ -204,7 +205,7 @@ function _finite_volume_odeproblem(length_growth::Val{false},
                 st,
                 t)
             _fill_fv_scalar_flux!(_flux_cache, numberdensity, scalar_growth_rate,
-                                  nucleationrate(CryProblem.kinetics_nucleationfunction,
+                                  nucleationrate(CryProblem.model.nucleation.law,
                                                  p.nucl, CryProblem, st, t))
         end
 
@@ -225,10 +226,10 @@ function _finite_volume_odeproblem(length_growth::Val{false},
         end
 
         # Add aggregation and breakage terms
-        agg_rate = aggregationrate(CryProblem.kinetics_aggregationfunction,
+        agg_rate = aggregationrate(CryProblem.model.aggregation.law,
                                    p.agg,
                                    CryProblem, st, t)
-        br_rate = breakagerate(CryProblem.kinetics_breakagefunction,
+        br_rate = breakagerate(CryProblem.model.breakage.law,
                                p.br,
                                CryProblem, st, t)
 
@@ -240,8 +241,8 @@ function _finite_volume_odeproblem(length_growth::Val{false},
         end
 
         if _fused_solvent_coupling_enabled(CryProblem)
-            depletion_coupled = 3 * CryProblem.volume_shape_factor *
-                                CryProblem.crystal_density * depletion
+            depletion_coupled = 3 * CryProblem.model.system.volume_shape_factor *
+                                CryProblem.model.system.crystal_density * depletion
             dstdt[end] = -depletion_coupled
         else
             solvent_rates = _solvent_derivatives(CryProblem, st, t, scalar_growth_rate)
@@ -253,28 +254,22 @@ function _finite_volume_odeproblem(length_growth::Val{false},
         return nothing
     end
 
-    θ = (;
-                       nucl = CryProblem.parameterset_nucleation,
-                       gr = CryProblem.parameterset_growth,
-                       diss = CryProblem.parameterset_dissolution,
-                       br = CryProblem.parameterset_breakage,
-                       agg = CryProblem.parameterset_aggregation)
-
     # Construct initial conditions with the correct element type
-    u0_typed = eltype(CryProblem.parameterset_nucleation).(_get_initial_state(CryProblem))
+    u0_typed = eltype(kinetic_values).(_get_initial_state(CryProblem))
 
     # println("Initial state shape: ", size(u0_typed))
 
     ODEprob = ODEProblem(HRFV_FLWmodel,
                          u0_typed, # eltype-matched plain state (do NOT convert to the params type)
                          (saveat[1], saveat[end]),
-                         θ)
+                         kinetic_values)
     return (ODEprob, _timestepping_algorithm(solver, Tsit5()))
 end
 
 """Build the FV ODE for length-dependent (mesh-aligned) growth."""
 function _finite_volume_odeproblem(length_growth::Val{true},
-                                   solver::FiniteVol, CryProblem::CrystallisationProblem, saveat)
+                                   solver::FiniteVol, CryProblem::CrystallisationProblem, saveat,
+                                   kinetic_values)
     # Pre-allocate flux cache using DiffCache for ForwardDiff compatibility
     _flux_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 1))
     _growth_rate_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize))
@@ -290,9 +285,9 @@ function _finite_volume_odeproblem(length_growth::Val{true},
 
         net_growth_rates = get_tmp(_growth_rate_cache_dc, st)
         net_growth_rate!(net_growth_rates,
-                               CryProblem.kinetics_growthfunction,
+                               CryProblem.model.growth.law,
                                p.gr,
-                               CryProblem.kinetics_dissolutionfunction,
+                               CryProblem.model.dissolution.law,
                                p.diss,
                                CryProblem,
                                st,
@@ -302,7 +297,7 @@ function _finite_volume_odeproblem(length_growth::Val{true},
         _fill_signed_first_order_flux!(_flux_cache,
                                        numberdensity,
                                        net_growth_rates,
-                                       nucleationrate(CryProblem.kinetics_nucleationfunction,
+                                       nucleationrate(CryProblem.model.nucleation.law,
                                                       p.nucl,
                                                       CryProblem,
                                                       st,
@@ -325,10 +320,10 @@ function _finite_volume_odeproblem(length_growth::Val{true},
         end
 
         # Add aggregation and breakage terms
-        agg_rate = aggregationrate(CryProblem.kinetics_aggregationfunction,
+        agg_rate = aggregationrate(CryProblem.model.aggregation.law,
                                    p.agg,
                                    CryProblem, st, t)
-        br_rate = breakagerate(CryProblem.kinetics_breakagefunction,
+        br_rate = breakagerate(CryProblem.model.breakage.law,
                                p.br,
                                CryProblem, st, t)
 
@@ -340,8 +335,8 @@ function _finite_volume_odeproblem(length_growth::Val{true},
         end
 
         if _fused_solvent_coupling_enabled(CryProblem)
-            depletion_coupled = 3 * CryProblem.volume_shape_factor *
-                                CryProblem.crystal_density * depletion
+            depletion_coupled = 3 * CryProblem.model.system.volume_shape_factor *
+                                CryProblem.model.system.crystal_density * depletion
             dstdt[end] = -depletion_coupled
         else
             solvent_rates = _solvent_derivatives(CryProblem, st, t, net_growth_rates)
@@ -353,19 +348,12 @@ function _finite_volume_odeproblem(length_growth::Val{true},
         return nothing
     end
 
-    θ = (;
-                       nucl = CryProblem.parameterset_nucleation,
-                       gr = CryProblem.parameterset_growth,
-                       diss = CryProblem.parameterset_dissolution,
-                       br = CryProblem.parameterset_breakage,
-                       agg = CryProblem.parameterset_aggregation)
-
     # Construct initial conditions with the correct element type
-    u0_typed = eltype(CryProblem.parameterset_nucleation).(_get_initial_state(CryProblem))
+    u0_typed = eltype(kinetic_values).(_get_initial_state(CryProblem))
 
     ODEprob = ODEProblem(HRFV_FLWmodel,
                          u0_typed, # eltype-matched plain state (do NOT convert to the params type)
                          (saveat[1], saveat[end]),
-                         θ)
+                         kinetic_values)
     return (ODEprob, _timestepping_algorithm(solver, SSPRK43()))
 end

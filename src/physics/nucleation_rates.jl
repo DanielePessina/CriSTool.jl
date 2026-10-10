@@ -33,8 +33,8 @@ function nucleationrate(nf::CNTNucleation, parameters::T, prob::CrystallisationP
     return if S > 1.001
         exp(p.ln_nucleation_prefactor) *
         S *
-        exp(-16π * p.surface_energy^3 * prob.molecular_volume^2 /
-            (3(prob.boltzmann_constant * temp)^3 * (log(S))^2))
+        exp(-16π * p.surface_energy^3 * prob.model.system.molecular_volume^2 /
+            (3(CRISTOOL_BOLTZMANN_CONSTANT * temp)^3 * (log(S))^2))
     else
         0.0
     end
@@ -86,7 +86,7 @@ function nucleationrate(nf::ArrheniusNucleation, parameters::T, prob::Crystallis
     temp = temperature(prob.temp_profile, t)
     return S > 1.001 ?
            exp(p.ln_nucleation_prefactor) *
-           exp(-p.activation_energy / (prob.R_gas_constant * temp)) *
+           exp(-p.activation_energy / (CRISTOOL_GAS_CONSTANT * temp)) *
            (S - 1)^p.nucleation_order : 0.0
 end
 
@@ -114,8 +114,8 @@ function nucleationrate(nf::CNTNucleationNoSupersaturation, parameters::T, prob:
     temp = temperature(prob.temp_profile, t)
     return if S > 1.001
         exp(p.ln_nucleation_prefactor) *
-        exp(-16π * p.surface_energy^3 * prob.molecular_volume^2 /
-            (3(prob.boltzmann_constant * temp)^3 * (log(S))^2))
+        exp(-16π * p.surface_energy^3 * prob.model.system.molecular_volume^2 /
+            (3(CRISTOOL_BOLTZMANN_CONSTANT * temp)^3 * (log(S))^2))
     else
         0.0
     end
@@ -145,7 +145,7 @@ function nucleationrate(nf::SecondaryNucleation, parameters::T, prob::Crystallis
     temp = temperature(prob.temp_profile, t)
     return if S > 1.001
         base_rate = exp(p.ln_nucleation_prefactor) *
-                    exp(-p.activation_energy / (prob.R_gas_constant * temp)) *
+                    exp(-p.activation_energy / (CRISTOOL_GAS_CONSTANT * temp)) *
                     (S - 1)^p.nucleation_order
         base_rate * _secondary_third_moment(prob.solver, prob,
                                             crystal_state(prob, state))

@@ -86,7 +86,7 @@ function _aggregation_rate_discrete(aggregationfunction,
             upper_number = numberdensity[upper_index] * cell_dL
             collision_kernel = _aggregation_kernel(aggregationfunction,
                                                     kernel_scale,
-                                                    problem.volume_shape_factor,
+                                                    problem.model.system.volume_shape_factor,
                                                     lower_length,
                                                     length_mesh[upper_index])
             event_rate = collision_kernel * lower_number * upper_number /

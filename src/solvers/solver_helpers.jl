@@ -1,15 +1,19 @@
 ###### Solver functions ######
 
 """
-    crystallisation_odeproblem(problem, saveat) -> (odeproblem, default_algorithm)
+    crystallisation_odeproblem(problem, saveat, kinetic_values=kinetic_parameter_vector(problem))
+        -> (odeproblem, default_algorithm)
 
 Build the ODE problem integrated by `problem.solver` over `saveat[1]..saveat[end]`,
 together with that solver's default OrdinaryDiffEq algorithm (or the
-configured `timestepping_algorithm`). Each solver type provides one
-`crystallisation_odeproblem(solver, problem, saveat)` method.
+configured `timestepping_algorithm`). `kinetic_values` is the composite kinetic
+parameter vector on `paramaxis(problem)` and becomes the ODE parameter `p`; its
+element type sets the state element type (e.g. ForwardDiff duals). Each solver
+type provides one `crystallisation_odeproblem(solver, problem, saveat, kinetic_values)` method.
 """
-crystallisation_odeproblem(problem::CrystallisationProblem, saveat) =
-    crystallisation_odeproblem(problem.solver, problem, saveat)
+crystallisation_odeproblem(problem::CrystallisationProblem, saveat,
+                           kinetic_values = kinetic_parameter_vector(problem)) =
+    crystallisation_odeproblem(problem.solver, problem, saveat, kinetic_values)
 
 """Configured algorithm of `solver`, or `default_algorithm` when it is `nothing`."""
 _timestepping_algorithm(solver::AbstractSolver, default_algorithm) =
@@ -72,10 +76,9 @@ weno_flux(cell_averages::AbstractArray{<:Real}, left_cell_index::Integer) =
 The configured `initial_state`, or an empty population followed by the
 operation and solvent initial values.
 """
-_get_initial_state(problem) = isnothing(problem.initial_state) ?
-    [zeros(_population_state_count(problem.solver)); _operation_initial_state(problem.operation);
-     collect(values(problem.initial_solvent_state))] :
-    problem.initial_state
+_get_initial_state(problem) =
+    [something(problem.initial_population, zeros(_population_state_count(problem.solver)));
+     _operation_initial_state(problem.operation); collect(values(problem.initial_solvent_state))]
 
 @inline function _concentration_depletion(cell_dL, numberdensity, scalar_growth_rate, cell_centre)
     derivative_type = promote_type(eltype(numberdensity), typeof(scalar_growth_rate))
@@ -325,19 +328,20 @@ function _validate_save_times(save_times)
 end
 
 """
-    _simulatecrystallisation(problem, saveat; algorithm=nothing,
-                             solve_options=(;), callback_factory=nothing)
+    _simulatecrystallisation(problem, saveat, kinetic_values=kinetic_parameter_vector(problem);
+                             algorithm=nothing, solve_options=(;), callback_factory=nothing)
 
 Solve `problem` at `saveat` with the solver selected by `problem.solver` and
 return its physical solution. Each solver type provides the two methods
-`crystallisation_odeproblem(solver, problem, saveat) -> (odeproblem, default_algorithm)`
+`crystallisation_odeproblem(solver, problem, saveat, kinetic_values) -> (odeproblem, default_algorithm)`
 and `_wrap_solution(solver, problem, ode_solution, boundary_flow_state)`.
 """
-function _simulatecrystallisation(problem::CrystallisationProblem, saveat;
+function _simulatecrystallisation(problem::CrystallisationProblem, saveat,
+                                  kinetic_values = kinetic_parameter_vector(problem);
                                   algorithm = nothing,
                                   solve_options::NamedTuple = (;),
                                   callback_factory = nothing)
-    ode_problem, default_algorithm = crystallisation_odeproblem(problem, saveat)
+    ode_problem, default_algorithm = crystallisation_odeproblem(problem, saveat, kinetic_values)
     ode_solution = _solve_crystallisation_ode(problem, ode_problem,
                                               something(algorithm, default_algorithm),
                                               saveat; solve_options, callback_factory)
