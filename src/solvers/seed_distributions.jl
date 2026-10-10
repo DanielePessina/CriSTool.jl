@@ -1,38 +1,24 @@
 """
-    DistributionInitialCrystals(distribution; mass_concentration, weighting=:number,
-        quadrature_rtol=1e-8, mass_loss_tolerance=1e-4)
-
-A continuous distribution of positive lengths in metres, weighted by number or
-volume, and solid mass concentration in kg/m³. No hidden truncation is applied.
+Seed-distribution integrals: number moments, weighting conversion, mesh cell
+integrals and domain diagnostics for `DistributionInitialCrystals`.
 """
-struct DistributionInitialCrystals{Distribution, Mass} <: AbstractInitialCrystals
-    distribution::Distribution
-    mass_concentration::Mass
-    weighting::Symbol
-    quadrature_rtol::Float64
-    mass_loss_tolerance::Float64
-    d43::Float64
-end
 
-function DistributionInitialCrystals(length_distribution::Distributions.ContinuousUnivariateDistribution;
-        mass_concentration::Union{Real, FromObservation}, weighting::Symbol = :number,
-        quadrature_rtol::Real = 1e-8, mass_loss_tolerance::Real = 1e-4)
-    weighting in (:number, :volume) || throw(ArgumentError("weighting must be :number or :volume."))
-    mass_concentration isa FromObservation || isfinite(mass_concentration) && mass_concentration > 0 ||
-        throw(ArgumentError("Distribution seeds require positive finite mass_concentration."))
-    minimum(length_distribution) >= 0 || throw(ArgumentError(
-        "Length distribution has negative support; truncate it explicitly."))
-    maximum(length_distribution) > 0 || throw(ArgumentError("Length distribution has no positive support."))
-    0 < quadrature_rtol < 1 && 0 <= mass_loss_tolerance < 1 ||
-        throw(ArgumentError("Invalid quadrature or mass-loss tolerance."))
-    # The characteristic size is resolved once; it also verifies the required integrals.
-    unsized_seed = DistributionInitialCrystals(length_distribution, _seed_field_value(mass_concentration),
-        weighting, Float64(quadrature_rtol), Float64(mass_loss_tolerance), NaN)
-    seed_d43 = _seed_number_moment(unsized_seed, 4) / _seed_number_moment(unsized_seed, 3)
-    return DistributionInitialCrystals(length_distribution, unsized_seed.mass_concentration,
-        weighting, Float64(quadrature_rtol), Float64(mass_loss_tolerance), seed_d43)
+"""Analytic full-support raw moment of a source distribution, or `nothing`."""
+function _analytic_full_support_moment(length_distribution::LogNormal, moment_power::Integer)
+    log_location, log_width = Distributions.params(length_distribution)
+    analytic_moment = exp(moment_power * log_location + 0.5 * moment_power^2 * log_width^2)
+    isfinite(analytic_moment) && analytic_moment > 0 ||
+        throw(ArgumentError("Seed moment $moment_power is unavailable."))
+    return analytic_moment
 end
+_analytic_full_support_moment(length_distribution, moment_power::Integer) = nothing
 
+"""
+    _seed_integral(seed, moment_power[, lower_length, upper_length])
+
+`∫ pdf(L) L^moment_power dL` of the seed's source distribution over the given
+length interval (default: its whole support).
+"""
 function _seed_integral(seed_description::DistributionInitialCrystals, moment_power::Integer,
         lower_length = minimum(seed_description.distribution),
         upper_length = maximum(seed_description.distribution))
@@ -40,13 +26,9 @@ function _seed_integral(seed_description::DistributionInitialCrystals, moment_po
     lower_length = max(lower_length, minimum(length_distribution))
     upper_length = min(upper_length, maximum(length_distribution))
     lower_length >= upper_length && return 0.0
-    if length_distribution isa LogNormal &&
-       lower_length == minimum(length_distribution) && upper_length == maximum(length_distribution)
-        log_location, log_width = Distributions.params(length_distribution)
-        analytic_moment = exp(moment_power * log_location + 0.5 * moment_power^2 * log_width^2)
-        isfinite(analytic_moment) && analytic_moment > 0 ||
-            throw(ArgumentError("Seed moment $moment_power is unavailable."))
-        return analytic_moment
+    if lower_length == minimum(length_distribution) && upper_length == maximum(length_distribution)
+        analytic_moment = _analytic_full_support_moment(length_distribution, moment_power)
+        analytic_moment === nothing || return analytic_moment
     end
     if moment_power < 0 && lower_length == 0 && pdf(length_distribution, 0.0) > 0
         throw(ArgumentError("Volume-to-number conversion diverges at zero; supply an explicit positive cutoff."))
@@ -73,10 +55,15 @@ function _seed_integral(seed_description::DistributionInitialCrystals, moment_po
     return scaled_value * length_scale^moment_power
 end
 
-function _seed_number_moment(seed_description::DistributionInitialCrystals, moment_power::Integer)
-    offset_power = seed_description.weighting === :volume ? -3 : 0
-    return _seed_integral(seed_description, moment_power + offset_power) /
-           _seed_integral(seed_description, offset_power)
+"""
+    _seed_raw_moment(seed, moment_power)
+
+Normalised number moment `E_n[L^moment_power]` of the seed population (m^k).
+"""
+function _seed_raw_moment(seed_description::DistributionInitialCrystals, moment_power::Integer)
+    density_power = seed_description.number_density_power
+    return _seed_integral(seed_description, moment_power + density_power) /
+           _seed_integral(seed_description, density_power)
 end
 
 # Normalised density adapter for general volume-weighted sources.
@@ -128,80 +115,60 @@ For a volume-weighted lognormal the conversion is analytic; other distributions
 use a normalised density adapter with checked improper integrals.
 """
 function number_weighted(seed_description::DistributionInitialCrystals)
-    seed_description.weighting === :number && return seed_description
-    length_distribution = seed_description.distribution
-    converted_distribution = if length_distribution isa LogNormal
-        log_location, log_width = Distributions.params(length_distribution)
-        LogNormal(log_location - 3 * log_width^2, log_width)
-    else
-        NumberWeightedDistribution(length_distribution, _seed_integral(seed_description, -3))
-    end
-    return DistributionInitialCrystals(converted_distribution;
+    seed_description.number_density_power == 0 && return seed_description
+    return DistributionInitialCrystals(
+        _number_weighted_distribution(seed_description.distribution, seed_description);
         mass_concentration = seed_description.mass_concentration,
         quadrature_rtol = seed_description.quadrature_rtol,
         mass_loss_tolerance = seed_description.mass_loss_tolerance)
 end
 
-_validate_initial_crystals(seed_description::DistributionInitialCrystals) = seed_description
-function _initial_crystal_distribution_model(seed_description::DistributionInitialCrystals)
-    offset_power = seed_description.weighting === :volume ? -3 : 0
-    density_normalisation = _seed_integral(seed_description, offset_power)
-    return (; raw_moment = moment_power -> _seed_number_moment(seed_description, moment_power),
-        density = crystal_length -> crystal_length > 0 ?
-            pdf(seed_description.distribution, crystal_length) * crystal_length^offset_power /
-                density_normalisation : 0.0)
+function _number_weighted_distribution(length_distribution::LogNormal, seed_description)
+    log_location, log_width = Distributions.params(length_distribution)
+    return LogNormal(log_location - 3 * log_width^2, log_width)
 end
+_number_weighted_distribution(length_distribution, seed_description) =
+    NumberWeightedDistribution(length_distribution, _seed_integral(seed_description, -3))
+
+_validate_initial_crystals(seed_description::DistributionInitialCrystals) = seed_description
 
 """`seed_domain_diagnostics(problem, seed)` reports omitted number and mass fractions."""
-function seed_domain_diagnostics(configured_run::CrystallisationProblem,
-        seed_description::DistributionInitialCrystals)
-    configured_run.solver isa AbstractDiscretisedSolver ||
-        return (; omitted_number_fraction = 0.0, omitted_mass_fraction = 0.0)
-    offset_power = seed_description.weighting === :volume ? -3 : 0
-    lower_length, upper_length = configured_run.solver.lmin, configured_run.solver.lmax
-    number_fraction = _seed_integral(seed_description, offset_power, lower_length, upper_length) /
-        _seed_integral(seed_description, offset_power)
-    mass_fraction = _seed_integral(seed_description, 3 + offset_power, lower_length, upper_length) /
-        _seed_integral(seed_description, 3 + offset_power)
+seed_domain_diagnostics(configured_run::CrystallisationProblem,
+                        seed_description::DistributionInitialCrystals) =
+    _seed_domain_diagnostics(configured_run.solver, seed_description)
+
+_seed_domain_diagnostics(solver::AbstractMomentSolver, seed_description) =
+    (; omitted_number_fraction = 0.0, omitted_mass_fraction = 0.0)
+function _seed_domain_diagnostics(solver::AbstractDiscretisedSolver, seed_description)
+    density_power = seed_description.number_density_power
+    lower_length, upper_length = solver.lmin, solver.lmax
+    number_fraction = _seed_integral(seed_description, density_power, lower_length, upper_length) /
+        _seed_integral(seed_description, density_power)
+    mass_fraction = _seed_integral(seed_description, 3 + density_power, lower_length, upper_length) /
+        _seed_integral(seed_description, 3 + density_power)
     return (; omitted_number_fraction = max(0.0, 1 - number_fraction),
         omitted_mass_fraction = max(0.0, 1 - mass_fraction))
 end
 
-function _initial_mesh_population(configured_run::CrystallisationProblem,
+function _seed_population(solver::AbstractDiscretisedSolver, configured_run::CrystallisationProblem,
         seed_description::DistributionInitialCrystals)
-    domain_report = seed_domain_diagnostics(configured_run, seed_description)
+    domain_report = _seed_domain_diagnostics(solver, seed_description)
     domain_report.omitted_mass_fraction <= seed_description.mass_loss_tolerance ||
         throw(ArgumentError("Seed outside mesh: $(domain_report.omitted_number_fraction) number fraction, " *
             "$(domain_report.omitted_mass_fraction) mass fraction; enlarge the mesh or explicitly truncate."))
-    offset_power = seed_description.weighting === :volume ? -3 : 0
+    density_power = seed_description.number_density_power
     number_scale = seed_description.mass_concentration /
         (configured_run.crystal_density * configured_run.volume_shape_factor *
-            _seed_integral(seed_description, 3 + offset_power))
-    configured_solver = configured_run.solver
-    return [number_scale * _seed_integral(seed_description, offset_power,
-        configured_solver.cell_face[cell_index], configured_solver.cell_face[cell_index + 1]) /
-        configured_solver.cell_dL for cell_index in eachindex(configured_solver.cell_centre)]
+            _seed_integral(seed_description, 3 + density_power))
+    return [number_scale * _seed_integral(seed_description, density_power,
+        solver.cell_face[cell_index], solver.cell_face[cell_index + 1]) /
+        solver.cell_dL for cell_index in eachindex(solver.cell_centre)]
 end
 
-function _checked_seed_description(seed_description::LogNormalInitialCrystals)
-    _validate_initial_crystals(seed_description)
-    seed_description.d43 == 0 && return seed_description
-    log_width = log(seed_description.geometric_std)
-    return DistributionInitialCrystals(LogNormal(log(seed_description.d43) - 3.5 * log_width^2, log_width);
-        mass_concentration = seed_description.mass_concentration)
+function _resolved_condition_value(seed_description::DistributionInitialCrystals, observation_lookup)
+    seed_description.mass_concentration isa FromObservation || return seed_description
+    resolved_mass = observation_lookup(seed_description.mass_concentration.observable_name)
+    return DistributionInitialCrystals(seed_description.distribution,
+        Float64(_validate_seed_mass(resolved_mass)), seed_description.number_density_power,
+        seed_description.quadrature_rtol, seed_description.mass_loss_tolerance, seed_description.d43)
 end
-function _checked_seed_description(seed_description::GaussianInitialCrystals)
-    _validate_initial_crystals(seed_description)
-    seed_description.d43 == 0 && return seed_description
-    seed_location = _gaussian_mean_for_d43(seed_description.d43, seed_description.standard_deviation)
-    return DistributionInitialCrystals(truncated(Normal(seed_location, seed_description.standard_deviation), 0, Inf);
-        mass_concentration = seed_description.mass_concentration)
-end
-_checked_seed_description(seed_description::DistributionInitialCrystals) = seed_description
-
-_resolved_condition_value(seed_description::DistributionInitialCrystals, observation_lookup) =
-    seed_description.mass_concentration isa FromObservation ?
-        DistributionInitialCrystals(seed_description.distribution;
-            mass_concentration = observation_lookup(seed_description.mass_concentration.observable_name),
-            weighting = seed_description.weighting, quadrature_rtol = seed_description.quadrature_rtol,
-            mass_loss_tolerance = seed_description.mass_loss_tolerance) : seed_description
