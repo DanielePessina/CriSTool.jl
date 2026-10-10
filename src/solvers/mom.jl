@@ -138,11 +138,11 @@ function crystallisation_odeproblem(solver::MoM, CryProblem::CrystallisationProb
     n_states = moment_count(solver) + _operation_state_count(CryProblem.operation) +
                length(propertynames(CryProblem.initial_solvent_state))
     u0_typed = SVector(ntuple(k -> u0_vec[k], Val(n_states)))
-    ODEprob = ODEProblem(MoM_model,
-                         u0_typed,
-                         (saveat[1], saveat[end]),
-                         kinetic_values;
-                         callback = _mom_extinction_callback(CryProblem))
+    ODEprob = ODEProblem{false}(MoM_model,
+                                u0_typed,
+                                (saveat[1], saveat[end]),
+                                kinetic_values;
+                                callback = _mom_extinction_callback(CryProblem))
     return (ODEprob, _timestepping_algorithm(solver, Tsit5()))
 end
 

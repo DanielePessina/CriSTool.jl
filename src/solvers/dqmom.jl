@@ -310,11 +310,11 @@ function crystallisation_odeproblem(solver::DQMOM, problem::CrystallisationProbl
     DQMOM_model = (state, p, time) ->
         _dqmom_rhs(problem, state, p, time, feed_population, quadrature_count_value)
     initial_state = SVector(ntuple(index -> initial_values[index], Val(length(initial_values))))
-    ode_problem = ODEProblem(DQMOM_model,
-                             initial_state,
-                             (saveat[1], saveat[end]),
-                             parameters;
-                             callback = _dqmom_boundary_callback(problem))
+    ode_problem = ODEProblem{false}(DQMOM_model,
+                                    initial_state,
+                                    (saveat[1], saveat[end]),
+                                    parameters;
+                                    callback = _dqmom_boundary_callback(problem))
     return ode_problem, _timestepping_algorithm(solver, Tsit5())
 end
 

@@ -1063,13 +1063,14 @@ function crystallisation_odeproblem(solver::QMOM, problem::CrystallisationProble
     element_type = promote_type(eltype(kinetic_values), Float64)
     initial_values = element_type.(_get_initial_state(problem))
     initial_state = SVector(ntuple(index -> initial_values[index], Val(n_states)))
-    ode_problem = ODEProblem(QMOM_model,
-                             initial_state,
-                             (saveat[1], saveat[end]),
-                             parameters;
-                             callback = CallbackSet(_qmom_extinction_callback(problem),
-                                                    _qmom_vanishing_node_callback(problem,
-                                                                                  moment_count_value)))
+    ode_problem = ODEProblem{false}(QMOM_model,
+                                    initial_state,
+                                    (saveat[1], saveat[end]),
+                                    parameters;
+                                    callback = CallbackSet(
+                                        _qmom_extinction_callback(problem),
+                                        _qmom_vanishing_node_callback(problem,
+                                                                      moment_count_value)))
     return ode_problem, _timestepping_algorithm(solver, Tsit5())
 end
 
