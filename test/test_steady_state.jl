@@ -42,14 +42,17 @@ end
 @testset "Steady-state MSMPR operation contract" begin
     washed_out_problem = steady_state_test_problem()
     washed_out = solve_steadystate(washed_out_problem;
-                                   relaxation_horizon = 400.0,
-                                   autonomous = true)
+        options = SteadyStateOptions(relaxation_horizon = 400.0, autonomous = true))
 
     @test washed_out isa CrystallisationSteadyStateSolution
     @test washed_out.success
-    @test washed_out.converged
+    @test washed_out.diagnostics.converged
     @test CriSTool.OrdinaryDiffEq.SciMLBase.successful_retcode(washed_out.retcode)
-    @test washed_out.time[end] > 0.0
+    @test washed_out.time > 0.0
+    # Property access gives equilibrium scalars; the one-sample solver result is kept.
+    @test washed_out.concentration ≈ 2.0 rtol = 1e-8
+    @test washed_out.solution.concentration == [washed_out.concentration]
+    @test washed_out.solvent_state.concentration == washed_out.concentration
     @test observable_values(washed_out, :concentration) ≈ [2.0] rtol = 1e-8
     @test observable_values(washed_out, :volume) == [2.0]
     @test state_vars(washed_out).concentration ≈ [2.0] rtol = 1e-8
@@ -57,17 +60,17 @@ end
     @test hasproperty(size_metrics(washed_out), :d43)
     @test washed_out.hydraulics ==
           (; volume = 2.0, inflow = 0.2, outflow = 0.2, residence_time = 10.0)
-    @test washed_out.product_dissolved_solute_flow ≈ 0.4 rtol = 1e-8
-    @test washed_out.product_solid_mass_flow == 0.0
+    @test washed_out.product.dissolved_solute_flow ≈ 0.4 rtol = 1e-8
+    @test washed_out.product.solid_mass_flow == 0.0
     @test abs(washed_out.diagnostics.total_api_balance.total_api_residual) < 1e-9
     @test length(washed_out.residual) == length(washed_out.final_state)
     @test length(observable_values(washed_out, :d43)) == 1
 
     minimum_horizon_result = solve_steadystate(washed_out_problem;
-        relaxation_horizon = 400.0, minimum_relaxation = 250.0,
-        autonomous = true)
+        options = SteadyStateOptions(relaxation_horizon = 400.0, minimum_relaxation = 250.0,
+                                     autonomous = true))
     @test minimum_horizon_result.success
-    @test minimum_horizon_result.time[end] >= 250.0
+    @test minimum_horizon_result.time >= 250.0
 
     batch_problem = CriSTool._copy_crystallisation_problem(
         washed_out_problem; operation = BatchOperation())
@@ -84,13 +87,16 @@ end
     opaque_profile_problem = steady_state_test_problem(operation = time_profile_operation)
     @test_throws ArgumentError solve_steadystate(opaque_profile_problem)
     @test solve_steadystate(opaque_profile_problem;
-                            relaxation_horizon = 400.0,
-                            autonomous = true).success
+        options = SteadyStateOptions(relaxation_horizon = 400.0, autonomous = true)).success
 
+    @test_throws ArgumentError SteadyStateOptions(relaxation_horizon = 10.0,
+                                                  minimum_relaxation = 10.1)
+    @test_throws ArgumentError SteadyStateOptions(residual_reltol = 0.0, residual_abstol = 0.0)
+    @test_throws ArgumentError SteadyStateOptions(balance_reltol = -1.0)
+    @test_throws ArgumentError SteadyStateOptions(residual_scales = [1.0, 0.0])
+    # The default horizon is 100 residence times (tau = 10 s here).
     @test_throws ArgumentError solve_steadystate(washed_out_problem;
-                                                 relaxation_horizon = 10.0,
-                                                 minimum_relaxation = 10.1,
-                                                 autonomous = true)
+        options = SteadyStateOptions(minimum_relaxation = 1_000.1, autonomous = true))
 
     seeded_feed_crystals = LogNormalInitialCrystals(
         mass_concentration = 0.1, d43 = 10e-6, geometric_std = 1.2)
@@ -111,8 +117,7 @@ end
     dqmom_problem = CriSTool._copy_crystallisation_problem(
         dqmom_problem; initial_state = seeded_state)
     dqmom_solution = solve_steadystate(dqmom_problem;
-                                       relaxation_horizon = 100.0,
-                                       autonomous = true)
+        options = SteadyStateOptions(relaxation_horizon = 100.0, autonomous = true))
     @test dqmom_solution.success
     @test length(dqmom_solution.residual) == length(dqmom_solution.final_state)
     @test length(observable_values(dqmom_solution, :d43)) == 1
@@ -125,8 +130,8 @@ end
         initial_state = [0.0, 0.0, 0.0, 0.0, 0.0, 2.0])
     short_relaxation_error = try
         solve_steadystate(population_residual_problem;
-            relaxation_horizon = 0.1, residual_reltol = 1e-12,
-            residual_abstol = 1e-14, autonomous = true)
+            options = SteadyStateOptions(relaxation_horizon = 0.1, residual_reltol = 1e-12,
+                                         residual_abstol = 1e-14, autonomous = true))
         nothing
     catch error_value
         error_value
@@ -134,7 +139,7 @@ end
     @test short_relaxation_error isa SteadyStateConvergenceError
     short_relaxation = short_relaxation_error.solution
     @test !short_relaxation.success
-    @test !short_relaxation.converged
+    @test !short_relaxation.diagnostics.converged
     @test maximum(abs, short_relaxation.residual[1:5]) > 0.0
     @test CriSTool.OrdinaryDiffEq.SciMLBase.successful_retcode(short_relaxation.retcode)
 end
@@ -147,8 +152,7 @@ end
         initial_concentration_value = 1.0,
         initial_state = [0.0, 0.0, 0.0, 0.0, 0.0, 1.0])
     ideal_solution = solve_steadystate(ideal_problem;
-                                       relaxation_horizon = 1_000.0,
-                                       autonomous = true)
+        options = SteadyStateOptions(relaxation_horizon = 1_000.0, autonomous = true))
 
     # Frozen closed-form raw-moment values for B=3e5 m⁻³s⁻¹,
     # G=2e-7 m/s, and tau=10 s from the September MSMPR plan.
@@ -156,11 +160,13 @@ end
     @test ideal_solution.success
     @test ideal_solution.final_state[1:5] ≈ expected_moments rtol = 2e-6
     @test observable_values(ideal_solution, :d43) ≈ [8.0e-6] rtol = 2e-6
-    @test ideal_solution.concentration[1] ≈ 1.0 - 1.597968e-7 rtol = 2e-6
-    @test ideal_solution.product_solid_mass_flow ≈
+    @test ideal_solution.d43 ≈ 8.0e-6 rtol = 2e-6
+    @test ideal_solution.d32 ≈ expected_moments[4] / expected_moments[3] rtol = 2e-6
+    @test ideal_solution.concentration ≈ 1.0 - 1.597968e-7 rtol = 2e-6
+    @test ideal_solution.product.solid_mass_flow ≈
           0.2 * 1370.0 * 0.81 * expected_moments[4] rtol = 2e-6
-    @test ideal_solution.product_dissolved_solute_flow ≈
-          0.2 * ideal_solution.concentration[1] rtol = 1e-12
+    @test ideal_solution.product.dissolved_solute_flow ≈
+          0.2 * ideal_solution.concentration rtol = 1e-12
     @test ideal_solution.diagnostics.total_api_balance.relative_error < 1e-5
     @test ideal_solution.diagnostics.scaled_residual_norm <=
           ideal_solution.diagnostics.residual_limit
@@ -168,9 +174,8 @@ end
     exhausted_error = try
         solve_steadystate(ideal_problem;
             initial_guess = [0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
-            relaxation_horizon = 0.01,
-            residual_reltol = 1e-12, residual_abstol = 1e-14,
-            autonomous = true)
+            options = SteadyStateOptions(relaxation_horizon = 0.01,
+                residual_reltol = 1e-12, residual_abstol = 1e-14, autonomous = true))
         nothing
     catch error_value
         error_value
@@ -178,7 +183,7 @@ end
     @test exhausted_error isa SteadyStateConvergenceError
     exhausted = exhausted_error.solution
     @test !exhausted.success
-    @test !exhausted.converged
+    @test !exhausted.diagnostics.converged
     @test length(observable_values(exhausted, :concentration)) == 1
 end
 
@@ -190,9 +195,8 @@ end
             feed_concentration = 1.0,
             initial_concentration_value = 1.0,
             initial_state = [0.0, 0.0, 0.0, 0.0, 0.0, 1.0])
-        return only(observable_values(solve_steadystate(
-            gradient_problem; relaxation_horizon = 1_000.0,
-            autonomous = true), :d43))
+        return solve_steadystate(gradient_problem;
+            options = SteadyStateOptions(relaxation_horizon = 1_000.0, autonomous = true)).d43
     end
 
     autodiff_gradient = ForwardDiff.derivative(steady_d43_for_growth, 2e-7)
@@ -217,8 +221,8 @@ end
             ode_problem; p = candidate_parameters)
         steady_result = CriSTool._solve_steadystate_ode(
             template_problem, candidate_ode_problem, algorithm;
-            steady_options = (; relaxation_horizon = 1_000.0,
-                               autonomous = true))
+            steady_options = SteadyStateOptions(relaxation_horizon = 1_000.0,
+                                                autonomous = true))
         return only(observable_values(steady_result, :d43))
     end
 
@@ -238,12 +242,13 @@ end
         (numerical_state, simulation_time, integrator) -> 0.5 <= simulation_time < 0.7,
         integrator -> nothing; save_positions = (true, true))
     event_equilibrium = solve_steadystate(event_equilibrium_problem;
-        minimum_relaxation = 2.0, relaxation_horizon = 5.0, autonomous = true,
+        options = SteadyStateOptions(minimum_relaxation = 2.0, relaxation_horizon = 5.0,
+                                     autonomous = true),
         callback_factory = saved_event_factory,
         solve_options = (; dt = 0.1, adaptive = false))
     @test event_equilibrium.success
-    @test length(event_equilibrium.time) == 1
-    @test only(event_equilibrium.time) >= 2.0
-    @test only(event_equilibrium.concentration) == 2.0
+    @test length(event_equilibrium.solution.time) == 1
+    @test event_equilibrium.time >= 2.0
+    @test event_equilibrium.concentration == 2.0
     @test event_equilibrium.final_state == vcat(zeros(5), 2.0)
 end

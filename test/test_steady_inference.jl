@@ -68,7 +68,7 @@ end
     # micrometres in six seconds. The first is outside the declared support;
     # the ODE is finite, but a physical DQMOM result cannot be reconstructed.
     @test_throws DomainError solve_steadystate(lower_boundary_problem;
-        relaxation_horizon = 6.0, autonomous = true)
+        options = SteadyStateOptions(relaxation_horizon = 6.0, autonomous = true))
     @test loss(mae(), lower_boundary_setup, lower_boundary_parameters) == 1_000_000.0
     failed_candidate = CriSTool._solve_prepared(
         only(lower_boundary_setup.prepared), lower_boundary_parameters)
@@ -95,13 +95,14 @@ end
         kinetics_growthfunction = growth_dissolution(), parameterset_growth = [1e-6, 0.0, 1.0],
         operation = MSMPROperation(volume = 2.0, inflow = 0.2,
             feed = CrystallisationFeed(concentration = 0.1)))
-    extinction_equilibrium = solve_steadystate(extinction_problem; relaxation_horizon = 1000.0)
+    extinction_equilibrium = solve_steadystate(extinction_problem;
+        options = SteadyStateOptions(relaxation_horizon = 1000.0))
     @test extinction_equilibrium.success
-    @test length(extinction_equilibrium.time) == 1
-    @test only(extinction_equilibrium.concentration) ≈ 0.1 atol = 2e-11
+    @test length(extinction_equilibrium.solution.time) == 1
+    @test extinction_equilibrium.concentration ≈ 0.1 atol = 2e-11
     @test extinction_equilibrium.final_state[1:5] == zeros(5)
-    @test extinction_equilibrium.product_solid_mass_flow == 0.0
-    @test extinction_equilibrium.product_dissolved_solute_flow ≈ 0.02 atol = 4e-12
+    @test extinction_equilibrium.product.solid_mass_flow == 0.0
+    @test extinction_equilibrium.product.dissolved_solute_flow ≈ 0.02 atol = 4e-12
     extinction_experiment = CrystallisationExperiment(;
         observables = (; concentration = Observable(time = [300.0], mean = [0.1], variance = 0.01)),
         temperature = 300.0, exp_id = 821)
