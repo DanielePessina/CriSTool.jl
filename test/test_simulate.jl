@@ -65,8 +65,7 @@ end
     for seed_description in (lognormal_seed, gaussian_seed)
         for (solver, mass_rtol, d43_rtol) in ((MoM(), 1e-12, 1e-12), (QMOM(), 1e-10, 1e-10), (DQMOM(), 1e-10, 1e-10),
                 (simulate_mesh_solvers[1], 5e-3, 5e-2), (simulate_mesh_solvers[2], 5e-3, 5e-2))
-            # Zero speed keeps the compiled translation RHS but freezes the seed;
-            # QMOM requires two save points.
+            # Zero speed keeps the compiled translation RHS but freezes the seed.
             seeded_problem = CrystallisationProblem(fixture_translation_model(speed = 0.0),
                 RunConditions(temperature = 293.15, concentration = 20.0, crystals = seed_description); solver)
             seeded_start = simulate(seeded_problem; saveat = [0.0, 1.0])
@@ -101,6 +100,13 @@ end
               CriSTool._get_initial_state(CrystallisationProblem(fixture_translation_model(),
                   distribution_conditions(lognormal_seed); solver))
     end
+
+    # A single save time returns the initial state on every moment solver.
+    single_save_start = simulate(fixture_translation_model(), fixture_seeded_conditions();
+        solver = QMOM(), saveat = [0.0])
+    @test single_save_start.time == [0.0]
+    @test single_save_start.concentration == [20.0]
+    @test single_save_start.d43 ≈ [fixture_translation_d43(0.0)] rtol = 1e-10
 
     # An empty seed (zero mass) is a valid empty population.
     empty_seed_start = simulate(fixture_translation_model(), RunConditions(temperature = 293.15, concentration = 18.0,

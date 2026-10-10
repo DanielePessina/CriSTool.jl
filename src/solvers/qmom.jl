@@ -768,8 +768,6 @@ end
 """Construct the QMOM ODE problem and selected time-stepping algorithm."""
 function crystallisation_odeproblem(solver::QMOM, problem::CrystallisationProblem, saveat, kinetic_values)
     _validate_qmom_problem(problem)
-    length(saveat) >= 2 ||
-        throw(ArgumentError("saveat must contain at least two time points."))
     n_moments = moment_count(problem.solver)
     n_solvent = length(propertynames(problem.initial_solvent_state))
     n_states = n_moments + _operation_state_count(problem.operation) + n_solvent
