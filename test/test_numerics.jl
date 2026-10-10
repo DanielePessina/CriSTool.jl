@@ -129,7 +129,7 @@ end
 
     # Constant growth on M_k = 2·(1e-6)^k: dM_k/dt = k G M_{k-1}.
     growth_source = CriSTool._qmom_scalar_growth_moment_source(
-        [2.0 * 1e-6^order for order in 0:5], 3.0e-9, 0.0, 5)
+        CriSTool.SVector{6}(2.0 * 1e-6^order for order in 0:5), 3.0e-9, 0.0)
     @test growth_source[1:4] ≈ [0.0, 6.0e-9, 12.0e-15, 18.0e-21]
 
     # DQMOM normalised weights (0.25, 0.75), pair scale 1e12: total collision
