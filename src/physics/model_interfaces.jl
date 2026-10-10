@@ -14,6 +14,19 @@ fluxlimiter_ospre(gradient_ratio) = gradient_ratio <= zero(gradient_ratio) ?
     zero(gradient_ratio) :
     1.5 * (gradient_ratio^2 + gradient_ratio) / (gradient_ratio^2 + gradient_ratio + 1)
 
+"""
+    _inactive_rate(parameters, rate_inputs...)
+
+Zero rate of a kinetic law below its activation threshold, typed like the
+active branch. A literal `0.0` would make the law return
+`Union{Float64, Dual}` under ForwardDiff parameters, which type-destabilises
+every solver right-hand side that calls it.
+"""
+@inline _inactive_rate(parameters, rate_inputs...) =
+    zero(promote_type(eltype(parameters), map(_rate_input_type, rate_inputs)...))
+_rate_input_type(rate_input::Type) = rate_input
+_rate_input_type(rate_input) = typeof(rate_input)
+
 @inline _named_params(model, p::AbstractVector) = ComponentArray(p, paramaxis(model))
 @inline _named_params(_, p::ComponentArrays.ComponentArray) = p
 
