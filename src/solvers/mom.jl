@@ -1,18 +1,4 @@
-"""
-    _simulatecrystallisation(CryProblem::CrystallisationProblem{..., MoM, ...}, saveat) -> CrystallisationMoMSolution
-
-Simulate crystallisation using Method of Moments solver.
-
-Internal function that solves the moment equations for nucleation and growth
-without aggregation or breakage.
-
-# Arguments
-- `CryProblem`: Crystallisation problem with MoM solver
-- `saveat`: Time points at which to save solution
-
-# Returns
-- `CrystallisationMoMSolution` containing time, concentration, and moment-derived sizes
-"""
+"""Method-of-moments RHS for scalar nucleation and growth."""
 @inline function _mom_rhs(CryProblem, scalar_growth_rate, B, solvent_rates,
                           u::SVector{N}) where {N}
     n_population = _population_state_count(CryProblem.solver)
@@ -195,17 +181,8 @@ function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, Gr
                         "use FiniteVol or WENO."))
 end
 
-function _wrap_solution(CryProblem::CrystallisationProblem{NuclF, GrF, nobreakage,
-                                                           noaggregation, MoM,
-                                                           NuP, GrP, BrP, AggP,
-                                                           TP},
-                        sol) where {NuclF <: AbstractNucleationFunction,
-                                    GrF <: AbstractGrowthFunction,
-                                    NuP <: AbstractVector{<:Real},
-                                    GrP <: AbstractVector{<:Real},
-                                    BrP <: AbstractVector{<:Real},
-                                    AggP <: AbstractVector{<:Real},
-                                    TP <: AbstractTemperature}
+function _wrap_solution(CryProblem::CrystallisationProblem{<:Any, <:Any, <:Any, <:Any, MoM},
+                        sol)
     final_state = collect(sol[:, end])
 
     n_mom = CryProblem.solver.nmoments
@@ -239,28 +216,3 @@ function _wrap_solution(CryProblem::CrystallisationProblem{NuclF, GrF, nobreakag
                                       _reactor_solution_state(CryProblem, sol))
 end
 
-function _simulatecrystallisation(CryProblem::CrystallisationProblem{NuclF, GrF, nobreakage,
-                                                                     noaggregation, MoM,
-                                                                     NuP, GrP, BrP, AggP,
-                                                                     TP},
-                                  saveat; algorithm = nothing, solve_options::NamedTuple = (;),
-                                  callback_factory = nothing)::CrystallisationMoMSolution where {NuclF <:
-                                                                             AbstractNucleationFunction,
-                                                                             GrF <:
-                                                                             AbstractGrowthFunction,
-                                                                             NuP <:
-                                                                             AbstractVector{<:Real},
-                                                                             GrP <:
-                                                                             AbstractVector{<:Real},
-                                                                             BrP <:
-                                                                             AbstractVector{<:Real},
-                                                                             AggP <:
-                                                                             AbstractVector{<:Real},
-                                                                             TP <:
-                                                                             AbstractTemperature}
-    ODEprob, tstep_solver = crystallisation_odeproblem(CryProblem, saveat)
-    sol = _solve_crystallisation_ode(CryProblem, ODEprob,
-                                          algorithm === nothing ? tstep_solver : algorithm,
-                                          saveat; solve_options, callback_factory)
-    return _wrap_solution(CryProblem, sol)
-end

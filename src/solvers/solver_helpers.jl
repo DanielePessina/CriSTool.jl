@@ -407,3 +407,23 @@ function _solve_crystallisation_ode(problem::CrystallisationProblem, odeproblem,
     return solve(solve_problem, algorithm; selected_options..., abstol = abstol,
                  saveat = saveat, callback = solve_callback)
 end
+
+"""
+    _simulatecrystallisation(problem, saveat; algorithm=nothing,
+                             solve_options=(;), callback_factory=nothing)
+
+Solve `problem` at `saveat` with the solver selected by `problem.solver` and
+return its physical solution. Solver families provide the two hooks
+`crystallisation_odeproblem(problem, saveat) -> (odeproblem, default_algorithm)`
+and `_wrap_solution(problem, ode_solution)`.
+"""
+function _simulatecrystallisation(problem::CrystallisationProblem, saveat;
+                                  algorithm = nothing,
+                                  solve_options::NamedTuple = (;),
+                                  callback_factory = nothing)
+    ode_problem, default_algorithm = crystallisation_odeproblem(problem, saveat)
+    ode_solution = _solve_crystallisation_ode(problem, ode_problem,
+                                              something(algorithm, default_algorithm),
+                                              saveat; solve_options, callback_factory)
+    return _wrap_solution(problem, ode_solution)
+end
