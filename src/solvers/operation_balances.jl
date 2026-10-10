@@ -111,23 +111,12 @@ function _operation_feed_population(problem::CrystallisationProblem)
     operation = problem.operation
     _validate_operation(problem, operation)
     _validate_feed_transport_hook(problem, operation)
-    operation isa BatchOperation && return nothing
-    population_count = _population_state_count(problem.solver)
-    feed_crystals = operation.feed.crystals
-    if isnothing(feed_crystals) || feed_crystals.d43 == 0
-        return zeros(population_count)
-    end
-    _validate_initial_crystal_domain(problem, feed_crystals.d43)
-    if problem.solver isa DQMOM
-        # The direct-quadrature adapter requires physical feed moments, not
-        # the weights/nodes representation used for public initial states.
-        return _initial_moment_population(problem, feed_crystals, 2 * problem.solver.nquadrature)
-    elseif problem.solver isa AbstractMomentSolver
-        return _initial_moment_population(problem, feed_crystals, population_count)
-    else
-        return _initial_mesh_population(problem, feed_crystals)
-    end
+    return _operation_feed_population(operation, problem)
 end
+_operation_feed_population(operation::BatchOperation, problem::CrystallisationProblem) = nothing
+_operation_feed_population(operation::Union{MSMPROperation, FedBatchOperation},
+                           problem::CrystallisationProblem) =
+    _feed_population(problem.solver, problem, operation.feed.crystals)
 
 """
     _operation_transport_context(problem, numerical_state, simulation_time)
@@ -228,8 +217,8 @@ Finite-volume and WENO results include signed lower/upper size-boundary
 solid-mass flow in kg/s. A positive flow is outward from the represented size
 domain.
 """
-reactor_vars(solution::AbstractSolution) = hasproperty(solution, :reactor_state) ?
-    solution.reactor_state : (;)
+reactor_vars(solution::CrystallisationSolution) = solution.reactor_state
+reactor_vars(solution::AbstractSolution) = (;)
 _reactor_solution_state(problem, ode_solution, ::BatchOperation) = (;)
 _reactor_solution_state(problem, ode_solution, operation::MSMPROperation) =
     (; volume = fill(operation.volume, length(ode_solution.t)))

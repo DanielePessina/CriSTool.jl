@@ -143,7 +143,7 @@ function run_ensemble(parameter_samples::AbstractMatrix, setup::LossSetup;
             size_metrics(reference_solution))
         builtin_names = Tuple(observable_name for observable_name in propertynames(named_physical_values)
             if getproperty(named_physical_values, observable_name) isa AbstractVector &&
-               length(getproperty(named_physical_values, observable_name)) == length(reference_solution.time))
+               length(getproperty(named_physical_values, observable_name)) == length(_projection_trajectory(reference_solution).time))
         prediction_names = observables === nothing ?
             Tuple(unique((builtin_names...,
                 propertynames(prepared_experiment.problem.initial_solvent_state)...,

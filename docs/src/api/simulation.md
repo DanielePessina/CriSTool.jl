@@ -16,11 +16,13 @@ required_properties
 named_parameters
 simulate
 runsimulation
-CrystallisationFVSolution
-CrystallisationMoMSolution
-CrystallisationQMOMSolution
-CrystallisationDQMOMSolution
+CrystallisationSolution
+AbstractPopulationTrajectory
+MeshPopulation
+MomentPopulation
+QuadraturePopulation
 CrystallisationSteadyStateSolution
+equilibrium
 SteadyStateConvergenceError
 AbstractSolution
 solve_steadystate
@@ -32,8 +34,6 @@ DistributionInitialCrystals
 number_weighted
 seed_domain_diagnostics
 initial_state_from_characteristics
-get_characteristic_size
-getmomentsizes
 state_vars
 size_metrics
 observable_values
@@ -75,8 +75,8 @@ the process includes coupled variables such as pH or volume.
 `solve_steadystate(problem)` is the explicit steady-state route for a constant,
 autonomous `MSMPROperation`. It relaxes the generated dynamics until the scaled
 residual covers every population and solvent-state component, then returns a
-`CrystallisationSteadyStateSolution`: scalar observables (`steady.concentration`,
-`steady.d43`), product flows in `steady.product`, the full residual, the solver
+`CrystallisationSteadyStateSolution`: scalar equilibrium values through
+`equilibrium(steady)` (`equilibrium(steady).concentration`, `.d43`), product flows in `steady.product`, the full residual, the solver
 retcode, and physical and mass-balance diagnostics in `steady.diagnostics`.
 Settings are passed as `options = SteadyStateOptions(...)`. If a finite
 relaxation horizon ends before convergence or any physical check fails,

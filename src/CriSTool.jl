@@ -60,9 +60,9 @@ const CRISTOOL_MAX_OPTIMISER_CALLS = 1e18
 const CRISTOOL_PRIOR_PLOT_SAMPLES = 2^18
 
 ## Export stuff
-export CrystallisationFVSolution, CrystallisationMoMSolution,
-       CrystallisationQMOMSolution, CrystallisationDQMOMSolution,
-       CrystallisationSteadyStateSolution, SteadyStateConvergenceError, SteadyStateOptions,
+export CrystallisationSolution, AbstractPopulationTrajectory, MeshPopulation,
+       MomentPopulation, QuadraturePopulation,
+       CrystallisationSteadyStateSolution, equilibrium, SteadyStateConvergenceError, SteadyStateOptions,
        CrystallisationProblem
 export Observable, ObservableColumns, CrystallisationExperiment, AbstractExperiment,
        initial_concentration
@@ -97,7 +97,6 @@ export AbstractAggregationFunction, AbstractBreakageFunction, nobreakage,
 export runsimulation, paramaxis, crystallisation_odeproblem,
        crystallisation_solution,
        solve_steadystate,
-       get_characteristic_size, getmomentsizes,
        initial_state_from_characteristics
 export AbstractPELossFunction, AbstractVarianceModel, MeasuredVariance, RelativeVariance,
        logMLE, mae, loss
@@ -107,8 +106,7 @@ export experiments_from_table, load_measurements,
 export AbstractSolver, AbstractMomentSolver, FiniteVol, MoM, QMOM, DQMOM, WENO,
        QMOMQuadrature, QMOMInversionDiagnostics, DQMOMProjectionDiagnostics,
        invert_moments,
-       moment_order, moment_count, nmoments, quadrature, qmom_quadrature,
-       dqmom_quadrature,
+       moment_order, moment_count, quadrature,
        aggregation_moment_source, breakage_moment_source
 export AbstractABCSampler, ABCDESampler, ABCDETurnerSampler
 export PredictionEnsemble, prediction_summary
@@ -159,7 +157,6 @@ include("solvers/mom.jl")
 include("solvers/dqmom.jl")
 include("solvers/finite_volume.jl")
 include("solvers/weno.jl")
-include("solvers/runsimulation.jl")
 include("solvers/steady_state.jl")
 
 include("vendor/KissABC.jl")

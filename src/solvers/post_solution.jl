@@ -133,14 +133,7 @@ function quantilecalculator(cellcentre::AbstractVector{T},
     return quant_matrix
 end
 
-"""
-    _momentsizes(mesh, numberdensity)
-
-Compute the four moment-derived size metrics (d10, d32, d43, moment2) from a number-density
-matrix and mesh. Used by FV solvers at solution-construction time so that the resulting
-`CrystallisationFVSolution` carries these sizes as fields — the same way a
-`CrystallisationMoMSolution` does. Callers should not need this directly.
-"""
+"""Size ratio `numerator / denominator`, zero for a numerically empty population."""
 function _safe_moment_size_ratio(numerator, denominator, particle_count)
     isfinite(particle_count) ||
         throw(DomainError(particle_count,
@@ -158,6 +151,12 @@ function _safe_moment_size_ratio(numerator, denominator, particle_count)
     return numerator / denominator
 end
 
+"""
+    _momentsizes(mesh, numberdensity)
+
+Moment-derived size metrics (d10, d32, d43, moment2) of a mesh number-density
+matrix, computed once when a mesh solution is assembled.
+"""
 function _momentsizes(mesh::AbstractVector, numberdensity::AbstractMatrix)
     step_size = Base.step(mesh)
     n_columns = size(numberdensity, 2)
@@ -205,96 +204,66 @@ function _momentsizes(mesh::AbstractVector, numberdensity::AbstractMatrix)
     return (; d10, d32, d43, moment2)
 end
 
-function getmomentsizes(::CrystallisationProblem,
-                        solution::CrystallisationFVSolution)
-    return (d10 = solution.d10, d32 = solution.d32, d43 = solution.d43, moment2 = solution.moment2)
-end
 """
-    getmomentsizes(problem::CrystallisationProblem, solution::CrystallisationMoMSolution) -> NamedTuple
+    _raw_moment_size_metrics(moment_matrix)
 
-Extract characteristic crystal sizes from a Method of Moments solution.
-
-# Arguments
-- `problem::CrystallisationProblem`: The crystallisation problem (unused for MoM but kept for dispatch)
-- `solution::CrystallisationMoMSolution`: MoM simulation solution
-
-# Returns
-- `NamedTuple{(:d10, :d32, :d43, :moment2)}`: Named tuple with size metrics directly from solution
+Moment-ratio size metrics from a raw-moment matrix `(nmoments, nt)` whose row
+`k + 1` holds µk. A ratio whose numerator moment is not tracked is `NaN`.
 """
-function getmomentsizes(problem::CrystallisationProblem,
-                        solution::CrystallisationMoMSolution)
-    return (d10 = solution.d10, d32 = solution.d32, d43 = solution.d43, moment2 = solution.moment2)
+function _raw_moment_size_metrics(moment_matrix::AbstractMatrix)
+    tracked_moments, saved_count = size(moment_matrix)
+    untracked_ratio = fill(convert(eltype(moment_matrix), NaN), saved_count)
+    moment_ratio(numerator_row, denominator_row) = tracked_moments >= numerator_row ?
+        [_safe_moment_size_ratio(moment_matrix[numerator_row, saved_index],
+                                 moment_matrix[denominator_row, saved_index],
+                                 moment_matrix[1, saved_index]) for saved_index in 1:saved_count] :
+        copy(untracked_ratio)
+    return (; d10 = moment_ratio(2, 1), d32 = moment_ratio(4, 3), d43 = moment_ratio(5, 4),
+              moment2 = collect(view(moment_matrix, 3, :)))
 end
 
-"""
-    bisectionfinder(f::Function, a::Number, b::Number;
-                   tol::AbstractFloat=1e-10, maxiter::Integer=200)
-
-    Find the quantile with a bisection search of the cumulative density function.
-"""
-
-"""
-    get_characteristic_size(sol::AbstractSolution)
-
-Returns the main characteristic particle size from a simulation solution.
-- For `CrystallisationMoMSolution`, this is the final `d43`.
-- For `CrystallisationFVSolution`, this is the final `d50q`.
-"""
-get_characteristic_size(sol::CrystallisationMoMSolution) = sol.d43[end]
-get_characteristic_size(sol::CrystallisationFVSolution) = sol.d50q[end]
+"""Assemble a `CrystallisationSolution` from an ODE solution and its population."""
+function _crystallisation_solution(problem::CrystallisationProblem, ode_solution, population,
+                                   size_moments::NamedTuple, final_state, reactor_state::NamedTuple)
+    solvent_trajectories = _solvent_solution_state(problem, ode_solution)
+    return CrystallisationSolution(collect(ode_solution.t), solvent_trajectories.concentration,
+                                   population, size_moments.d10, size_moments.d32,
+                                   size_moments.d43, size_moments.moment2,
+                                   solvent_trajectories, reactor_state, final_state,
+                                   ode_solution.stats,
+                                   OrdinaryDiffEq.SciMLBase.successful_retcode(ode_solution.retcode))
+end
 
 """
-    time(sol::AbstractSolution) -> AbstractVector
+    state_vars(solution) -> NamedTuple
 
-Time grid of a solution.
+Named solvent-state and reactor trajectories (including `concentration`), plus
+the population arrays of the solver: `numberdensity`/`voldensity` (mesh ×
+time) for mesh solvers, `moments` for MoM, and `moments`/`nodes`/`weights`
+for QMOM and DQMOM.
 """
-time(sol::AbstractSolution) = sol.time
+state_vars(solution::CrystallisationSolution) =
+    merge(solution.solvent_state, solution.reactor_state, _population_vars(solution.population))
 
-
-"""
-    _size_trajectory(sol::AbstractSolution) -> AbstractVector
-
-Characteristic size trajectory: `d43` for MoM, `d50q` for discretised
-solutions (solver-type dispatch).
-"""
-_size_trajectory(sol::CrystallisationMoMSolution) = sol.d43
-_size_trajectory(sol::CrystallisationFVSolution) = sol.d50q
-
-"""
-    state_vars(sol::CrystallisationMoMSolution) -> NamedTuple
-
-Named solvent-state variables of a MoM solution, including `concentration`
-and any additional coupled solvent variables.
-"""
-state_vars(sol::CrystallisationMoMSolution) = merge(sol.solvent_state, reactor_vars(sol))
+_population_vars(population::MeshPopulation) =
+    (; numberdensity = population.numberdensity, voldensity = population.voldensity)
+_population_vars(population::MomentPopulation) = (; moments = population.moments)
+_population_vars(population::QuadraturePopulation) =
+    (; moments = population.moments, nodes = population.nodes, weights = population.weights)
 
 """
-    state_vars(sol::CrystallisationFVSolution) -> NamedTuple
+    size_metrics(solution) -> NamedTuple
 
-Named solvent-state variables of a discretised solution, plus `numberdensity`
- (mesh × time) and `voldensity` (mesh × time).
+Particle-size trajectories: `d10`, `d32`, `d43`, `moment2` for every solver,
+plus the volume quantiles `d10q`/`d50q`/`d90q` for mesh solvers.
 """
-state_vars(sol::CrystallisationFVSolution) = merge(sol.solvent_state, reactor_vars(sol),
-                                                   (; numberdensity = sol.numberdensity,
-                                                      voldensity = sol.voldensity))
+size_metrics(solution::CrystallisationSolution) =
+    merge((; d10 = solution.d10, d32 = solution.d32, d43 = solution.d43, moment2 = solution.moment2),
+          _population_size_metrics(solution.population))
 
-"""
-    size_metrics(sol::CrystallisationMoMSolution) -> NamedTuple
-
-Particle-size metrics of a MoM solution: `d10`, `d32`, `d43`, `moment2`.
-"""
-size_metrics(sol::CrystallisationMoMSolution) =
-    (; d10 = sol.d10, d32 = sol.d32, d43 = sol.d43, moment2 = sol.moment2)
-
-"""
-    size_metrics(sol::CrystallisationFVSolution) -> NamedTuple
-
-Particle-size metrics of a discretised solution: quantiles `d10q`/`d50q`/`d90q`
-plus `d10`/`d32`/`d43`.
-"""
-size_metrics(sol::CrystallisationFVSolution) =
-    (; d10q = sol.d10q, d50q = sol.d50q, d90q = sol.d90q,
-      d10 = sol.d10, d32 = sol.d32, d43 = sol.d43)
+_population_size_metrics(population::MeshPopulation) =
+    (; d10q = population.d10q, d50q = population.d50q, d90q = population.d90q)
+_population_size_metrics(population::AbstractPopulationTrajectory) = (;)
 
 """
     observable_values(sol::AbstractSolution, name::Symbol) -> AbstractArray

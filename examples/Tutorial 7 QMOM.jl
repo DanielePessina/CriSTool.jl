@@ -18,7 +18,7 @@ function main()
 
     final_rule = quadrature(solution, length(solution.time))
     println("QMOM success: ", solution.success)
-    println("Tracked raw moments: ", size(solution.moments, 1))
+    println("Tracked raw moments: ", size(solution.population.moments, 1))
     println("Final d43: ", round(solution.d43[end], sigdigits = 5), " m")
     println("Final nodes (m): ", round.(final_rule.nodes, sigdigits = 5))
     println("Final weights: ", round.(final_rule.weights, sigdigits = 5))
@@ -31,9 +31,9 @@ function main()
            color = :dodgerblue, label = "concentration")
     lines!(size_axis, solution.time ./ 60, 1e6 .* solution.d43,
            color = :crimson, label = "d43")
-    for node_index in axes(solution.quadrature_nodes, 1)
+    for node_index in axes(solution.population.nodes, 1)
         lines!(size_axis, solution.time ./ 60,
-               solution.quadrature_nodes[node_index, :] .* 1.0e6,
+               solution.population.nodes[node_index, :] .* 1.0e6,
                linestyle = :dash, label = "node $node_index")
     end
     axislegend(size_axis, position = :rb)

@@ -17,18 +17,25 @@ quadrature output.
 
 ## Outputs by solver
 
-- **MoM**: `concentration`, `d10`, `d32`, `d43`, `moment2`.
-- **QMOM**: `concentration`, raw `moments`, reconstructed
-  `quadrature_nodes`/`quadrature_weights`, and the moment-derived
-  `d10`, `d32`, `d43`, `moment2` metrics. A three-node QMOM evolves `M₀:M₅`.
-- **DQMOM**: `concentration`, physical quadrature `weights`/`nodes`, the
-  corresponding raw `moments`, projection diagnostics, and the same
-  `d10`, `d32`, `d43`, `moment2` metrics. A three-node DQMOM evolves six
-  direct population variables and represents `M₀:M₅`.
-- **FiniteVol/WENO**: `concentration`, `numberdensity`, `voldensity`,
-  volume-density quantiles `d10q`, `d50q`, `d90q`, **and** the
-  moment-derived sizes `d10`, `d32`, `d43`, `moment2` (computed once at
-  solve time so `sol.d43` works the same way as on a MoM solution).
+Every solver returns a `CrystallisationSolution`. The shared fields are
+`time`, `concentration`, `solvent_state`, `reactor_state`, the moment-derived
+sizes `d10`, `d32`, `d43`, `moment2`, `final_state`, `ode_stats` and
+`success`. The solver-specific data live in `solution.population`:
+
+- **MoM**: `MomentPopulation` with the raw `moments` (`µ0..µ_nmoments`).
+- **QMOM**: `QuadraturePopulation` with the raw `moments`, the reconstructed
+  quadrature `nodes`/`weights` and the inversion diagnostics. A three-node
+  QMOM evolves `M₀:M₅`.
+- **DQMOM**: `QuadraturePopulation` with the physical quadrature
+  `weights`/`nodes`, the corresponding raw `moments` and projection
+  diagnostics. A three-node DQMOM evolves six direct population variables and
+  represents `M₀:M₅`.
+- **FiniteVol/WENO**: `MeshPopulation` with `numberdensity`, `voldensity`
+  and the volume-density quantiles `d10q`, `d50q`, `d90q`.
+
+`state_vars(solution)` and `size_metrics(solution)` return the same data as
+named tuples, independently of the solver; `quadrature(solution, index)`
+returns one saved QMOM or DQMOM rule.
 
 ## Mesh storage
 
@@ -113,8 +120,8 @@ seeded_run = RunConditions(temperature = 293.15, concentration = 20.0,
 solution = simulate(growth_only_model, seeded_run;
     solver = DQMOM(nquadrature = 3), saveat = 0.0:3600.0:14400.0)
 
-solution.nodes[:, end]
-solution.weights[:, end]
+solution.population.nodes[:, end]
+solution.population.weights[:, end]
 solution.d43[end]
 ```
 
@@ -131,7 +138,7 @@ batch_run = RunConditions(temperature = 293.15, concentration = 18.0)
 solution = simulate(crystal_model, batch_run;
     solver = QMOM(nquadrature = 3), saveat = 0.0:3600.0:28800.0)
 
-@show solution.moments[:, end]
+@show solution.population.moments[:, end]
 @show quadrature(solution, length(solution.time)).nodes
 @show solution.d43[end]
 ```
@@ -153,13 +160,16 @@ sol_weno = simulate(crystal_model, batch_run;
 ## Overriding the time-stepper
 
 Override the ODE time-stepping algorithm by setting the solver's
-`timestepping_algorithm` field. Supported symbols include `:tsit5`,
-`:ssprk43`, `:kvaerno5`, and `:kencarp4`; `:auto` selects the solver-specific
-default.
+`timestepping_algorithm` field to an OrdinaryDiffEq algorithm instance, such
+as `Tsit5()`, `SSPRK43()`, `Kvaerno5()` or `KenCarp4()`. The default
+`nothing` selects the solver-specific algorithm. A per-call `algorithm`
+keyword of `simulate` takes precedence over both.
 
 ```julia
+using OrdinaryDiffEq: SSPRK43
+
 sol = simulate(crystal_model, batch_run;
     solver = FiniteVol(meshsize = 200, lmax = 50e-6,
-                       timestepping_algorithm = :ssprk43),
+                       timestepping_algorithm = SSPRK43()),
     saveat = 0.0:3600.0:28800.0)
 ```
