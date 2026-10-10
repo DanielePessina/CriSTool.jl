@@ -53,7 +53,7 @@ using Random
     optimizer_measurements = [CrystallisationExperiment(;
         observables = (; concentration = Observable(;
             time = [0.0, 30.0, 60.0], mean = [18.0, 17.8, 17.5],
-            variance = [0.01, 0.01, 0.01])), temperature = 295.0, exp_id = 921)]
+            variance = [0.01, 0.01, 0.01])), exp_id = 921, conditions = RunConditions(temperature = 295.0))]
     optimizer_lower = [12.0, 1.0, 1e-8, 1.0]
     optimizer_upper = [13.0, 2.0, 5e-8, 2.0]
     optimizer_loss = logMLE(; weighting = [1.0])

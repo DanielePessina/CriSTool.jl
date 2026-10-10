@@ -20,8 +20,7 @@
                                                     variance = fill(0.01, length(save_idx))),
                                                     d43 = Observable(; time = save_idx, mean = solution.d43,
                                                                       variance = fill(4e-12, length(save_idx)))),
-                                                    temperature = temperature,
-                                                    exp_id = 42)
+                                                    exp_id = 42, conditions = RunConditions(temperature = temperature))
 
     ensemble_samples = repeat(reshape(params, :, 1), 1, 2)
     ensemble = run_ensemble_fixed(ensemble_samples, nucl_CNT(), growth_empirical(),
@@ -94,8 +93,7 @@ end
                                                     variance = fill(0.01, length(save_idx))),
                                                     d43 = Observable(; time = save_idx, mean = solution.d43,
                                                                       variance = fill(4e-12, length(save_idx)))),
-                                                    temperature = temperature,
-                                                    exp_id = 42)
+                                                    exp_id = 42, conditions = RunConditions(temperature = temperature))
 
     mktempdir() do dir
         fig = CriSTool.plot_measurements_vs_simulation([measurement],
@@ -143,11 +141,10 @@ end
             nparticles = 16,
             generations = 2,
             saveplot = false,
-            confidenceinterval = 0.90,
+            target = 1e6,
             HPC = true,
             verbosity = 0,
             earlystop = false,
-            test = :wilks,
             K = 1,
             outputdir = dir,
         )

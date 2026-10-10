@@ -6,14 +6,14 @@ using JSON
                             variance = [0.1, 0.2, 0.3])
     d43 = Observable(; time = [3600.0], mean = [10.5e-6], variance = [2e-12])
     expt = CrystallisationExperiment(; observables = (; concentration = conc, d43 = d43),
-                                     temperature = 290.15, exp_id = 7)
+                                     conditions = RunConditions(temperature = 290.15), exp_id = 7)
 
     @test expt.observables.concentration === conc
     @test expt.observables.d43 === d43
     @test expt.observables.d43.time == [3600.0]
     @test expt.observables.d43.mean == [10.5e-6]
     @test initial_concentration(expt) == 14.0
-    @test expt.temperature == 290.15
+    @test expt.conditions.temperature == ConstantTemperature(290.15)
     @test expt.exp_id == 7
 
     # Observable invariants
@@ -31,8 +31,8 @@ end
 
     @test length(ms) == 7
     @test [m.exp_id for m in ms] == [3, 4, 5, 6, 7, 8, 9]
-    @test all(m.initial_crystals === nothing for m in ms)
-    @test [m.temperature for m in ms] == [290.15, 290.15, 294.15, 294.15, 294.15, 294.15, 294.15]
+    @test all(m.conditions.crystals === nothing for m in ms)
+    @test [m.conditions.temperature.value for m in ms] == [290.15, 290.15, 294.15, 294.15, 294.15, 294.15, 294.15]
 
     # Hand-checked from the sheet (Exp 3): 9 timepoints, initial conc = mean of
     # the three first-column replicates
@@ -73,8 +73,8 @@ end
           [0.0, 1800.0, 3600.0, 5400.0, 7200.0, 9000.0, 10800.0, 13500.0, 16200.0]
     @test measurements[1].observables.particle_size.time == [16200.0]
     @test measurements[1].observables.particle_size.mean[1] ≈ 9.2480539e-6
-    @test measurements[1].temperature == 290.15
-    @test measurements[1].initial_crystals === nothing
+    @test measurements[1].conditions.temperature.value == 290.15
+    @test measurements[1].conditions.crystals === nothing
     @test measurements[1].metadata.system == "Unseeded"
 end
 
@@ -144,7 +144,7 @@ end
         @test length(experiments) == 1
         @test experiments[1].observables.d43.time == [0.0, 3600.0]
         @test experiments[1].observables.d43.mean == [3e-6, 6e-6]
-        @test experiments[1].temperature == 294.15
+        @test experiments[1].conditions.temperature.value == 294.15
     end
 end
 
@@ -175,7 +175,7 @@ end
 
     custom = CrystallisationExperiment(;
         observables = (; pH = Observable(; time = [0.0, 1.0], mean = [7.0, 7.5])),
-        temperature = 290.15, exp_id = 99)
+        conditions = RunConditions(temperature = 290.15), exp_id = 99)
     custom_balanced = balance_variances([custom]; obs = :pH, min_rel_std_pc = 10)
     @test custom_balanced[1].observables.pH.variance ≈ [0.49, 0.5625]
 end

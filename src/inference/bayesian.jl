@@ -327,7 +327,7 @@ function ChainMeasurementPlots(chain, measurements::Vector{<:AbstractExperiment}
                                                  initial_concentration = initial_concentration(measurements[m]),
                                                  solver = solver,
                                                  save_idx = ensembleresults[m].time,
-                                                 temp_profile = ConstantTemperature(measurements[m].temperature)))
+                                                 temp_profile = measurements[m].conditions.temperature))
                          for m in eachindex(measurements)]
 
     plot_measurements_vs_ensemble(measurements, ensembleresults, optimal_solutions;

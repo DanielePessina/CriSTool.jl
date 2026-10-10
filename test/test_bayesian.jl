@@ -40,8 +40,7 @@ using JLD2
                                                                      mean = noisy_c,
                                                                      variance = σ2),
                                           d43 = Observable(; time = save_grid, mean = ref.d43,
-                                          variance = fill((1e-6)^2, length(save_grid)))),
-                                      temperature = 295.0, exp_id = 1)]
+                                          variance = fill((1e-6)^2, length(save_grid)))), exp_id = 1, conditions = RunConditions(temperature = 295.0))]
 
     prior = [TriangularDist(25.0, 50.0, 38.0), TriangularDist(0.0003, 0.001, 0.0006),
              TriangularDist(0.3e-9 / 60, 3e-9 / 60, 1e-9 / 60),
@@ -124,8 +123,8 @@ using JLD2
         result, metadata = CriSTool.ABCDE_Routine(
             lf, meas, optimal_parameters, abc_prior, nucl, gr, agg, br;
             solver = solver, nparticles = 8, generations = 1,
-            confidenceinterval = 0.5, saveplot = false,
-            verbosity = 0, HPC = true, test = :wilks)
+            target = 1e6, saveplot = false,
+            verbosity = 0, HPC = true)
         @test hasproperty(result, :P)
         @test metadata["res"] === result
         @test metadata["optimalparameters"] == optimal_parameters

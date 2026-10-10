@@ -465,13 +465,6 @@ function prepare_loss(configured_problems::AbstractVector{<:CrystallisationProbl
     all(paramaxis(configured) == parameter_axis for configured in configured_problems) ||
         throw(ArgumentError("Configured problems must share the same kinetic parameter axis."))
     prepared = map(zip(configured_problems, experiments)) do (configured, expt)
-        if !isnothing(expt.initial_crystals)
-            declared = initial_state_from_characteristics(configured, expt.initial_crystals)
-            population_range = _population_state_range(configured)
-            all(isapprox(declared[population_index], _get_initial_state(configured)[population_index];
-                         rtol = 1e-12, atol = 0.0) for population_index in population_range) || throw(ArgumentError(
-                "Experiment $(expt.exp_id) declares seeds conflicting with its configured problem."))
-        end
         observation_times = _loss_saveat(expt, configured.solver; require_multiple = false)
         saveat = if mode === :steady
             observation_times
@@ -668,30 +661,11 @@ function _configured_mh_algorithm(supplied_algorithm;
     return run_algorithm
 end
 
-function _MHoptimise(algo::Metaheuristics.Algorithm{<:Union{Metaheuristics.DE,
-                     Metaheuristics.SA, Metaheuristics.PSO}}, lossfunction,
+function _MHoptimise(algo::Metaheuristics.Algorithm, lossfunction,
                      problem::CrystallisationProblem, experiments, parameter_bounds)
     setup = prepare_loss(problem, experiments)
-    return _MHoptimise(algo, lossfunction, setup, parameter_bounds)
-end
-
-function _MHoptimise(algo::Metaheuristics.Algorithm{Metaheuristics.NSGA2}, lossfunction,
-                     problem::CrystallisationProblem, experiments, parameter_bounds)
-    setup = prepare_loss(problem, experiments)
-    return _MHoptimise(algo, lossfunction, setup, parameter_bounds)
-end
-
-function _MHoptimise(algo::Metaheuristics.Algorithm{<:Union{Metaheuristics.DE,
-                     Metaheuristics.SA, Metaheuristics.PSO}}, lossfunction,
-                     setup::LossSetup, parameter_bounds)
-    return optimize(parameters -> batchLF_procSO(lossfunction, setup, parameters),
-                    parameter_bounds, algo)
-end
-
-function _MHoptimise(algo::Metaheuristics.Algorithm{Metaheuristics.NSGA2}, lossfunction,
-                     setup::LossSetup, parameter_bounds)
-    return optimize(parameters -> batchLF_procMO(lossfunction, setup, parameters),
-                    parameter_bounds, algo)
+    batch_objective = algo.parameters isa Metaheuristics.NSGA2 ? batchLF_procMO : batchLF_procSO
+    return optimize(parameters -> batch_objective(lossfunction, setup, parameters), parameter_bounds, algo)
 end
 
 """
@@ -709,7 +683,7 @@ function _experiment_problem(problem::CrystallisationProblem,
     template_solvent = isnothing(problem.initial_state) ?
                        problem.initial_solvent_state : solvent_state(problem, problem.initial_state)
     applied_concentration = use_measurement_concentration ?
-        initial_concentration(expt) : initial_concentration(problem)
+        first(expt.observables.concentration.mean) : initial_concentration(problem)
     experiment_solvent = merge(template_solvent, (; concentration = applied_concentration))
     experiment_state = if isnothing(problem.initial_state)
         nothing
@@ -721,12 +695,13 @@ function _experiment_problem(problem::CrystallisationProblem,
              collect(values(experiment_solvent)))
     end
     experiment_problem = _copy_crystallisation_problem(problem;
-        temp_profile = _experiment_temperature(expt.temperature),
+        temp_profile = expt.conditions.temperature,
         initial_concentration = applied_concentration,
         initial_solvent_state = experiment_solvent,
         initial_state = experiment_state)
-    isnothing(expt.initial_crystals) && return experiment_problem
-    experiment_seed_state = initial_state_from_characteristics(experiment_problem, expt.initial_crystals)
+    experiment_crystals = _experiment_conditions(expt).crystals
+    isnothing(experiment_crystals) && return experiment_problem
+    experiment_seed_state = initial_state_from_characteristics(experiment_problem, experiment_crystals)
     if !isnothing(experiment_state)
         # A new seed changes the population, not an explicit reactor volume.
         reactor_indices = _reactor_state_range(experiment_problem)

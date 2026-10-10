@@ -100,12 +100,7 @@ function bootstrap_measurements(experiments::Vector{<:CrystallisationExperiment}
             observables = merge(expt.observables, NamedTuple{Tuple(observable_names)}(Tuple(rebuilt)))
             push!(replicate, CrystallisationExperiment(;
                 observables = observables,
-                temperature = expt.temperature,
-                initial_crystals = expt.initial_crystals,
-                initial_from = expt.initial_from,
-                seed_shape = expt.seed_shape,
-                operation = expt.operation,
-                relaxation_initial = expt.relaxation_initial,
+                conditions = expt.conditions,
                 exp_id = expt.exp_id,
                 metadata = expt.metadata))
         end

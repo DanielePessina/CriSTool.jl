@@ -111,8 +111,7 @@ end
                                     sol.solvent_state.pH[end]] .+ 0.05,
                             variance = fill(0.01, 3)),
             d43 = Observable(; time = [1800.0, 7200.0],
-                             mean = [8e-6, 8.5e-6], variance = [1e-12, 1e-12])),
-        temperature = 293.15, exp_id = 1)
+                             mean = [8e-6, 8.5e-6], variance = [1e-12, 1e-12])), exp_id = 1, conditions = RunConditions(temperature = 293.15))
     @test expt.observables.mass.mean[2] > 0
     L = loss(logMLE(), problem, [8.0, 2.0, 1e-9 / 60, 2.0], [expt])
     @test L > 0
@@ -134,8 +133,7 @@ end
                                   mean = [sol.d43[2], sol.d43[end]] .+ size_offsets,
                                   variance = [1e-12, 4e-12])
     size_experiment = CrystallisationExperiment(;
-        observables = merge(expt.observables, (; d43 = size_measurement)),
-        temperature = expt.temperature, exp_id = expt.exp_id)
+        observables = merge(expt.observables, (; d43 = size_measurement)), exp_id = expt.exp_id, conditions = expt.conditions)
     weighted_objectives = CriSTool._experiment_objectives(
         logMLE(weighting = [0.0, 0.0, 0.0, 1.0]), size_experiment, sol)
     expected_size_objective = 0.5 * sum(

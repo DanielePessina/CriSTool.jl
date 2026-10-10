@@ -13,23 +13,79 @@ function loss_terms(loss_function::Union{logMLE, mae}, prepared_setup::LossSetup
         Tuple(_loss_objectives(loss_function, prepared_setup, parameter_values)))
 end
 
-"""Named bounds select the kinetic parameters varied by an optimisation study."""
-Base.@kwdef struct OptimisationSpec{Bounds <: NamedTuple, Loss}
+"""
+    OptimisationSpec(; bounds, algorithm, loss=logMLE(), adtype=AutoForwardDiff(), searchoptions=(;))
+
+Select kinetic parameters by named `(lower, upper)` bounds and choose how they
+are optimised. `algorithm` is a Metaheuristics algorithm or an Optimization.jl
+solver; `adtype` and `searchoptions` apply to Optimization.jl solvers only.
+"""
+Base.@kwdef struct OptimisationSpec{Bounds <: NamedTuple, Algorithm, Loss, AD, SearchOptions <: NamedTuple}
     bounds::Bounds
+    algorithm::Algorithm
     loss::Loss = logMLE()
+    adtype::AD = AutoForwardDiff()
+    searchoptions::SearchOptions = (;)
 end
 
-"""Named priors select Bayesian kinetic parameters. Noise remains supplied and fixed."""
-Base.@kwdef struct BayesianSpec{Priors <: NamedTuple, Loss}
+"""
+    BayesianSpec(; priors, sampler=NUTS(), n_samples=1000, n_chains=1, loss=logMLE())
+
+Select kinetic parameters by named univariate priors and sample their posterior
+with a Turing sampler. The likelihood uses supplied measurement variances; noise
+is never fitted.
+"""
+Base.@kwdef struct BayesianSpec{Priors <: NamedTuple, Sampler, Loss}
     priors::Priors
+    sampler::Sampler = Turing.NUTS()
+    n_samples::Int = 1000
+    n_chains::Int = 1
     loss::Loss = logMLE()
 end
 
-"""Named priors, discrepancy and an explicit finite ABC acceptance threshold."""
-Base.@kwdef struct ABCSpec{Priors <: NamedTuple, Loss, Target <: Real}
+"""
+    ABCSpec(; priors, target, sampler=ABCDESampler(), n_particles=1024,
+            n_generations=128, early_stop=false, loss=mae())
+
+Select kinetic parameters by named priors and sample them by approximate
+Bayesian computation under an explicit finite discrepancy threshold `target`.
+"""
+Base.@kwdef struct ABCSpec{Priors <: NamedTuple, Target <: Real, Sampler, Loss}
     priors::Priors
     target::Target
+    sampler::Sampler = ABCDESampler()
+    n_particles::Int = 1024
+    n_generations::Int = 128
+    early_stop::Bool = false
     loss::Loss = mae()
+end
+
+_selected_tree(fit_specification::OptimisationSpec) = fit_specification.bounds
+_selected_tree(fit_specification::Union{BayesianSpec, ABCSpec}) = fit_specification.priors
+
+function _validate_specification(fit_specification::OptimisationSpec)
+    for bound_pair in last.(_named_parameter_leaves(fit_specification.bounds))
+        bound_pair isa Tuple && length(bound_pair) == 2 &&
+            all(bound_value -> bound_value isa Real && isfinite(bound_value), bound_pair) &&
+            bound_pair[1] < bound_pair[2] || throw(ArgumentError("Each bound must be a finite (lower, upper) pair."))
+    end
+end
+function _validate_specification(fit_specification::Union{BayesianSpec, ABCSpec})
+    all(prior_value -> prior_value isa Distributions.UnivariateDistribution,
+        last.(_named_parameter_leaves(fit_specification.priors))) ||
+        throw(ArgumentError("Supply a univariate prior per selected kinetic parameter."))
+    _validate_sampling_counts(fit_specification)
+end
+function _validate_sampling_counts(fit_specification::BayesianSpec)
+    is_likelihood(fit_specification.loss) ||
+        throw(ArgumentError("BayesianSpec requires a likelihood loss, not an error discrepancy."))
+    fit_specification.n_samples > 0 && fit_specification.n_chains > 0 ||
+        throw(ArgumentError("Sample and chain counts must be positive."))
+end
+function _validate_sampling_counts(fit_specification::ABCSpec)
+    isfinite(fit_specification.target) || throw(ArgumentError("ABC target must be explicit and finite."))
+    fit_specification.n_particles > 0 && fit_specification.n_generations > 0 ||
+        throw(ArgumentError("Particle and generation counts must be positive."))
 end
 
 function _named_parameter_leaves(named_tree::NamedTuple, path_prefix::String = "")
@@ -57,19 +113,20 @@ struct KineticSelection{Axis, Baseline}
     baseline::Baseline
 end
 
-function _kinetic_selection(crystal_model::CrystallisationModel, selected_tree::NamedTuple)
+_kinetic_selection(crystal_model::CrystallisationModel, selected_tree::NamedTuple) =
+    _kinetic_selection(crystal_model, first.(_named_parameter_leaves(selected_tree)))
+
+function _kinetic_selection(crystal_model::CrystallisationModel, selected_names::AbstractVector{<:AbstractString})
     _validate_material_model(crystal_model)
     model_values = ComponentArray(; _model_named_values(crystal_model)...)
     all_names = ComponentArrays.labels(model_values)
-    selected_leaves = _named_parameter_leaves(selected_tree)
-    isempty(selected_leaves) && throw(ArgumentError("Select at least one kinetic parameter."))
-    selected_names = first.(selected_leaves)
+    isempty(selected_names) && throw(ArgumentError("Select at least one kinetic parameter."))
     selected_indices = map(selected_names) do selected_name
         selected_index = findfirst(==(selected_name), all_names)
         selected_index === nothing && throw(ArgumentError("Unknown kinetic parameter $selected_name."))
         selected_index
     end
-    return KineticSelection(selected_names, selected_indices, first(getaxes(model_values)), collect(model_values))
+    return KineticSelection(collect(String, selected_names), selected_indices, first(getaxes(model_values)), collect(model_values))
 end
 
 function _expanded_parameters(kinetic_selection::KineticSelection, selected_values::AbstractVector)
@@ -95,7 +152,7 @@ function _selected_model(crystal_model::CrystallisationModel, kinetic_selection,
         KineticModel(original_kinetic.law; parameters = _reconstruct_parameter_tree(
             original_kinetic.parameters, getproperty(reconstructed_values, slot_name)))
     end)
-    return CrystallisationModel(; system = crystal_model.system, reconstructed_kinetics...)
+    return CrystallisationModel(crystal_model.system; reconstructed_kinetics...)
 end
 
 """Selected named values as a nested tuple, suitable for inspection or rebinding."""
@@ -114,101 +171,16 @@ function _set_named_parameter_path(named_values::NamedTuple, path_parts, paramet
     return merge(named_values, NamedTuple{(root_name,)}((replacement_value,)))
 end
 
-function _initial_observation(experiment_run::CrystallisationExperiment, observable_name::Symbol)
-    hasproperty(experiment_run.observables, observable_name) ||
-        throw(ArgumentError("Experiment $(experiment_run.exp_id) lacks initial observable :$observable_name."))
-    initial_series = getproperty(experiment_run.observables, observable_name)
-    initial_index = findfirst(iszero, initial_series.time)
-    initial_index === nothing && throw(ArgumentError(
-        "Experiment $(experiment_run.exp_id): :$observable_name must have a time-zero initial observation."))
-    return initial_series.mean[initial_index]
-end
-
-function _mapped_initial_value(experiment_run, declared_value)
-    return declared_value isa Symbol ? _initial_observation(experiment_run, declared_value) : declared_value
-end
-
-_experiment_temperature(temperature_setting::Real) = ConstantTemperature(temperature_setting)
-_experiment_temperature(temperature_setting::AbstractTemperature) = temperature_setting
-
-function _experiment_seed(experiment_run::CrystallisationExperiment)
-    seed_mapping = hasproperty(experiment_run.initial_from, :crystals) ?
-        experiment_run.initial_from.crystals : nothing
-    if seed_mapping === nothing
-        experiment_run.seed_shape === nothing || throw(ArgumentError("Seed shape requires an initial crystals mapping."))
-        return experiment_run.initial_crystals === nothing ? nothing :
-            _checked_seed_description(experiment_run.initial_crystals)
-    end
-    experiment_run.initial_crystals === nothing || throw(ArgumentError("Supply initial crystal mappings or explicit seeds, not both."))
-    seed_mapping isa NamedTuple && hasproperty(seed_mapping, :mass_concentration) ||
-        throw(ArgumentError("Seed mapping must supply mass_concentration."))
-    seed_mass = _mapped_initial_value(experiment_run, seed_mapping.mass_concentration)
-    seed_shape = experiment_run.seed_shape
-    seed_shape isa NamedTuple || throw(ArgumentError("Seed mapping requires explicit seed_shape."))
-    if hasproperty(seed_shape, :distribution)
-        all(shape_name -> shape_name in (:distribution, :weighting, :mass_loss_tolerance), keys(seed_shape)) ||
-            throw(ArgumentError("Distribution seeds cannot also declare a characteristic shape or width."))
-        keys(seed_mapping) == (:mass_concentration,) || throw(ArgumentError("Distribution seed mapping needs mass only."))
-        return DistributionInitialCrystals(seed_shape.distribution;
-            mass_concentration = seed_mass,
-            weighting = get(seed_shape, :weighting, :number),
-            mass_loss_tolerance = get(seed_shape, :mass_loss_tolerance, 1e-4))
-    end
-    hasproperty(seed_mapping, :d43) || throw(ArgumentError("Characteristic seed mapping must supply d43."))
-    Set(keys(seed_mapping)) == Set((:mass_concentration, :d43)) ||
-        throw(ArgumentError("Characteristic seed mappings accept mass_concentration and d43 only."))
-    seed_d43 = _mapped_initial_value(experiment_run, seed_mapping.d43)
-    seed_family = get(seed_shape, :family, nothing)
-    if seed_family === :lognormal && hasproperty(seed_shape, :geometric_std)
-        Set(keys(seed_shape)) == Set((:family, :geometric_std)) ||
-            throw(ArgumentError("Lognormal shape requires only family and geometric_std."))
-        return _checked_seed_description(LogNormalInitialCrystals(; mass_concentration = seed_mass,
-            d43 = seed_d43, geometric_std = _mapped_initial_value(experiment_run, seed_shape.geometric_std)))
-    elseif seed_family === :gaussian && hasproperty(seed_shape, :standard_deviation)
-        Set(keys(seed_shape)) == Set((:family, :standard_deviation)) ||
-            throw(ArgumentError("Gaussian shape requires only family and standard_deviation."))
-        return _checked_seed_description(GaussianInitialCrystals(; mass_concentration = seed_mass,
-            d43 = seed_d43, standard_deviation = _mapped_initial_value(experiment_run, seed_shape.standard_deviation)))
-    end
-    throw(ArgumentError("Seed shape requires :lognormal with geometric_std or :gaussian with standard_deviation."))
-end
-
-function _model_experiment_problem(crystal_model, experiment_run, selected_solver; mode = :transient, kwargs...)
-    reserved_conditions = intersect(keys(kwargs), (:initial_conditions, :initial_state,
-        :initial_crystals, :temperature, :operation, :solver))
-    isempty(reserved_conditions) || throw(ArgumentError(
-        "Experiment initial observations and declared conditions cannot be overridden through problem_options: $reserved_conditions."))
-    initial_seed = _experiment_seed(experiment_run)
-    solvent_initial = if mode === :steady
-        experiment_run.relaxation_initial isa NamedTuple || throw(ArgumentError(
-            "Steady fitting requires explicit relaxation_initial, independent of steady observations."))
-        experiment_run.relaxation_initial
+function _model_experiment_problem(crystal_model, experiment_run, selected_solver; mode = :transient, problem_options...)
+    run_conditions = if mode === :steady
+        unresolved_sources = observation_sources(experiment_run.conditions)
+        isempty(unresolved_sources) || throw(ArgumentError("Steady fits relax from explicit numeric conditions; " *
+            "experiment $(experiment_run.exp_id) reads $(Tuple(unresolved_sources)) from observations."))
+        experiment_run.conditions
     else
-        solvent_mapping = Base.structdiff(experiment_run.initial_from, (; crystals = nothing))
-        hasproperty(solvent_mapping, :concentration) || throw(ArgumentError("Initial concentration mapping is required."))
-        NamedTuple{keys(solvent_mapping)}(map(keys(solvent_mapping)) do solvent_name
-            source_name = getproperty(solvent_mapping, solvent_name)
-            source_name isa Symbol || throw(ArgumentError("Solvent initial mappings must name observables."))
-            _initial_observation(experiment_run, source_name)
-        end)
+        _experiment_conditions(experiment_run)
     end
-    return CrystallisationProblem(crystal_model; initial_conditions = solvent_initial,
-        temperature = _experiment_temperature(experiment_run.temperature),
-        operation = experiment_run.operation, initial_crystals = initial_seed, solver = selected_solver, kwargs...)
-end
-
-function _initial_source_names(experiment_run)
-    source_names = Symbol[]
-    for mapping_leaf in _named_parameter_leaves(experiment_run.initial_from)
-        last(mapping_leaf) isa Symbol && push!(source_names, last(mapping_leaf))
-    end
-    if experiment_run.seed_shape isa NamedTuple
-        for width_name in (:geometric_std, :standard_deviation)
-            width_value = get(experiment_run.seed_shape, width_name, nothing)
-            width_value isa Symbol && push!(source_names, width_value)
-        end
-    end
-    return unique(source_names)
+    return CrystallisationProblem(crystal_model, run_conditions; solver = selected_solver, problem_options...)
 end
 
 function _strict_likelihood_variances(loss_function, prepared_setup)
@@ -229,19 +201,26 @@ function _strict_likelihood_variances(loss_function, prepared_setup)
     end
 end
 
-"""Prepared experiment solves plus a resolved selection of kinetic parameters."""
-struct PreparedFit{Model, Specification, Selection}
+"""Prepared experiment solves, the resolved parameter selection, and how they were configured."""
+struct PreparedFit{Model, Specification, Selection, Solver <: AbstractSolver, ProblemOptions <: NamedTuple}
     model::Model
     specification::Specification
     selection::Selection
     setup::LossSetup
+    experiments::Vector{CrystallisationExperiment}
+    solver::Solver
+    mode::Symbol
+    problem_options::ProblemOptions
+    solve_settings::NamedTuple
 end
 
 """
-    prepare_fit(model, experiments, specification; solver=MoM(), mode=:transient, kwargs...)
+    prepare_fit(model, experiments, specification; solver=MoM(), mode=:transient,
+                problem_options=(;), kwargs...)
 
-Resolve initial measurements, validate noise/bounds/priors, and build reusable
-solve templates. In steady mode provide explicit `relaxation_initial` per run.
+Resolve each experiment's conditions, validate noise, bounds or priors, and build
+reusable solve templates. Time-zero observations consumed by `FromObservation`
+conditions are not scored. Steady mode needs numeric conditions to relax from.
 """
 function prepare_fit(crystal_model::CrystallisationModel, measured_runs::AbstractVector{<:CrystallisationExperiment},
         fit_specification::Union{OptimisationSpec, BayesianSpec, ABCSpec};
@@ -251,29 +230,15 @@ function prepare_fit(crystal_model::CrystallisationModel, measured_runs::Abstrac
     isempty(intersect(keys(kwargs), (:initial_time, :exclude_initial_concentration))) ||
         throw(ArgumentError("Model fitting owns the time-zero initial-observation and scoring policy."))
     isempty(measured_runs) && throw(ArgumentError("Supply at least one experiment."))
-    selected_tree = fit_specification isa OptimisationSpec ? fit_specification.bounds : fit_specification.priors
-    kinetic_selection = _kinetic_selection(crystal_model, selected_tree)
-    if fit_specification isa OptimisationSpec
-        for bound_pair in last.(_named_parameter_leaves(selected_tree))
-            bound_pair isa Tuple && length(bound_pair) == 2 &&
-                all(bound_value -> bound_value isa Real && isfinite(bound_value), bound_pair) &&
-                bound_pair[1] < bound_pair[2] || throw(ArgumentError("Each bound must be a finite (lower, upper) pair."))
-        end
-    else
-        all(prior_value -> prior_value isa Distributions.UnivariateDistribution,
-            last.(_named_parameter_leaves(selected_tree))) || throw(ArgumentError("Supply a univariate prior per selected kinetic parameter."))
-    end
-    fit_specification isa BayesianSpec && !is_likelihood(fit_specification.loss) &&
-        throw(ArgumentError("BayesianSpec requires a likelihood loss, not an error discrepancy."))
-    fit_specification isa ABCSpec && !isfinite(fit_specification.target) &&
-        throw(ArgumentError("ABC target must be explicit and finite."))
+    kinetic_selection = _kinetic_selection(crystal_model, _selected_tree(fit_specification))
+    _validate_specification(fit_specification)
     physical_runs = [_model_experiment_problem(crystal_model, experiment_run, solver; mode, problem_options...)
         for experiment_run in measured_runs]
     prepared_setup = prepare_loss(physical_runs, collect(measured_runs); mode,
         exclude_initial_concentration = false, kwargs...)
     if mode === :transient
         for (experiment_index, experiment_run) in enumerate(measured_runs)
-            for initial_name in _initial_source_names(experiment_run)
+            for initial_name in observation_sources(experiment_run.conditions)
                 initial_series = getproperty(experiment_run.observables, initial_name)
                 filter!(sample_index -> !iszero(initial_series.time[sample_index]),
                     prepared_setup.included_observations[experiment_index][initial_name])
@@ -281,7 +246,8 @@ function prepare_fit(crystal_model::CrystallisationModel, measured_runs::Abstrac
         end
     end
     _strict_likelihood_variances(fit_specification.loss, prepared_setup)
-    return PreparedFit(crystal_model, fit_specification, kinetic_selection, prepared_setup)
+    return PreparedFit(crystal_model, fit_specification, kinetic_selection, prepared_setup,
+        collect(CrystallisationExperiment, measured_runs), solver, mode, problem_options, values(kwargs))
 end
 
 """Evaluate the selected-parameter objective; AD scalar types are preserved."""
@@ -298,40 +264,37 @@ struct FitResult{Model, Parameters, Objectives, Backend, Preparation}
 end
 
 """
-    fit(prepared_fit; algorithm, adtype=AutoForwardDiff(), searchoptions=(;))
+    fit(prepared_fit; threaded=false)
 
-Optimise selected kinetic parameters. A scalar objective returns a `FitResult`;
-NSGA2 returns one fitted model per Pareto candidate. Native results are retained.
+Optimise the selected kinetic parameters with the specification's algorithm.
+A scalar objective returns a `FitResult`; NSGA2 returns one `FitResult` per
+Pareto candidate. `threaded` evaluates Metaheuristics populations in parallel,
+each candidate on a private copy of the solve templates.
 """
-function fit(prepared_fit::PreparedFit{<:Any, <:OptimisationSpec}; algorithm,
-        adtype = AutoForwardDiff(), searchoptions::NamedTuple = (;), kwargs...)
-    bound_pairs = last.(_named_parameter_leaves(prepared_fit.specification.bounds))
+function fit(prepared_fit::PreparedFit{<:Any, <:OptimisationSpec}; threaded::Bool = false)
+    fit_specification = prepared_fit.specification
+    bound_pairs = last.(_named_parameter_leaves(fit_specification.bounds))
     lower_bounds, upper_bounds = first.(bound_pairs), last.(bound_pairs)
     starting_values = prepared_fit.selection.baseline[prepared_fit.selection.indices]
     all(lower_bounds .<= starting_values .<= upper_bounds) || throw(ArgumentError("Current selected values must lie within bounds."))
+    algorithm = fit_specification.algorithm
     backend_result = if algorithm isa Metaheuristics.Algorithm
-        private_algorithm = _configured_mh_algorithm(algorithm; kwargs...)
+        private_algorithm = _configured_mh_algorithm(algorithm; parallel_evaluation = threaded)
         candidate_objective = candidate_values -> _selected_optimizer_objective(
             prepared_fit, candidate_values, private_algorithm.parameters isa Metaheuristics.NSGA2)
         Metaheuristics.optimize(candidate_objective, Metaheuristics.boxconstraints(lower_bounds, upper_bounds), private_algorithm)
     else
-        isempty(kwargs) || throw(ArgumentError("Use searchoptions for Optimization.jl settings."))
         optimization_function = OptimizationBase.OptimizationFunction(
-            (candidate_values, fit_context) -> loss(fit_context, candidate_values), adtype)
+            (candidate_values, fit_context) -> loss(fit_context, candidate_values), fit_specification.adtype)
         optimization_problem = OptimizationBase.OptimizationProblem(optimization_function,
             starting_values, prepared_fit; lb = lower_bounds, ub = upper_bounds)
-        OptimizationBase.solve(optimization_problem, algorithm; searchoptions...)
+        OptimizationBase.solve(optimization_problem, algorithm; fit_specification.searchoptions...)
     end
-    optimal_values = if algorithm isa Metaheuristics.Algorithm && algorithm.parameters isa Metaheuristics.NSGA2
-        Metaheuristics.positions(Metaheuristics.get_non_dominated_solutions(backend_result.population))
-    elseif backend_result isa Metaheuristics.State
-        Metaheuristics.minimizer(backend_result)
-    else
-        backend_result.u
+    if algorithm isa Metaheuristics.Algorithm && algorithm.parameters isa Metaheuristics.NSGA2
+        pareto_values = Metaheuristics.positions(Metaheuristics.get_non_dominated_solutions(backend_result.population))
+        return [_model_fit_result(prepared_fit, collect(candidate_row), backend_result) for candidate_row in eachrow(pareto_values)]
     end
-    if optimal_values isa AbstractMatrix
-        return [_model_fit_result(prepared_fit, collect(candidate_row), backend_result) for candidate_row in eachrow(optimal_values)]
-    end
+    optimal_values = backend_result isa Metaheuristics.State ? Metaheuristics.minimizer(backend_result) : backend_result.u
     return _model_fit_result(prepared_fit, optimal_values, backend_result)
 end
 
@@ -407,41 +370,45 @@ function ParameterSamples(; source = :user, kwargs...)
     return ParameterSamples(first.(sample_leaves), permutedims(hcat(sample_vectors...)); source)
 end
 
-"""Posterior draws and their native chain/sampler result, tied to a reference model."""
-struct InferenceResult{Model, Samples, Backend}
+"""Posterior draws, the native chain or sampler result, and the preparation that produced them."""
+struct InferenceResult{Model, Samples, Backend, Preparation}
     model::Model
     samples::Samples
     backend_result::Backend
+    preparation::Preparation
 end
-"""Return named joint draws from an inference result."""
-parameter_samples(inference_result::InferenceResult) = inference_result.samples
 
-"""`fit(bayesian_prepared; sampler, n_samples, n_chains, rng)` returns named joint posterior draws and the native chain."""
+"""
+    fit(bayesian_prepared; rng=default_rng(), threaded=false, kwargs...)
+
+Sample the posterior with the specification's sampler and counts. `threaded`
+runs chains in parallel; other keywords go to `Turing.sample` (e.g. `progress`).
+"""
 function fit(prepared_fit::PreparedFit{<:Any, <:BayesianSpec};
-        sampler = Turing.NUTS(), n_samples::Int = 1000, n_chains::Int = 1,
-        rng = Random.default_rng(), kwargs...)
-    n_samples > 0 && n_chains > 0 || throw(ArgumentError("Sample and chain counts must be positive."))
-    posterior_chain = Turing.sample(rng, nuts_model(prepared_fit), sampler,
-        Turing.MCMCThreads(), n_samples, n_chains; kwargs...)
+        rng = Random.default_rng(), threaded::Bool = false, kwargs...)
+    fit_specification = prepared_fit.specification
+    posterior_chain = Turing.sample(rng, nuts_model(prepared_fit), fit_specification.sampler,
+        threaded ? Turing.MCMCThreads() : Turing.MCMCSerial(),
+        fit_specification.n_samples, fit_specification.n_chains; kwargs...)
     posterior_chain = rename_chain(posterior_chain, Symbol.(prepared_fit.selection.names))
     posterior_draws = ParameterSamples(prepared_fit.selection.names,
         chains_to_matrix(posterior_chain; params = Symbol.(prepared_fit.selection.names)); source = :nuts)
-    return InferenceResult(prepared_fit.model, posterior_draws, posterior_chain)
+    return InferenceResult(prepared_fit.model, posterior_draws, posterior_chain, prepared_fit)
 end
 
-"""`fit(abc_prepared; sampler, nparticles, generations)` samples under an explicit discrepancy threshold."""
-function fit(prepared_fit::PreparedFit{<:Any, <:ABCSpec}; sampler::AbstractABCSampler = ABCDESampler(),
-        nparticles::Int = 1024, generations::Int = 128, HPC::Bool = false, earlystop::Bool = false)
-    prior_values = last.(_named_parameter_leaves(prepared_fit.specification.priors))
-    joint_prior = product_distribution(prior_values)
+"""`fit(abc_prepared; threaded=false)` samples under the specification's discrepancy threshold."""
+function fit(prepared_fit::PreparedFit{<:Any, <:ABCSpec}; threaded::Bool = false)
+    fit_specification = prepared_fit.specification
+    joint_prior = product_distribution(last.(_named_parameter_leaves(fit_specification.priors)))
     reference_values = prepared_fit.selection.baseline[prepared_fit.selection.indices]
-    abc_result, reached_target = _runsampler(sampler, joint_prior,
-        candidate_values -> loss(prepared_fit, collect(candidate_values)), prepared_fit.specification.target,
-        loss(prepared_fit, reference_values); nparticles, generations, HPC, earlystop)
+    abc_result, reached_target = _runsampler(fit_specification.sampler, joint_prior,
+        candidate_values -> loss(prepared_fit, collect(candidate_values)), fit_specification.target,
+        loss(prepared_fit, reference_values); nparticles = fit_specification.n_particles,
+        generations = fit_specification.n_generations, HPC = threaded, earlystop = fit_specification.early_stop)
     sample_matrix = _abc_particles_matrix(abc_result.P)
     sample_matrix === nothing && throw(ArgumentError("ABC returned no posterior particles."))
     posterior_draws = ParameterSamples(prepared_fit.selection.names, sample_matrix; source = :abc)
-    return InferenceResult(prepared_fit.model, posterior_draws, abc_result)
+    return InferenceResult(prepared_fit.model, posterior_draws, abc_result, prepared_fit)
 end
 
 """Sample a supplied joint distribution in the named selection order; correlations are retained."""
@@ -470,74 +437,72 @@ struct PredictionResult{Samples, Ensembles}
     ensembles::Ensembles
 end
 
-function _selection_for_samples(crystal_model, joint_samples::ParameterSamples)
-    all_model_values = ComponentArray(; _model_named_values(crystal_model)...)
-    all_names = ComponentArrays.labels(all_model_values)
-    sample_indices = map(joint_samples.names) do parameter_name
-        parameter_index = findfirst(==(parameter_name), all_names)
-        parameter_index === nothing && throw(ArgumentError("Unknown kinetic sample path $parameter_name."))
-        parameter_index
-    end
-    return KineticSelection(joint_samples.names, sample_indices, first(getaxes(all_model_values)), collect(all_model_values))
-end
+"""
+    predict(result; saveat=nothing, observables=nothing)
+    predict(result, runs; saveat=nothing, observables=nothing)
 
-function _same_physical_configuration(first_configuration, second_configuration)
-    typeof(first_configuration) == typeof(second_configuration) || return false
-    return all(isequal(getfield(first_configuration, field_name), getfield(second_configuration, field_name))
-        for field_name in fieldnames(typeof(first_configuration)))
-end
+Propagate a fit or posterior through the same model, solver, mode and numerical
+options it was prepared with. Without `runs`, the fitted experiments are
+predicted at their observation times. `runs` may hold experiments (conditions
+resolved from their time-zero observations) or numeric `RunConditions`, which
+need `saveat`. A `FitResult` predicts its single fitted draw.
+"""
+predict(fit_outcome::Union{FitResult, InferenceResult},
+        prediction_runs::AbstractVector = fit_outcome.preparation.experiments; kwargs...) =
+    predict(fit_outcome.preparation.model, prediction_runs, _result_samples(fit_outcome);
+        solver = fit_outcome.preparation.solver, mode = fit_outcome.preparation.mode,
+        problem_options = fit_outcome.preparation.problem_options,
+        _numerical_solve_settings(fit_outcome.preparation.solve_settings)..., kwargs...)
+
+# Scoring settings (observable order, projections) belong to the fit, not its predictions.
+_numerical_solve_settings(solve_settings::NamedTuple) = NamedTuple{Tuple(filter(
+    in((:algorithm, :solve_options, :callback_factory, :steady_options)), keys(solve_settings)))}(solve_settings)
+
+_result_samples(inference_result::InferenceResult) = inference_result.samples
+_result_samples(fit_result::FitResult) = ParameterSamples(fit_result.preparation.selection.names,
+    reshape(last.(_named_parameter_leaves(fit_result.parameters)), :, 1); source = :fit)
 
 """
-    predict(model, experiments_or_problems, samples; saveat=nothing, solver=MoM(), observables=nothing)
+    predict(model, runs, samples; solver, mode=:transient, problem_options=(;),
+            saveat=nothing, observables=nothing, solve_settings...)
 
-Propagate joint kinetic draws into physical trajectories. Experiments derive
-time-zero initial conditions; configured problems preserve explicit conditions.
-Each draw is reused across all runs. Noise is added only through `measurement_samples`.
+Propagate user-supplied joint kinetic draws. The solver is required so that a
+prediction never silently changes numerical method. Remaining keywords are the
+solve settings accepted by `prepare_fit` (e.g. `solve_options`). Each draw is
+reused across all runs; noise is added only through `measurement_samples`.
 """
 function predict(crystal_model::CrystallisationModel, prediction_runs::AbstractVector,
-        joint_samples::ParameterSamples; saveat = nothing, solver::AbstractSolver = MoM(),
-        observables = nothing, mode::Symbol = :transient, problem_options::NamedTuple = (;), kwargs...)
-    _validate_material_model(crystal_model)
+        joint_samples::ParameterSamples; solver::AbstractSolver, mode::Symbol = :transient,
+        problem_options::NamedTuple = (;), saveat = nothing, observables = nothing, solve_settings...)
     mode in (:transient, :steady) || throw(ArgumentError("mode must be :transient or :steady."))
-    if any(prediction_run -> prediction_run isa CrystallisationExperiment, prediction_runs)
-        get(kwargs, :initial_time, 0.0) == 0 || throw(ArgumentError("Experiment predictions start from time-zero initial observations."))
-    end
-    isempty(prediction_runs) && throw(ArgumentError("Supply prediction experiments or problems."))
-    selected_paths = _selection_for_samples(crystal_model, joint_samples)
-    expanded_draws = hcat([_expanded_parameters(selected_paths, view(joint_samples.values, :, draw_index))
+    isempty(prediction_runs) && throw(ArgumentError("Supply prediction experiments or run conditions."))
+    sample_selection = _kinetic_selection(crystal_model, joint_samples.names)
+    expanded_draws = hcat([_expanded_parameters(sample_selection, view(joint_samples.values, :, draw_index))
         for draw_index in axes(joint_samples.values, 2)]...)
-    physical_runs = [prediction_run isa CrystallisationExperiment ?
-        _model_experiment_problem(crystal_model, prediction_run, solver; mode, problem_options...) : prediction_run
-        for prediction_run in prediction_runs]
-    all(physical_run -> physical_run isa CrystallisationProblem, physical_runs) ||
-        throw(ArgumentError("Predictions require experiments or configured problems."))
+    physical_runs = CrystallisationProblem[]
     prediction_experiments = CrystallisationExperiment[]
-    expected_axis = paramaxis(crystal_model.nucleation.law, crystal_model.growth.law,
-        crystal_model.dissolution.law, crystal_model.aggregation.law, crystal_model.breakage.law)
-    for (run_index, physical_run) in enumerate(physical_runs)
-        paramaxis(physical_run) == expected_axis || throw(ArgumentError("Prediction run has a different kinetic schema."))
-        for material_name in (:crystal_density, :volume_shape_factor, :molecular_volume)
-            isequal(getproperty(physical_run, material_name), getproperty(crystal_model.system, material_name)) ||
-                throw(ArgumentError("Prediction run conflicts with reference model's $material_name."))
+    for (run_index, prediction_run) in enumerate(prediction_runs)
+        if prediction_run isa CrystallisationExperiment
+            physical_run = _model_experiment_problem(crystal_model, prediction_run, solver; mode, problem_options...)
+            requested_times = saveat === nothing ?
+                _loss_saveat(prediction_run, solver; require_multiple = false) : collect(Float64, saveat)
+            experiment_id = prediction_run.exp_id
+        elseif prediction_run isa RunConditions
+            saveat === nothing && throw(ArgumentError("Predictions from run conditions need saveat."))
+            physical_run = CrystallisationProblem(crystal_model, prediction_run; solver, problem_options...)
+            requested_times, experiment_id = collect(Float64, saveat), run_index
+        else
+            throw(ArgumentError("Predictions take experiments or RunConditions."))
         end
-        _same_physical_configuration(physical_run.saturation_model, crystal_model.system.saturation_model) ||
-            throw(ArgumentError("Prediction run conflicts with reference solubility model."))
-        for slot_name in _MODEL_KINETIC_SLOTS
-            field_name = Symbol("kinetics_", slot_name == :growth ? "growth" : string(slot_name), "function")
-            _same_physical_configuration(getproperty(physical_run, field_name), getproperty(crystal_model, slot_name).law) ||
-                throw(ArgumentError("Prediction run uses a different $slot_name law."))
-        end
-        requested_times = saveat === nothing ?
-            (prediction_runs[run_index] isa CrystallisationExperiment ?
-                _loss_saveat(prediction_runs[run_index], physical_run.solver; require_multiple = false) : [0.0, 28800.0]) : collect(saveat)
         _validate_save_times(requested_times)
-        experiment_id = prediction_runs[run_index] isa CrystallisationExperiment ? prediction_runs[run_index].exp_id : run_index
-        push!(prediction_experiments, CrystallisationExperiment(
+        push!(physical_runs, physical_run)
+        push!(prediction_experiments, CrystallisationExperiment(exp_id = experiment_id,
             observables = (; concentration = Observable(time = requested_times, mean = zeros(length(requested_times)))),
-            temperature = physical_run.temp_profile, exp_id = experiment_id))
+            conditions = RunConditions(temperature = physical_run.temp_profile,
+                concentration = physical_run.initial_concentration)))
     end
     prepared_predictions = prepare_loss(physical_runs, prediction_experiments;
-        exclude_initial_concentration = false, mode, kwargs...)
+        exclude_initial_concentration = false, mode, solve_settings...)
     ensemble_predictions = run_ensemble(expanded_draws, prepared_predictions; observables)
     return PredictionResult(joint_samples, getproperty.(prediction_experiments, :exp_id), ensemble_predictions)
 end

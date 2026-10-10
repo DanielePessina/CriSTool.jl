@@ -46,6 +46,8 @@ end
 
 Bind a law to named values. Names and nesting must match `paramaxis(law)`;
 the same schema serves simulation, selection of fit parameters, and predictions.
+Built-in laws bind more briefly through their keyword call, e.g.
+`growth_empirical(growth_coefficient = 1e-8, growth_order = 2.0)`.
 """
 struct KineticModel{Law, Parameters <: NamedTuple}
     law::Law
@@ -62,8 +64,12 @@ end
 
 function _canonical_kinetic_parameters(declared_values, supplied_tree::NamedTuple)
     declared_names = propertynames(declared_values)
-    Set(declared_names) == Set(keys(supplied_tree)) ||
-        throw(ArgumentError("Parameter names/nesting must match the law's paramaxis: $declared_names."))
+    missing_names = setdiff(declared_names, keys(supplied_tree))
+    unknown_names = setdiff(keys(supplied_tree), declared_names)
+    isempty(missing_names) && isempty(unknown_names) || throw(ArgumentError(
+        "Kinetic parameters must match the law's paramaxis $declared_names" *
+        (isempty(missing_names) ? "" : "; missing $(Tuple(missing_names))") *
+        (isempty(unknown_names) ? "" : "; unknown $(Tuple(unknown_names))") * "."))
     return NamedTuple{Tuple(declared_names)}(map(Tuple(declared_names)) do declared_name
         declared_value = getproperty(declared_values, declared_name)
         supplied_value = getproperty(supplied_tree, declared_name)
@@ -78,14 +84,34 @@ end
 
 paramaxis(bound_kinetic::KineticModel) = paramaxis(bound_kinetic.law)
 
-"""A reusable physical system and five kinetic slots, independent of experiment and solver."""
-Base.@kwdef struct CrystallisationModel{System, Nucleation, Growth, Dissolution, Aggregation, Breakage}
-    system::System = LysozymeSystem()
+"""
+    CrystallisationModel(system; nucleation, growth, dissolution=nodissolution(),
+                         aggregation=noaggregation(), breakage=nobreakage())
+
+A material system and five bound kinetic slots, independent of run conditions
+and solver. Each slot takes a bound `KineticModel`, for example
+`nucl_CNT(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4)`; laws without
+parameters and callable laws are bound automatically.
+"""
+struct CrystallisationModel{System, Nucleation, Growth, Dissolution, Aggregation, Breakage}
+    system::System
     nucleation::Nucleation
     growth::Growth
-    dissolution::Dissolution = KineticModel(nodissolution())
-    aggregation::Aggregation = KineticModel(noaggregation())
-    breakage::Breakage = KineticModel(nobreakage())
+    dissolution::Dissolution
+    aggregation::Aggregation
+    breakage::Breakage
+end
+
+CrystallisationModel(material_system; nucleation, growth, dissolution = nodissolution(),
+        aggregation = noaggregation(), breakage = nobreakage()) =
+    CrystallisationModel(material_system, _bound_kinetic(nucleation), _bound_kinetic(growth),
+        _bound_kinetic(dissolution), _bound_kinetic(aggregation), _bound_kinetic(breakage))
+
+_bound_kinetic(bound_kinetic::KineticModel) = bound_kinetic
+function _bound_kinetic(kinetic_law)
+    kinetic_law.nparams == 0 || throw(ArgumentError("$(nameof(typeof(kinetic_law))) needs parameter values; " *
+        "bind them with its keyword call, e.g. $(nameof(typeof(kinetic_law)))(name = value, ...)."))
+    return KineticModel(kinetic_law)
 end
 
 const _MODEL_KINETIC_SLOTS = (:nucleation, :growth, :dissolution, :aggregation, :breakage)
@@ -148,20 +174,19 @@ end
 _checked_operation(operation_settings::AbstractCrystallisationOperation) = operation_settings
 
 """
-    CrystallisationProblem(model; initial_conditions, temperature, solver=MoM(),
-                           initial_crystals=nothing, operation=BatchOperation(), kwargs...)
+    CrystallisationProblem(model, conditions; solver=MoM(), kwargs...)
 
-Configure a reusable model for simulation. Initial conditions are explicit named
-solvent values; a missing seed means an empty population. Material and kinetic
-properties cannot be overridden through numerical/experiment keywords.
+Configure a model under numeric `RunConditions` for simulation or steady
+solving. A missing seed means an empty population. Remaining keywords are
+numerical settings; material, kinetic and condition fields cannot be overridden.
 """
-function CrystallisationProblem(crystal_model::CrystallisationModel;
-        initial_conditions::NamedTuple, temperature::AbstractTemperature,
-        solver::AbstractSolver = MoM(), initial_crystals = nothing,
-        operation::AbstractCrystallisationOperation = BatchOperation(), kwargs...)
+function CrystallisationProblem(crystal_model::CrystallisationModel, run_conditions::RunConditions;
+        solver::AbstractSolver = MoM(), kwargs...)
     _validate_material_model(crystal_model)
-    hasproperty(initial_conditions, :concentration) ||
-        throw(ArgumentError("initial_conditions must supply concentration."))
+    unresolved_sources = observation_sources(run_conditions)
+    isempty(unresolved_sources) || throw(ArgumentError(
+        "Conditions read $(Tuple(unresolved_sources)) from observations; supply numbers or use an experiment."))
+    initial_solvent = run_conditions.solvent
     model_settings = (;
         crystal_density = crystal_model.system.crystal_density,
         volume_shape_factor = crystal_model.system.volume_shape_factor,
@@ -178,30 +203,32 @@ function CrystallisationProblem(crystal_model::CrystallisationModel;
         parameterset_aggregation = _bound_parameter_vector(crystal_model.aggregation),
         kinetics_breakagefunction = crystal_model.breakage.law,
         parameterset_breakage = _bound_parameter_vector(crystal_model.breakage),
-        initial_concentration = initial_conditions.concentration,
-        initial_solvent_state = initial_conditions, temp_profile = temperature, solver,
-        operation = _checked_operation(operation))
-    forbidden_settings = intersect(keys(model_settings), keys(kwargs))
-    isempty(forbidden_settings) || throw(ArgumentError("Model/condition overrides are reserved: $forbidden_settings."))
+        initial_concentration = initial_solvent.concentration,
+        initial_solvent_state = initial_solvent, temp_profile = run_conditions.temperature, solver,
+        operation = _checked_operation(run_conditions.operation))
+    reserved_settings = intersect((keys(model_settings)..., :initial_state), keys(kwargs))
+    isempty(reserved_settings) || throw(ArgumentError(
+        "Material, kinetic and run conditions are set by the model and conditions: $(Tuple(reserved_settings))."))
     configured_run = CrystallisationProblem(; model_settings..., kwargs...)
     _validate_crystallisation_problem(configured_run)
-    if configured_run.initial_state !== nothing
-        explicit_solvent = solvent_state(configured_run, configured_run.initial_state)
-        all(isapprox(getproperty(explicit_solvent, solvent_name), getproperty(initial_conditions, solvent_name);
-            rtol = 1e-12, atol = 0.0) for solvent_name in keys(initial_conditions)) ||
-            throw(ArgumentError("initial_state conflicts with declared initial_conditions."))
-    end
-    if initial_crystals !== nothing
-        haskey(kwargs, :initial_state) && throw(ArgumentError("Supply seeds or initial_state, not both."))
+    if run_conditions.crystals !== nothing
         configured_run = _problem_with_initial_state(configured_run,
-            initial_state_from_characteristics(configured_run, _checked_seed_description(initial_crystals)))
+            initial_state_from_characteristics(configured_run, _checked_seed_description(run_conditions.crystals)))
+        _validate_crystallisation_problem(configured_run)
     end
-    _validate_crystallisation_problem(configured_run)
     return configured_run
 end
 
-"""`simulate(problem; saveat, kwargs...)` returns a physical trajectory."""
-simulate(configured_run::CrystallisationProblem; saveat = 0.0:300.0:28800.0, kwargs...) =
+"""
+    simulate(model, conditions; solver=MoM(), saveat, kwargs...)
+    simulate(problem; saveat, kwargs...)
+
+Return the physical trajectory at the requested times in seconds.
+"""
+simulate(crystal_model::CrystallisationModel, run_conditions::RunConditions;
+        solver::AbstractSolver = MoM(), saveat, kwargs...) =
+    simulate(CrystallisationProblem(crystal_model, run_conditions; solver); saveat, kwargs...)
+simulate(configured_run::CrystallisationProblem; saveat, kwargs...) =
     last(runsimulation(configured_run; save_idx = saveat, kwargs...))
 
 """Context for callable kinetics, with physical values and advanced problem/state access."""
@@ -258,6 +285,7 @@ end
 paramaxis(callable_law::_CallableKinetic) = first(getaxes(ComponentArray(; callable_law.schema...)))
 required_properties(callable_law::_CallableKinetic) = callable_law.required
 KineticModel(callable_law::_CallableKinetic) = KineticModel(callable_law; parameters = callable_law.schema)
+_bound_kinetic(callable_law::_CallableKinetic) = KineticModel(callable_law)
 
 growthrate(callable_law::CallableGrowth, candidate_values, configured_run::CrystallisationProblem, numerical_state, clock_time) =
     callable_law.callable(_named_params(callable_law, candidate_values), KineticContext(configured_run, numerical_state, clock_time))

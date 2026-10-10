@@ -37,8 +37,8 @@ function plot_measurements_vs_simulation(measurements::Vector{<:AbstractExperime
                                   save_idx = LinRange(_experiment_time_span(measurements[m])[1],
                                                       _experiment_time_span(measurements[m])[2], 150),
                                   solver = solver,
-                                  temp_profile = ConstantTemperature(measurements[m].temperature),
-                                  initial_crystals = measurements[m].initial_crystals,
+                                  temp_profile = measurements[m].conditions.temperature,
+                                  initial_crystals = _experiment_conditions(measurements[m]).crystals,
                                   kwargs...)
         solutions[m] = sol
     end
@@ -179,7 +179,7 @@ function plot_measurements_vs_simulation(measurements::Vector{<:AbstractExperime
             if measured_size !== nothing
                 predicted_size = 1e6 * _solution_observable_trajectory(sol, size_name)[end]
                 pred_label = size_name === :d50q ? "D50" : uppercase(string(size_name))
-                pred_str = "Exp. $(exp_id) T = $(round(measurements[m].temperature-273,digits = 2) )°C, " *
+                pred_str = "Exp. $(exp_id) T = $(round(_experiment_start_temperature(measurements[m])-273,digits = 2) )°C, " *
                            "Pred. $(pred_label) = $(round(predicted_size, sigdigits=2)) μm"
                 measured_final = 1e6 * measured_size.mean[end]
                 measured_std = measured_size.variance === nothing ? nothing :
@@ -379,8 +379,8 @@ function plot_ps_measurements_vs_simulation(measurements::Vector{<:AbstractExper
                                 save_idx = LinRange(_experiment_time_span(measurements[m])[1],
                                                     _experiment_time_span(measurements[m])[2], 150),
                                 solver = solver,
-                                temp_profile = ConstantTemperature(measurements[m].temperature),
-                                initial_crystals = measurements[m].initial_crystals,
+                                temp_profile = measurements[m].conditions.temperature,
+                                initial_crystals = _experiment_conditions(measurements[m]).crystals,
                                 kwargs...)
 
             size_name, measured_size = _measured_size_observable(measurements[m], sol)
@@ -413,13 +413,13 @@ function plot_ps_measurements_vs_simulation(measurements::Vector{<:AbstractExper
 
             predicted_size = 1e6 * particlessizes[end]
 
-            temp_str = "T = $(round(measurements[m].temperature-273.15, digits=2)) °C"
+            temp_str = "T = $(round(_experiment_start_temperature(measurements[m])-273.15, digits=2)) °C"
 
             # Get the actual experiment ID if available, otherwise use the loop index
             exp_id = hasproperty(measurements[m], :exp_id) ? measurements[m].exp_id : m
 
             pred_label = size_name === :d50q ? "D50" : uppercase(string(size_name))
-            pred_str = "Exp. $(exp_id) T = $(round(measurements[m].temperature-273,digits = 2) )°C, " *
+            pred_str = "Exp. $(exp_id) T = $(round(_experiment_start_temperature(measurements[m])-273,digits = 2) )°C, " *
                        "Pred. $(pred_label) = $(round(predicted_size, sigdigits=2)) μm"
             measured_final = 1e6 * measured_size.mean[end]
             measured_std = measured_size.variance === nothing ? nothing :

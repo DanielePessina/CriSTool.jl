@@ -5,29 +5,32 @@
 A continuous distribution of positive lengths in metres, weighted by number or
 volume, and solid mass concentration in kg/m³. No hidden truncation is applied.
 """
-struct DistributionInitialCrystals{Distribution} <: AbstractInitialCrystals
+struct DistributionInitialCrystals{Distribution, Mass} <: AbstractInitialCrystals
     distribution::Distribution
-    mass_concentration::Float64
+    mass_concentration::Mass
     weighting::Symbol
     quadrature_rtol::Float64
     mass_loss_tolerance::Float64
+    d43::Float64
 end
 
 function DistributionInitialCrystals(length_distribution::Distributions.ContinuousUnivariateDistribution;
-        mass_concentration::Real, weighting::Symbol = :number,
+        mass_concentration::Union{Real, FromObservation}, weighting::Symbol = :number,
         quadrature_rtol::Real = 1e-8, mass_loss_tolerance::Real = 1e-4)
     weighting in (:number, :volume) || throw(ArgumentError("weighting must be :number or :volume."))
-    isfinite(mass_concentration) && mass_concentration > 0 ||
+    mass_concentration isa FromObservation || isfinite(mass_concentration) && mass_concentration > 0 ||
         throw(ArgumentError("Distribution seeds require positive finite mass_concentration."))
     minimum(length_distribution) >= 0 || throw(ArgumentError(
         "Length distribution has negative support; truncate it explicitly."))
     maximum(length_distribution) > 0 || throw(ArgumentError("Length distribution has no positive support."))
     0 < quadrature_rtol < 1 && 0 <= mass_loss_tolerance < 1 ||
         throw(ArgumentError("Invalid quadrature or mass-loss tolerance."))
-    seed_description = DistributionInitialCrystals(length_distribution, Float64(mass_concentration),
-        weighting, Float64(quadrature_rtol), Float64(mass_loss_tolerance))
-    seed_description.d43 # Verify required integrals at construction.
-    return seed_description
+    # The characteristic size is resolved once; it also verifies the required integrals.
+    unsized_seed = DistributionInitialCrystals(length_distribution, _seed_field_value(mass_concentration),
+        weighting, Float64(quadrature_rtol), Float64(mass_loss_tolerance), NaN)
+    seed_d43 = _seed_number_moment(unsized_seed, 4) / _seed_number_moment(unsized_seed, 3)
+    return DistributionInitialCrystals(length_distribution, unsized_seed.mass_concentration,
+        weighting, Float64(quadrature_rtol), Float64(mass_loss_tolerance), seed_d43)
 end
 
 function _seed_integral(seed_description::DistributionInitialCrystals, moment_power::Integer,
@@ -74,12 +77,6 @@ function _seed_number_moment(seed_description::DistributionInitialCrystals, mome
     offset_power = seed_description.weighting === :volume ? -3 : 0
     return _seed_integral(seed_description, moment_power + offset_power) /
            _seed_integral(seed_description, offset_power)
-end
-
-function Base.getproperty(seed_description::DistributionInitialCrystals, field_name::Symbol)
-    field_name === :d43 && return _seed_number_moment(seed_description, 4) /
-        _seed_number_moment(seed_description, 3)
-    return getfield(seed_description, field_name)
 end
 
 # Normalised density adapter for general volume-weighted sources.
@@ -201,3 +198,10 @@ function _checked_seed_description(seed_description::GaussianInitialCrystals)
         mass_concentration = seed_description.mass_concentration)
 end
 _checked_seed_description(seed_description::DistributionInitialCrystals) = seed_description
+
+_resolved_condition_value(seed_description::DistributionInitialCrystals, observation_lookup) =
+    seed_description.mass_concentration isa FromObservation ?
+        DistributionInitialCrystals(seed_description.distribution;
+            mass_concentration = observation_lookup(seed_description.mass_concentration.observable_name),
+            weighting = seed_description.weighting, quadrature_rtol = seed_description.quadrature_rtol,
+            mass_loss_tolerance = seed_description.mass_loss_tolerance) : seed_description

@@ -274,7 +274,7 @@ function _run_ensemble_internal(samples::Matrix{Float64},
             time_idx
         end
         run_temp_profile = isnothing(temp_profile) ?
-                           ConstantTemperature(measurements[m].temperature) :
+                           measurements[m].conditions.temperature :
                            temp_profile
         run_initial_concentration = isnothing(initial_concentration_override) ?
                                     initial_concentration(measurements[m]) :
@@ -296,7 +296,7 @@ function _run_ensemble_internal(samples::Matrix{Float64},
                                 save_idx = time,
                                 solver = solver,
                                 temp_profile = run_temp_profile,
-                                initial_crystals = measurements[m].initial_crystals)
+                                initial_crystals = _experiment_conditions(measurements[m]).crystals)
 
             concentration[:, i] = sol.concentration
             d43[:, i] = sol.d43

@@ -82,7 +82,8 @@ export Observable, ObservableColumns, CrystallisationExperiment, AbstractExperim
        initial_concentration
 export AbstractCrystallisationOperation, BatchOperation, MSMPROperation, FedBatchOperation,
        CrystallisationFeed, reactor_vars, reactor_volume, operation_flows
-export AbstractInitialCrystals, LogNormalInitialCrystals, GaussianInitialCrystals
+export AbstractInitialCrystals, LogNormalInitialCrystals, GaussianInitialCrystals,
+       FromObservation, RunConditions
 export AbstractSolubilityModel, ConstantSolubility, PolynomialSolubility, CallableSolubility,
        AbstractSaturationModel, ConstantSaturation, PolynomialSaturation, CallableSaturation,
        lysozyme_solubility, lysozyme_saturation, saturation_concentration, supersaturation
@@ -113,7 +114,7 @@ export runsimulation, paramaxis, crystallisation_odeproblem,
        get_characteristic_size, getmomentsizes,
        initial_state_from_characteristics
 export AbstractPELossFunction, AbstractVarianceModel, MeasuredVariance, RelativeVariance,
-       logMLE, mae, loss, prepare_loss, LossSetup
+       logMLE, mae, loss
 export experiments_from_table, load_measurements,
        bootstrap_repeatmeasurements, balance_variances, repeatmeasurementbalancer,
        psd_measurementbalancer, bootstrap_measurements
@@ -130,7 +131,7 @@ export ChainPairPlots, ChainStatsPlots, ChainMeasurementPlots
 export plot_ps_measurements_vs_ensemble, plot_measurements_vs_simulation,
        plot_ps_measurements_vs_simulation
 export chains_to_matrix, distribution_to_matrix, create_product_prior, prior_to_matrix
-export nuts_model, kinetic_parameter_symbols, rename_chain
+export kinetic_parameter_symbols, rename_chain
 export CRISTOOL_PALETTE
 export CrystallisationSystem, LysozymeSystem, KineticModel, CrystallisationModel,
        CallableGrowth, CallableNucleation, CallableLengthGrowth, KineticContext,
@@ -148,6 +149,7 @@ include("core/solver_types.jl")
 include("core/temperature_types.jl")
 include("core/saturation_types.jl")
 include("core/operation_types.jl")
+include("core/condition_types.jl")
 include("core/measurement_types.jl")
 include("core/problem_types.jl")
 

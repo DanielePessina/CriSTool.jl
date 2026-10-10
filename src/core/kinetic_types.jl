@@ -95,6 +95,43 @@ abstract type AbstractFPLengthDissolutionFunction <: AbstractDissolutionFunction
 const AbstractScalarDissolutionFunction = AbstractFPScalarDissolutionFunction
 const AbstractLengthDissolutionFunction = AbstractFPLengthDissolutionFunction
 
+# Defines a kinetic law with one keyword constructor. Keywords naming struct
+# fields configure the law; any other keywords are its kinetic parameter values
+# and return a bound `KineticModel`. `nucl_CNT()` is the unbound law, while
+# `nucl_CNT(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4)` binds it.
+macro kinetic_law(law_definition)
+    law_definition isa Expr && law_definition.head === :struct ||
+        throw(ArgumentError("@kinetic_law expects a struct definition."))
+    law_name = law_definition.args[2].args[1]
+    typed_fields = Any[]
+    field_names = Symbol[]
+    field_defaults = Any[]
+    for field_line in law_definition.args[3].args
+        field_line isa LineNumberNode && (push!(typed_fields, field_line); continue)
+        typed_field, default_value = field_line.head === :(=) ?
+            (field_line.args[1], field_line.args[2]) : (field_line, nothing)
+        push!(typed_fields, typed_field)
+        push!(field_names, typed_field.args[1])
+        push!(field_defaults, default_value)
+    end
+    plain_definition = Expr(:struct, law_definition.args[1], law_definition.args[2],
+        Expr(:block, typed_fields...))
+    field_values = map(field_names, field_defaults) do field_name, default_value
+        missing_field = :(throw(ArgumentError(string($(QuoteNode(law_name)), " requires keyword ",
+            $(QuoteNode(field_name)), "."))))
+        :(haskey(law_keywords, $(QuoteNode(field_name))) ? law_keywords[$(QuoteNode(field_name))] :
+            $(default_value === nothing ? missing_field : default_value))
+    end
+    return esc(quote
+        Base.@__doc__ $plain_definition
+        function $law_name(; law_keywords...)
+            kinetic_law = $law_name($(field_values...))
+            parameter_values = Base.structdiff(values(law_keywords), NamedTuple{$(Tuple(field_names))})
+            return isempty(parameter_values) ? kinetic_law : KineticModel(kinetic_law; parameters = parameter_values)
+        end
+    end)
+end
+
 """
     nodissolution <: AbstractFPScalarDissolutionFunction
 
@@ -102,7 +139,7 @@ Zero-rate dissolution model.  It deliberately has no parameters, so adding
 the independent dissolution block does not change the length of legacy
 parameter vectors or the behaviour of existing simulations.
 """
-Base.@kwdef @concrete struct nodissolution <: AbstractFPScalarDissolutionFunction
+@kinetic_law struct nodissolution <: AbstractFPScalarDissolutionFunction
     nparams::Int64 = 0
     string::String = "No Dissolution"
     symbols::Vector{Symbol} = Symbol[]
@@ -136,7 +173,7 @@ Fields:
 - `string::String`: String identifier ("CNT")
 - `symbols::Vector{Symbol}`: Parameter symbols [:ln_nucleation_prefactor, :surface_energy]
 """
-Base.@kwdef @concrete struct nucl_CNT <: AbstractFPNucleationFunction
+@kinetic_law struct nucl_CNT <: AbstractFPNucleationFunction
     nparams::Int64 = 2
     string::String = "CNT"
     symbols::Vector{Symbol} = [:ln_nucleation_prefactor, :surface_energy]
@@ -154,7 +191,7 @@ Fields:
 - `string::String`: String identifier ("Emp. Nu")
 - `symbols::Vector{Symbol}`: Parameter symbols [:log10_nucleation_prefactor, :nucleation_order]
 """
-Base.@kwdef @concrete struct nucl_empirical <: AbstractFPNucleationFunction
+@kinetic_law struct nucl_empirical <: AbstractFPNucleationFunction
     nparams::Int64 = 2
     string::String = "Emp. Nu"
     symbols::Vector{Symbol} = [:log10_nucleation_prefactor, :nucleation_order]
@@ -172,7 +209,7 @@ Fields:
 - `string::String`: String identifier ("Emp. Nu")
 - `symbols::Vector{Symbol}`: Parameter symbols [:ln_nucleation_prefactor, :activation_energy, :nucleation_order]
 """
-Base.@kwdef @concrete struct nucl_empirical_energy <: AbstractFPNucleationFunction
+@kinetic_law struct nucl_empirical_energy <: AbstractFPNucleationFunction
     nparams::Int64 = 3
     string::String = "Emp. Nu"
     symbols::Vector{Symbol} = [:ln_nucleation_prefactor, :activation_energy, :nucleation_order]
@@ -192,7 +229,7 @@ Fields:
 - `string::String`: String identifier ("CNT no S")
 - `symbols::Vector{Symbol}`: Parameter symbols [:ln_nucleation_prefactor, :surface_energy]
 """
-Base.@kwdef @concrete struct nucl_CNTnoS <: AbstractFPNucleationFunction
+@kinetic_law struct nucl_CNTnoS <: AbstractFPNucleationFunction
     nparams::Int64 = 2
     string::String = "CNT no S"
     symbols::Vector{Symbol} = [:ln_nucleation_prefactor, :surface_energy]
@@ -210,7 +247,7 @@ Fields:
 - `string::String`: String identifier ("Sec. Nu")
 - `symbols::Vector{Symbol}`: Parameter symbols [:ln_nucleation_prefactor, :activation_energy, :nucleation_order]
 """
-Base.@kwdef @concrete struct nucl_secondary <: AbstractFPNucleationFunction
+@kinetic_law struct nucl_secondary <: AbstractFPNucleationFunction
     nparams::Int64 = 3
     string::String = "Sec. Nu"
     symbols::Vector{Symbol} = [:ln_nucleation_prefactor, :activation_energy, :nucleation_order]
@@ -228,7 +265,7 @@ Fields:
 - `string::String`: String identifier ("Prim. + Sec. Nu")
 - `symbols::Vector{Symbol}`: Flattened primary/secondary parameter symbols
 """
-Base.@kwdef @concrete struct nucl_prim_plus_second <: AbstractFPNucleationFunction
+@kinetic_law struct nucl_prim_plus_second <: AbstractFPNucleationFunction
     nparams::Int64 = 6
     string::String = "Prim. + Sec. Nu"
     symbols::Vector{Symbol} = [:ln_nucleation_prefactor_primary,
@@ -253,7 +290,7 @@ Fields:
 - `string::String`: String identifier ("CNT + Sec. Nu")
 - `symbols::Vector{Symbol}`: Flattened CNT/secondary parameter symbols
 """
-Base.@kwdef @concrete struct nucl_CNT_plus_second <: AbstractFPNucleationFunction
+@kinetic_law struct nucl_CNT_plus_second <: AbstractFPNucleationFunction
     nparams::Int64 = 5
     string::String = "CNT + Sec. Nu"
     symbols::Vector{Symbol} = [:ln_nucleation_prefactor_cnt, :surface_energy,
@@ -276,7 +313,7 @@ Fields:
 - `ln_nucleation_prefactor::Float64`: Natural-log nucleation prefactor
 - `surface_energy::Float64`: Interfacial energy (J/m²)
 """
-Base.@kwdef @concrete struct nucl_CNT_fixed <: AbstractFPNucleationFunction
+@kinetic_law struct nucl_CNT_fixed <: AbstractFPNucleationFunction
     nparams::Int64 = 0
     string::String = "CNT fixed"
     ln_nucleation_prefactor::Float64
@@ -326,7 +363,7 @@ Fields:
 - `log10_nucleation_prefactor::Float64`: Base-10 logarithm of the nucleation prefactor
 - `nucleation_order::Float64`: Supersaturation exponent
 """
-Base.@kwdef @concrete struct nucl_empirical_fixed <: AbstractFPNucleationFunction
+@kinetic_law struct nucl_empirical_fixed <: AbstractFPNucleationFunction
     nparams::Int64 = 0
     string::String = "Emp. Nu Fixed"
     log10_nucleation_prefactor::Float64
@@ -377,7 +414,7 @@ Fields:
 - `string::String`: String identifier ("Emp. Gr")
 - `symbols::Vector{Symbol}`: Parameter symbols [:growth_coefficient, :growth_order]
 """
-Base.@kwdef @concrete struct growth_empirical <: AbstractFPScalarGrowthFunction
+@kinetic_law struct growth_empirical <: AbstractFPScalarGrowthFunction
     nparams::Int64 = 2
     string::String = "Emp. Gr"
     symbols::Vector{Symbol} = [:growth_coefficient, :growth_order]
@@ -399,7 +436,7 @@ Fields:
 - `symbols::Vector{Symbol}`: Parameter symbols
 - `Lref::Float64`: Reference length in metres (default: 1 µm)
 """
-Base.@kwdef @concrete struct growth_empirical_length <: AbstractFPLengthGrowthFunction
+@kinetic_law struct growth_empirical_length <: AbstractFPLengthGrowthFunction
     nparams::Int64 = 4
     string::String = "Emp. Gr Length"
     symbols::Vector{Symbol} = [:growth_coefficient, :growth_order,
@@ -425,7 +462,7 @@ Fields:
 - `symbols::Vector{Symbol}`: Parameter symbols [:log10_growth_coefficient, :growth_order]
 - `activation_energy::Float64`: Activation energy (J/mol)
 """
-Base.@kwdef @concrete struct growth_energy <: AbstractFPScalarGrowthFunction
+@kinetic_law struct growth_energy <: AbstractFPScalarGrowthFunction
     nparams::Int64 = 2
     string::String = "GrEnergy"
     symbols::Vector{Symbol} = [:log10_growth_coefficient, :growth_order]
@@ -444,7 +481,7 @@ Fields:
 - `string::String`: String identifier ("Emp. Gr")
 - `symbols::Vector{Symbol}`: Parameter symbols [:log10_growth_coefficient, :activation_energy, :growth_order]
 """
-Base.@kwdef @concrete struct growth_energy_est <: AbstractFPScalarGrowthFunction
+@kinetic_law struct growth_energy_est <: AbstractFPScalarGrowthFunction
     nparams::Int64 = 3
     string::String = "GrEnergy_Est"
     symbols::Vector{Symbol} = [:log10_growth_coefficient, :activation_energy, :growth_order]
@@ -464,7 +501,7 @@ Fields:
 - `string::String`: String identifier ("BCF Gr")
 - `symbols::Vector{Symbol}`: Parameter symbols [:growth_coefficient, :activation_temperature]
 """
-Base.@kwdef @concrete struct growth_BCF <: AbstractFPScalarGrowthFunction
+@kinetic_law struct growth_BCF <: AbstractFPScalarGrowthFunction
     nparams::Int64 = 2
     string::String = "BCF Gr"
     symbols::Vector{Symbol} = [:growth_coefficient, :activation_temperature]
@@ -483,7 +520,7 @@ Fields:
 - `string::String`: String identifier ("BpS Gr")
 - `symbols::Vector{Symbol}`: Parameter symbols [:growth_coefficient, :energy_barrier_temperature_squared]
 """
-Base.@kwdef @concrete struct growth_BpS <: AbstractFPScalarGrowthFunction
+@kinetic_law struct growth_BpS <: AbstractFPScalarGrowthFunction
     nparams::Int64 = 2
     string::String = "BpS Gr"
     symbols::Vector{Symbol} = [:growth_coefficient, :energy_barrier_temperature_squared]
@@ -503,7 +540,7 @@ Fields:
 - `growth_order::Float64`: Supersaturation exponent
 - `string::String`: String identifier ("Emp. Gr Fixed")
 """
-Base.@kwdef @concrete struct growth_empirical_fixed <: AbstractFPScalarGrowthFunction
+@kinetic_law struct growth_empirical_fixed <: AbstractFPScalarGrowthFunction
     nparams::Int64 = 0
     growth_coefficient::Float64
     growth_order::Float64
@@ -555,7 +592,7 @@ Fields:
 - `string::String`: String identifier ("GrDissolution")
 - `symbols::Vector{Symbol}`: Parameter symbols [:dissolution_coefficient, :activation_energy, :dissolution_order]
 """
-Base.@kwdef @concrete struct growth_dissolution <: AbstractFPScalarDissolutionFunction
+@kinetic_law struct growth_dissolution <: AbstractFPScalarDissolutionFunction
     nparams::Int64 = 3
     string::String = "GrDissolution"
     symbols::Vector{Symbol} = [:dissolution_coefficient, :activation_energy, :dissolution_order]
@@ -574,7 +611,7 @@ Fields:
 - `string::String`: String identifier ("GrDissolution_length")
 - `symbols::Vector{Symbol}`: Parameter symbols [:dissolution_coefficient, :activation_energy, :dissolution_order, :size_dependence_coefficient, :size_dependence_exponent]
 """
-Base.@kwdef @concrete struct growth_dissolution_length <: AbstractFPLengthDissolutionFunction
+@kinetic_law struct growth_dissolution_length <: AbstractFPLengthDissolutionFunction
     nparams::Int64 = 5
     string::String = "GrDissolution_length"
     symbols::Vector{Symbol} = [:dissolution_coefficient, :activation_energy,
@@ -597,7 +634,7 @@ Fields:
 - `string::String`: String identifier ("GrEnergyDissolution")
 - `symbols::Vector{Symbol}`: Parameter symbols [:log10_growth_coefficient, :growth_order, :dissolution_coefficient, :activation_energy, :dissolution_order]
 """
-Base.@kwdef @concrete struct growth_energy_dissolution <: AbstractFPScalarDissolutionFunction
+@kinetic_law struct growth_energy_dissolution <: AbstractFPScalarDissolutionFunction
     nparams::Int64 = 5
     string::String = "GrEnergyDissolution"
     symbols::Vector{Symbol} = [:log10_growth_coefficient, :growth_order,
@@ -620,7 +657,7 @@ Fields:
 - `string::String`: String identifier ("No Breakage")
 - `symbols::Vector{Symbol}`: Empty parameter symbols
 """
-Base.@kwdef @concrete struct nobreakage <: AbstractBreakageFunction
+@kinetic_law struct nobreakage <: AbstractBreakageFunction
     nparams::Int64 = 0
     string::String = "No Breakage"
     symbols::Vector{Symbol} = []
@@ -637,7 +674,7 @@ Fields:
 - `nparams::Int64`: Number of parameters (2)
 - `string::String`: String identifier ("Emp. Br")
 """
-Base.@kwdef @concrete struct breakage_empirical <: AbstractBreakageFunction
+@kinetic_law struct breakage_empirical <: AbstractBreakageFunction
     nparams::Int64 = 2
     string::String = "Emp. Br"
     symbols::Vector{Symbol} = [:breakage_coefficient, :breakage_size_exponent]
@@ -655,7 +692,7 @@ Fields:
 - `nparams::Int64`: Number of parameters (2)
 - `string::String`: String identifier ("Uniform. Br")
 """
-Base.@kwdef @concrete struct breakage_uniform <: AbstractBreakageFunction
+@kinetic_law struct breakage_uniform <: AbstractBreakageFunction
     nparams::Int64 = 2
     string::String = "Uniform. Br"
     symbols::Vector{Symbol} = [:ln_breakage_coefficient, :breakage_size_exponent]
@@ -675,7 +712,7 @@ Fields:
 - `string::String`: String identifier ("No Aggregation")
 - `symbols::Vector{Symbol}`: Empty parameter symbols
 """
-Base.@kwdef @concrete struct noaggregation <: AbstractAggregationFunction
+@kinetic_law struct noaggregation <: AbstractAggregationFunction
     nparams::Int64 = 0
     string::String = "No Aggregation"
     symbols::Vector{Symbol} = []
@@ -692,7 +729,7 @@ Fields:
 - `nparams::Int64`: Number of parameters (1)
 - `string::String`: String identifier ("Scalar Aggr")
 """
-Base.@kwdef @concrete struct aggr_scalar <: AbstractAggregationFunction
+@kinetic_law struct aggr_scalar <: AbstractAggregationFunction
     nparams::Int64 = 1
     string::String = "Scalar Aggr"
     symbols::Vector{Symbol} = [:log10_aggregation_coefficient]
@@ -709,7 +746,7 @@ Fields:
 - `nparams::Int64`: Number of parameters (1)
 - `string::String`: String identifier ("Linear Aggr")
 """
-Base.@kwdef @concrete struct aggr_linear <: AbstractAggregationFunction
+@kinetic_law struct aggr_linear <: AbstractAggregationFunction
     nparams::Int64 = 1
     string::String = "Linear Aggr"
     symbols::Vector{Symbol} = [:log10_aggregation_coefficient]
@@ -726,7 +763,7 @@ Fields:
 - `nparams::Int64`: Number of parameters (1)
 - `string::String`: String identifier ("Linear Volume Aggr")
 """
-Base.@kwdef @concrete struct aggr_linearvol <: AbstractAggregationFunction
+@kinetic_law struct aggr_linearvol <: AbstractAggregationFunction
     nparams::Int64 = 1
     string::String = "Linear Volume Aggr"
     symbols::Vector{Symbol} = [:log10_aggregation_coefficient]
@@ -743,7 +780,7 @@ Fields:
 - `nparams::Int64`: Number of parameters (1)
 - `string::String`: String identifier ("Average Aggr")
 """
-Base.@kwdef @concrete struct aggr_avg <: AbstractAggregationFunction
+@kinetic_law struct aggr_avg <: AbstractAggregationFunction
     nparams::Int64 = 1
     string::String = "Average Aggr"
     symbols::Vector{Symbol} = [:log10_aggregation_coefficient]

@@ -32,12 +32,7 @@ function balance_variances(experiments::Vector{<:CrystallisationExperiment};
         balanced = _variance_floor_observable(measured, min_rel_std_pc)
         newmeasurements[index] = CrystallisationExperiment(;
             observables = merge(expt.observables, NamedTuple{(obs,)}((balanced,))),
-            temperature = expt.temperature,
-            initial_crystals = expt.initial_crystals,
-            initial_from = expt.initial_from,
-            seed_shape = expt.seed_shape,
-            operation = expt.operation,
-            relaxation_initial = expt.relaxation_initial,
+            conditions = expt.conditions,
             exp_id = expt.exp_id,
             metadata = expt.metadata)
     end

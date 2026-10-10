@@ -289,24 +289,20 @@ end
 Build the content string for ABCDE_Routine start panel.
 """
 function build_abcde_start_content(optimalpara, prior, target, optimallossfunction,
-                                   confidenceinterval, nparticles, generations,
+                                   nparticles, generations,
                                    solver, nucleationfunction, growthfunction,
                                    aggregationfunction, breakagefunction;
-                                   test::Symbol = :f, extrastring::String = "")
+                                   extrastring::String = "")
     accent = CRISTOOL_PALETTE[:accent]
     info = CRISTOOL_PALETTE[:info]
     highlight = CRISTOOL_PALETTE[:highlight]
     secondary = CRISTOOL_PALETTE[:secondary]
-
-    ci_pct = Int(confidenceinterval * 100)
 
     lines = String[]
     push!(lines, "{$highlight bold}Target Settings:{/$highlight bold}")
     push!(lines,
           "  Reference loss: {$accent}$(round(optimallossfunction, sigdigits=4)){/$accent}")
     push!(lines, "  Target: {$accent}$(round(target, sigdigits=4)){/$accent}")
-    test === :explicit || push!(lines, "  Confidence: $(ci_pct)%")
-    push!(lines, "  Test: $test")
     push!(lines, "")
     push!(lines, "{$info bold}Algorithm:{/$info bold}")
     push!(lines, "  Particles: $nparticles")

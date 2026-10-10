@@ -419,7 +419,7 @@ function build_simulation_thesis_table_data(measurements,
                                                       show_uncertainty = show_measurement_uncertainty)
         end
 
-        temp_str = string(round(measurements[m].temperature - 273, digits = 2))
+        temp_str = string(round(_experiment_start_temperature(measurements[m]) - 273, digits = 2))
         exp_id = hasproperty(measurements[m], :exp_id) ? measurements[m].exp_id : m
         push!(thesis_rows, [string(exp_id), temp_str, pred_text, meas_text])
     end

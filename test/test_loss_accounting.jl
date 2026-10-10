@@ -14,11 +14,11 @@ CriSTool.growthrate(::AccountingBrokenGrowth, parameters, configured, state, tim
         initial_concentration = 10.0, solver = MoM())
     concentration_data = Observable(; time = [0.0, 1.0], mean = [10.0, 11.0])
     ph_data = Observable(; time = [0.0, 1.0], mean = [8.0, 8.0])
-    conc_only = CrystallisationExperiment(; temperature = 293.15, exp_id = 1, observables = (; concentration = concentration_data))
-    both_fields = CrystallisationExperiment(; temperature = 293.15, exp_id = 1,
-        observables = (; concentration = concentration_data, pH = ph_data))
-    reordered_fields = CrystallisationExperiment(; temperature = 293.15, exp_id = 1,
-        observables = (; pH = ph_data, concentration = concentration_data))
+    conc_only = CrystallisationExperiment(; exp_id = 1, observables = (; concentration = concentration_data), conditions = RunConditions(temperature = 293.15))
+    both_fields = CrystallisationExperiment(; exp_id = 1,
+        observables = (; concentration = concentration_data, pH = ph_data), conditions = RunConditions(temperature = 293.15))
+    reordered_fields = CrystallisationExperiment(; exp_id = 1,
+        observables = (; pH = ph_data, concentration = concentration_data), conditions = RunConditions(temperature = 293.15))
     for experiments in ([conc_only, both_fields], [both_fields, conc_only])
         prepared = prepare_loss(constant_problem, experiments)
         @test loss(mae(), prepared, Float64[]) ≈ 2.0
@@ -34,18 +34,18 @@ CriSTool.growthrate(::AccountingBrokenGrowth, parameters, configured, state, tim
 
     # Two pH points with error one and four with error four: pooled MAE is 3.
     ph_four = Observable(; time = [0.0, 0.25, 0.75, 1.0], mean = fill(11.0, 4))
-    uneven_experiment = CrystallisationExperiment(; temperature = 293.15, exp_id = 1,
-        observables = (; concentration = concentration_data, pH = ph_four))
+    uneven_experiment = CrystallisationExperiment(; exp_id = 1,
+        observables = (; concentration = concentration_data, pH = ph_four), conditions = RunConditions(temperature = 293.15))
     uneven_setup = prepare_loss(constant_problem, [both_fields, uneven_experiment])
     @test CriSTool.batchLF_procMO(mae(), uneven_setup, Float64[]) ≈ [1.0, 3.0]
     @test loss(mae(), uneven_setup, Float64[]) ≈ 4.0
 
     likelihood_concentration = Observable(; time = [0.0, 1.0], mean = [10.0, 11.0], variance = [1.0, 1.0])
     likelihood_ph = Observable(; time = [0.0, 1.0], mean = [8.0, 8.0], variance = [4.0, 4.0])
-    likelihood_both = CrystallisationExperiment(; temperature = 293.15, exp_id = 1,
-        observables = (; concentration = likelihood_concentration, pH = likelihood_ph))
-    likelihood_single = CrystallisationExperiment(; temperature = 293.15, exp_id = 2,
-        observables = (; concentration = likelihood_concentration))
+    likelihood_both = CrystallisationExperiment(; exp_id = 1,
+        observables = (; concentration = likelihood_concentration, pH = likelihood_ph), conditions = RunConditions(temperature = 293.15))
+    likelihood_single = CrystallisationExperiment(; exp_id = 2,
+        observables = (; concentration = likelihood_concentration), conditions = RunConditions(temperature = 293.15))
     likelihood_setup = prepare_loss(constant_problem, [likelihood_both, likelihood_single])
     # Frozen Normal(0,1) NLL at1 twice, Normal(0,2) NLL at1 twice.
     @test loss(logMLE(), likelihood_setup, Float64[]) ≈ 6.312048493938581
@@ -70,16 +70,16 @@ CriSTool.growthrate(::AccountingBrokenGrowth, parameters, configured, state, tim
     @test_throws DimensionMismatch loss(mae(), explicit_setup, [1.0])
     @test_throws DimensionMismatch CriSTool.batchLF_procSO(mae(), explicit_setup, [1.0])
     @test_throws DimensionMismatch CriSTool.batchLF_procMO(mae(), explicit_setup, [1.0])
-    unknown_experiment = CrystallisationExperiment(; temperature = 293.15, exp_id = 1,
+    unknown_experiment = CrystallisationExperiment(; exp_id = 1,
         observables = (; concentration = concentration_data,
-            typo = Observable(; time = [0.0, 1.0], mean = [0.0, 0.0])))
+            typo = Observable(; time = [0.0, 1.0], mean = [0.0, 0.0])), conditions = RunConditions(temperature = 293.15))
     unknown_setup = prepare_loss(constant_problem, [unknown_experiment])
     @test_throws ArgumentError loss(mae(), unknown_setup, Float64[])
     @test_throws Exception CriSTool.batchLF_procSO(mae(), unknown_setup, zeros(2, 0))
     @test_throws Exception CriSTool.batchLF_procMO(mae(), unknown_setup, zeros(2, 0))
-    late_concentration = CrystallisationExperiment(; temperature = 293.15, exp_id = 1,
+    late_concentration = CrystallisationExperiment(; exp_id = 1,
         observables = (; concentration = Observable(; time = [10.0, 20.0], mean = [12.0, 13.0]),
-                         pH = Observable(; time = [0.0, 20.0], mean = [7.0, 7.0])))
+                         pH = Observable(; time = [0.0, 20.0], mean = [7.0, 7.0])), conditions = RunConditions(temperature = 293.15))
     for exclude_initial_concentration in (true, false)
         preparation_error = try
             prepare_loss(constant_problem, [late_concentration];
@@ -100,8 +100,8 @@ CriSTool.growthrate(::AccountingBrokenGrowth, parameters, configured, state, tim
 end
 
 @testset "Local projection names reserve built-in solver observables" begin
-    projection_experiment = CrystallisationExperiment(; temperature = 293.15, exp_id = 1,
-        observables = (; concentration = Observable(; time = [0.0, 1.0], mean = [10.0, 10.0])))
+    projection_experiment = CrystallisationExperiment(; exp_id = 1,
+        observables = (; concentration = Observable(; time = [0.0, 1.0], mean = [10.0, 10.0])), conditions = RunConditions(temperature = 293.15))
     projection_nucleation = nucl_empirical_fixed(log10_nucleation_prefactor = -300.0,
         nucleation_order = 1.0)
     projection_growth = growth_empirical_fixed([0.0, 1.0])
@@ -151,8 +151,8 @@ end
         kinetics_growthfunction = AccountingBrokenGrowth(0),
         parameterset_nucleation = Float64[], parameterset_growth = Float64[],
         initial_concentration = 10.0, solver = MoM())
-    broken_experiment = CrystallisationExperiment(; temperature = 293.15, exp_id = 1,
-        observables = (; concentration = Observable(; time = [0.0, 1.0], mean = [10.0, 11.0])))
+    broken_experiment = CrystallisationExperiment(; exp_id = 1,
+        observables = (; concentration = Observable(; time = [0.0, 1.0], mean = [10.0, 11.0])), conditions = RunConditions(temperature = 293.15))
     broken_setup = prepare_loss(broken_problem, [broken_experiment])
     @test_throws DomainError loss(mae(), broken_setup, Float64[])
     @test_throws DomainError loss(logMLE(), broken_setup, Float64[])
@@ -161,10 +161,10 @@ end
 end
 
 @testset "Prepared FV and WENO losses count kinetic parameters" begin
-    mesh_loss_experiment = CrystallisationExperiment(; temperature = 293.15,
+    mesh_loss_experiment = CrystallisationExperiment(;
         exp_id = 160,
         observables = (; concentration = Observable(; time = [0.0, 1.0],
-            mean = [10.0, 11.0], variance = [1.0, 1.0])))
+            mean = [10.0, 11.0], variance = [1.0, 1.0])), conditions = RunConditions(temperature = 293.15))
 
     # The 0-, 4-, and 5-parameter systems all have the same exact trajectory:
     # C0=10 is undersaturated against c*=20, so no crystals form and C(t)=10.

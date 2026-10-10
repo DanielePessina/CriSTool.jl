@@ -49,7 +49,7 @@ function plot_measurements_vs_ensemble(measurements::Vector{<:AbstractExperiment
                             "$(round(meas_mean, sigdigits=3)) ± $(round(meas_std, sigdigits=2))"
             end
 
-            temp_str = string(round(measurements[m].temperature - 273, digits = 2))
+            temp_str = string(round(_experiment_start_temperature(measurements[m]) - 273, digits = 2))
             # Get the actual experiment ID if available, otherwise use the loop index
             exp_id = hasproperty(measurements[m], :exp_id) ? measurements[m].exp_id : m
             push!(thesis_rows, [string(exp_id), temp_str, pred_text, meas_text])
@@ -173,7 +173,7 @@ function plot_measurements_vs_ensemble(measurements::Vector{<:AbstractExperiment
             end
             size_matrix, size_mean, size_std, label_symbol =
                 _ensemble_size_fields(ensemble_sol, Val(size_name))
-            predicted_size_str = "T = $(round(measurements[m].temperature-273,digits = 2) )°C, " *
+            predicted_size_str = "T = $(round(_experiment_start_temperature(measurements[m])-273,digits = 2) )°C, " *
                                 "Pred. $(label_symbol) = $(round(1e6 * size_mean[end], sigdigits=3)) ± " *
                                 "$(round(1e6 * size_std[end], sigdigits=2)) μm"
 
@@ -485,7 +485,7 @@ function plot_ps_measurements_vs_ensemble(measurements::Vector{<:AbstractExperim
             # Get the actual experiment ID if available, otherwise use the loop index
             exp_id = hasproperty(measurements[m], :exp_id) ? measurements[m].exp_id : m
 
-            predicted_size_str = "T = $(round(measurements[m].temperature - 273, digits = 2))°C, Pred. $(label_symbol) = $(round(predicted_size, sigdigits=3)) ± $(round(predicted_std, sigdigits=2)) μm"
+            predicted_size_str = "T = $(round(_experiment_start_temperature(measurements[m]) - 273, digits = 2))°C, Pred. $(label_symbol) = $(round(predicted_size, sigdigits=3)) ± $(round(predicted_std, sigdigits=2)) μm"
 
             if !isempty(meas_size)
                 final_meas_size = meas_size[end]
