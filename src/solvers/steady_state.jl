@@ -68,7 +68,7 @@ end
 """
 Result of relaxing an autonomous MSMPR to a numerically checked steady state.
 
-`equilibrium(steady)` returns the equilibrium values as one named tuple:
+`steady.equilibrium` holds the equilibrium values as one named tuple:
 `time`, `concentration`, `d43`, `d32`, other solvent and size scalars, and
 population vectors such as `moments` or `numberdensity`. The underlying
 one-sample physical solver result is `steady.solution`; `observable_values`,
@@ -77,6 +77,7 @@ steady result can be used wherever a transient result is expected.
 
 Fields:
 - `solution`: one-sample `CrystallisationSolution` at the equilibrium time.
+- `equilibrium`: the same values as scalars (and population vectors).
 - `residual`, `scaled_residual`: native ODE right-hand side and its components
   multiplied by the residence time and divided by their state scale.
 - `hydraulics`: `(; volume, inflow, outflow, residence_time)`.
@@ -91,6 +92,7 @@ Fields:
 """
 @concrete struct CrystallisationSteadyStateSolution <: AbstractSolution
     solution
+    equilibrium
     residual
     scaled_residual
     hydraulics
@@ -121,16 +123,11 @@ _steady_point_value(value::AbstractVector) = length(value) == 1 ? only(value) : 
 _steady_point_value(value::AbstractMatrix) = size(value, 2) == 1 ? vec(value) : value
 _steady_point_value(value) = value
 
-"""
-    equilibrium(steady::CrystallisationSteadyStateSolution) -> NamedTuple
-
-Equilibrium values of a steady MSMPR result: `time`, the solvent and reactor
-variables, the population arrays of `state_vars` as vectors, and the size
-metrics, each a scalar at the single equilibrium sample.
-"""
-equilibrium(steady::CrystallisationSteadyStateSolution) =
-    map(_steady_point_value, merge((; time = steady.solution.time), state_vars(steady.solution),
-                                   size_metrics(steady.solution)))
+# Equilibrium values of a one-sample solution: `time`, the solvent and reactor
+# variables, population arrays as vectors and size metrics as scalars.
+_equilibrium_values(endpoint_solution) =
+    map(_steady_point_value, merge((; time = endpoint_solution.time), state_vars(endpoint_solution),
+                                   size_metrics(endpoint_solution)))
 
 state_vars(steady::CrystallisationSteadyStateSolution) = state_vars(steady.solution)
 reactor_vars(steady::CrystallisationSteadyStateSolution) = reactor_vars(steady.solution)
@@ -498,7 +495,8 @@ function _solve_steadystate_ode(problem::CrystallisationProblem, ode_problem,
                     integration_options = steady_solve_options,
                     solver_success)
 
-    return CrystallisationSteadyStateSolution(physical_result, residual, scaled_residual,
+    return CrystallisationSteadyStateSolution(physical_result, _equilibrium_values(physical_result),
+                                               residual, scaled_residual,
                                                hydraulics, product, diagnostics,
                                                raw_solution.stats, raw_solution.retcode,
                                                solver_success && converged &&
@@ -517,8 +515,8 @@ full-state RHS residual is within tolerance. It returns a distinct
 `CrystallisationSteadyStateSolution`; `success` is false if the relaxation
 horizon, residual, physical constraints, or total-API flow balance fails.
 If those checks fail, the direct call throws `SteadyStateConvergenceError`,
-which carries the unsuccessful result and its diagnostics. `equilibrium(steady)`
-gives the equilibrium values (`equilibrium(steady).concentration`, `.d43`).
+which carries the unsuccessful result and its diagnostics. `steady.equilibrium`
+holds the equilibrium values (`steady.equilibrium.concentration`, `.d43`).
 
 Opaque time profiles and user-defined kinetics require
 `SteadyStateOptions(autonomous = true)` as an explicit declaration that their

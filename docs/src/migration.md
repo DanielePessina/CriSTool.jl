@@ -102,7 +102,7 @@ flags became values rather than symbols.
 | `getmomentsizes(problem, solution)` | `size_metrics(solution)` |
 | `get_characteristic_size(solution)` | `solution.d43[end]` or `solution.population.d50q[end]` |
 | `nmoments(::QMOM)` | `moment_order(solver)` |
-| `steady.concentration`, `steady.d43`, `steady.time`, `steady.moments` | `equilibrium(steady).concentration` (etc.); `steady.solution` is the one-sample `CrystallisationSolution` |
+| `steady.concentration`, `steady.d43`, `steady.time`, `steady.moments` | `steady.equilibrium.concentration` (etc.); `steady.solution` is the one-sample `CrystallisationSolution` |
 | `timestepping_algorithm = :ssprk43` (`:auto`) | `timestepping_algorithm = SSPRK43()` (`nothing`) |
 | `tolerance_mode = :auto` (`:scalar`) | `auto_abstol = true` (`false`) |
 | `QMOM(inversion_algorithm = :wheeler)`, solver `string` fields | removed |

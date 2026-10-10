@@ -36,9 +36,9 @@ const steady_autonomous_options = SteadyStateOptions(autonomous = true)
     washout = solve_steadystate(washout_problem;
         options = SteadyStateOptions(minimum_relaxation = 250.0, autonomous = true))
     @test washout.success
-    @test equilibrium(washout).concentration ≈ 2.0 rtol = 1e-8
+    @test washout.equilibrium.concentration ≈ 2.0 rtol = 1e-8
     @test observable_values(washout, :concentration) ≈ [2.0] rtol = 1e-8
-    @test equilibrium(washout).time >= 250.0
+    @test washout.equilibrium.time >= 250.0
     @test washout.hydraulics == (; volume = 2.0, inflow = 0.2, outflow = 0.2, residence_time = 10.0)
     @test washout.product.dissolved_solute_flow ≈ 0.4 rtol = 1e-8
     @test washout.product.solid_mass_flow == 0.0
@@ -84,8 +84,8 @@ const steady_autonomous_options = SteadyStateOptions(autonomous = true)
         options = SteadyStateOptions(minimum_relaxation = 2.0, relaxation_horizon = 5.0, autonomous = true),
         callback_factory = saving_callback_factory, solve_options = (; dt = 0.1, adaptive = false))
     @test length(event_equilibrium.solution.time) == 1
-    @test equilibrium(event_equilibrium).time >= 2.0
-    @test equilibrium(event_equilibrium).concentration == 2.0
+    @test event_equilibrium.equilibrium.time >= 2.0
+    @test event_equilibrium.equilibrium.concentration == 2.0
 end
 
 @testset "Ideal MSMPR closed form across solver representations" begin
@@ -106,8 +106,8 @@ end
                 options = SteadyStateOptions(autonomous = true, residual_reltol = 1e-8, residual_abstol = 1e-10,
                     balance_reltol = balance_reltol))
             @test steady_result.success
-            @test equilibrium(steady_result).d43 ≈ steady_ideal_d43() rtol = solver_rtol
-            @test equilibrium(steady_result).concentration ≈ expected_concentration rtol = solver_rtol
+            @test steady_result.equilibrium.d43 ≈ steady_ideal_d43() rtol = solver_rtol
+            @test steady_result.equilibrium.concentration ≈ expected_concentration rtol = solver_rtol
             @test steady_result.product.solid_mass_flow ≈ 0.2 * 1000.0 * expected_moments[4] rtol = solver_rtol
             @test steady_result.product.dissolved_solute_flow ≈ 0.2 * expected_concentration rtol = solver_rtol
             balance = steady_result.diagnostics.total_api_balance
@@ -118,7 +118,7 @@ end
             if steady_solver isa MoM
                 @test steady_result.solution.final_state[1:5] ≈ expected_moments[1:5] rtol = 2e-6
             elseif steady_solver isa QMOM
-                @test equilibrium(steady_result).moments ≈ expected_moments rtol = 2e-6
+                @test steady_result.equilibrium.moments ≈ expected_moments rtol = 2e-6
             end
         end
     end

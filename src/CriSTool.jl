@@ -62,7 +62,7 @@ const CRISTOOL_PRIOR_PLOT_SAMPLES = 2^18
 ## Export stuff
 export CrystallisationSolution, AbstractPopulationTrajectory, MeshPopulation,
        MomentPopulation, QuadraturePopulation,
-       CrystallisationSteadyStateSolution, equilibrium, SteadyStateConvergenceError, SteadyStateOptions,
+       CrystallisationSteadyStateSolution, SteadyStateConvergenceError, SteadyStateOptions,
        CrystallisationProblem
 export Observable, ObservableColumns, CrystallisationExperiment, AbstractExperiment,
        initial_concentration

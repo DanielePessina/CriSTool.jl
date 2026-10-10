@@ -22,7 +22,6 @@ MeshPopulation
 MomentPopulation
 QuadraturePopulation
 CrystallisationSteadyStateSolution
-equilibrium
 SteadyStateConvergenceError
 AbstractSolution
 solve_steadystate
@@ -76,7 +75,7 @@ the process includes coupled variables such as pH or volume.
 autonomous `MSMPROperation`. It relaxes the generated dynamics until the scaled
 residual covers every population and solvent-state component, then returns a
 `CrystallisationSteadyStateSolution`: scalar equilibrium values through
-`equilibrium(steady)` (`equilibrium(steady).concentration`, `.d43`), product flows in `steady.product`, the full residual, the solver
+`steady.equilibrium` (`steady.equilibrium.concentration`, `.d43`), product flows in `steady.product`, the full residual, the solver
 retcode, and physical and mass-balance diagnostics in `steady.diagnostics`.
 Settings are passed as `options = SteadyStateOptions(...)`. If a finite
 relaxation horizon ends before convergence or any physical check fails,

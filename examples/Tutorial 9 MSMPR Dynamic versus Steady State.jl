@@ -17,7 +17,7 @@ ways to obtain that operating point:
 2. `solve_steadystate(problem)`, the explicit steady-state route for a constant
    autonomous MSMPR. It relaxes the dynamics until the scaled full-state RHS
    residual is within tolerance and returns a `CrystallisationSteadyStateSolution`:
-   equilibrium values through `equilibrium(steady)` (`.concentration`, `.d43`), product flows in
+   equilibrium values through `steady.equilibrium` (`.concentration`, `.d43`), product flows in
    `steady.product`, and residual / mass-balance checks in `steady.diagnostics`.
 
 The steady state is the feed condition: concentration `C_f` and the feed
@@ -73,7 +73,7 @@ function main()
 
     # Explicit steady-state solve on the same configured problem.
     steady = solve_steadystate(problem)
-    steady_values = equilibrium(steady)
+    steady_values = steady.equilibrium
     @assert steady.success && steady.diagnostics.converged
     @assert isapprox(steady_values.concentration, c_ss; rtol = 1e-6)
     @assert isapprox(steady_values.moments[1], m0_trajectory[1] * m0_feed_fraction; rtol = 1e-6)
