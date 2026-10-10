@@ -18,7 +18,7 @@ function benchmark_model_interface()
     @test named_trajectory.concentration ≈ native_trajectory.concentration rtol = 1e-12
     benchmark_experiment = CrystallisationExperiment(observables = (
         concentration = Observable(time = benchmark_times, mean = named_trajectory.concentration,
-            variance = fill(.01, length(benchmark_times))),), temperature = 293.15, exp_id = 1)
+            variance = fill(.01, length(benchmark_times))),), exp_id = 1, conditions = RunConditions(temperature = 293.15))
     selected_preparation = prepare_fit(benchmark_model, [benchmark_experiment],
         OptimisationSpec(bounds = (growth = (growth_order = (1., 4.),),)))
     full_preparation = prepare_loss(benchmark_run, [benchmark_experiment])

@@ -12,48 +12,22 @@ limited to scalar signed kinetics.
 using CriSTool
 using CairoMakie
 
-function seeded_state(solver)
-    seed_number = 1.0e10
-    seed_length = 25.0e-6
-    if solver isa MoM
-        # One narrow atomic population, represented by M₀:M₄, followed by c.
-        return [seed_number .* seed_length .^ (0:4); 5.0]
-    end
-
-    density = zeros(solver.meshsize)
-    seed_index = clamp(round(Int, solver.meshsize * 0.5), 1, solver.meshsize)
-    density[seed_index] = seed_number / solver.cell_dL
-    return [density; 5.0]
-end
-
 function main()
-    # `nucl_empirical_fixed` has no fitted parameters and returns no
-    # nucleation for this example; the three parameters are SI
-    # [dissolution_coefficient, activation_energy, dissolution_order].
-    nucl = CriSTool.nucl_empirical_fixed([0.0, 1.0])
-    growth = growth_dissolution()
-    params = [2e-9 / 60, 0.0, 1.5]
-    saturation = ConstantSolubility(10.0)
+    # Scalar signed dissolution uses the growth slot; its three SI parameters
+    # are the dissolution coefficient, activation energy and order.
+    crystal_model = CrystallisationModel(LysozymeSystem(saturation_model = ConstantSolubility(10.0));
+        nucleation = CallableNucleation((rate_values, rate_context) -> 0.0; parameters = (;)),
+        growth = growth_dissolution(dissolution_coefficient = 2e-9 / 60, activation_energy = 0.0,
+            dissolution_order = 1.5))
+    # A narrow 25 µm seed starts below saturation, so crystals dissolve and c rises.
+    undersaturated_run = RunConditions(temperature = 293.15, concentration = 5.0,
+        crystals = LogNormalInitialCrystals(mass_concentration = 0.17, d43 = 25e-6, geometric_std = 1.05))
     save_grid = collect(0.0:1800.0:18000.0)
 
     solvers = [MoM(),
                FiniteVol(meshsize = 80, lmax = 50.0e-6),
                WENO(meshsize = 80, lmax = 50.0e-6)]
-    solutions = map(solvers) do solver
-        _, solution = runsimulation(
-            params;
-            nucl = nucl,
-            gr = growth,
-            agg = noaggregation(),
-            br = nobreakage(),
-            solver = solver,
-            initial_concentration = 5.0,
-            initial_state = seeded_state(solver),
-            saturation_model = saturation,
-            save_idx = save_grid,
-        )
-        solution
-    end
+    solutions = [simulate(crystal_model, undersaturated_run; solver, saveat = save_grid) for solver in solvers]
 
     for (solver, solution) in zip(solvers, solutions)
         println("$(typeof(solver)): success=$(solution.success), " *

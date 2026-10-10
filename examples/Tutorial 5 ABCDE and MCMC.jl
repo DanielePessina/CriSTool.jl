@@ -1,23 +1,28 @@
-#=Tutorial 5: separate Bayesian/ABC specifications, common joint prediction samples.
+#=Tutorial 5: Bayesian and ABC specifications share named priors and joint prediction samples.
 Sampling is intentionally small for a runnable example; increase counts for a study.
 =#
 using CriSTool, Distributions, Turing, Random
-include(joinpath(@__DIR__, "model_helpers.jl"))
 
 function main()
-    crystal_model = tutorial_model()
+    crystal_model = CrystallisationModel(LysozymeSystem();
+        nucleation = nucl_CNT(ln_nucleation_prefactor = 38.0, surface_energy = 0.0006),
+        growth = growth_empirical(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
     measured_runs = load_measurements(joinpath(@__DIR__, "fake-experimental-dataset.csv"))
     selected_priors = (growth = (growth_order = Uniform(1.0, 4.0),),)
-    bayesian_preparation = prepare_fit(crystal_model, measured_runs,
-        BayesianSpec(priors = selected_priors); solver = MoM())
-    posterior = fit(bayesian_preparation; sampler = NUTS(20, 0.65),
-        n_samples = 20, n_chains = 1, rng = MersenneTwister(42), progress = false)
-    posterior_predictions = predict(crystal_model, measured_runs, parameter_samples(posterior))
+
+    # NUTS with supplied measurement variances; noise is never fitted.
+    bayesian_spec = BayesianSpec(priors = selected_priors, sampler = NUTS(20, 0.65), n_samples = 20)
+    posterior = fit(prepare_fit(crystal_model, measured_runs, bayesian_spec);
+        rng = MersenneTwister(42), progress = false)
+    # The posterior predicts with the runs, solver and settings it was fitted with.
+    posterior_predictions = predict(posterior)
     println(prediction_summary(posterior_predictions, :concentration))
-    # ABC uses an explicit threshold on a discrepancy, without a fitted noise model.
-    abc_preparation = prepare_fit(crystal_model, measured_runs,
-        ABCSpec(priors = selected_priors, loss = mae(), target = 10.0); solver = MoM())
-    abc_posterior = fit(abc_preparation; nparticles = 16, generations = 2, HPC = true)
-    predict(crystal_model, measured_runs, parameter_samples(abc_posterior))
+
+    # ABC accepts draws whose discrepancy is below an explicit threshold.
+    abc_spec = ABCSpec(priors = selected_priors, target = 10.0, n_particles = 16, n_generations = 2)
+    abc_posterior = fit(prepare_fit(crystal_model, measured_runs, abc_spec); threaded = true)
+    # Predict a new isothermal run from the same posterior draws.
+    predict(abc_posterior, [RunConditions(temperature = 293.15, concentration = 18.0)];
+        saveat = 0.0:600.0:21600.0)
 end
 main()

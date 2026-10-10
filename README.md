@@ -14,54 +14,50 @@ Julia 1.10–1.13 is supported. Runnable tutorials use a separate environment:
 ```julia
 using CriSTool
 
-crystal_model = CrystallisationModel(
-    system = LysozymeSystem(),
-    nucleation = KineticModel(nucl_CNT(); parameters = (
-        ln_nucleation_prefactor = 38.0, surface_energy = 0.0006)),
-    growth = KineticModel(growth_empirical(); parameters = (
-        growth_coefficient = 1e-9 / 60, growth_order = 3.0)))
+crystal_model = CrystallisationModel(LysozymeSystem();
+    nucleation = nucl_CNT(ln_nucleation_prefactor = 38.0, surface_energy = 0.0006),
+    growth = growth_empirical(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
 
-batch_run = CrystallisationProblem(crystal_model;
-    initial_conditions = (concentration = 18.0,),
-    temperature = ConstantTemperature(293.15), solver = MoM())
-trajectory = simulate(batch_run; saveat = 0.0:3600.0:28800.0)
-trajectory.success
+batch_run = RunConditions(temperature = 293.15, concentration = 18.0)
+trajectory = simulate(crystal_model, batch_run; solver = MoM(), saveat = 0.0:3600.0:28800.0)
 trajectory.concentration[end]
 trajectory.d43[end]
-
 ```
 
-The model binds kinetic laws to named values and can be reused across experiments
-and solvers. Simulation initial conditions are explicit. During transient fitting,
-experiments supply initial observations at time zero; absent seed declarations
-mean unseeded. A separate specification selects which kinetic parameters vary.
-Material properties, initial conditions and supplied measurement noise are never fitted.
+A model is a material system plus kinetic laws bound to named values. Calling a
+law with its parameter names binds them; `nucl_CNT()` alone is the unbound law.
+`RunConditions` hold everything else about a run: temperature, initial
+concentration, an optional seed and the reactor operation.
 
 ## Fit and predict
 
 ```julia
-experiments = load_measurements("measurements.csv")
-fit_spec = OptimisationSpec(bounds = (
-    growth = (growth_coefficient = (1e-12, 1e-9),)), loss = logMLE())
-prepared = prepare_fit(crystal_model, experiments, fit_spec; solver = MoM())
-# using Metaheuristics
-# fitted = fit(prepared; algorithm = Metaheuristics.DE(N = 32))
+using Metaheuristics, Distributions
 
-# Joint draws can come from NUTS, ABC, bootstrap fits, or user input.
-draws = ParameterSamples(growth = (growth_coefficient = [1e-11, 2e-11],))
-predictions = predict(crystal_model, experiments, draws; solver = MoM())
+experiments = load_measurements("measurements.csv")  # each run starts from its time-zero data
+fit_spec = OptimisationSpec(bounds = (growth = (growth_coefficient = (1e-12, 1e-9),),),
+    algorithm = DE(N = 32))
+fitted = fit(prepare_fit(crystal_model, experiments, fit_spec; solver = QMOM()))
+fitted.parameters                        # (growth = (growth_coefficient = ...,),)
+
+bayes_spec = BayesianSpec(priors = (growth = (growth_coefficient = Uniform(1e-12, 1e-9),),),
+    n_samples = 500)
+posterior = fit(prepare_fit(crystal_model, experiments, bayes_spec; solver = QMOM()))
+predictions = predict(posterior)         # same runs, solver and settings as the fit
 bands = prediction_summary(predictions, :concentration)
 ```
 
-Likelihood fitting requires supplied positive variances for scored measurements.
-MAE does not. Predictions describe physical trajectories by default; adding a
-supplied measurement-noise distribution is an explicit separate operation.
+The specification selects which kinetic parameters vary; everything else stays
+as bound in the model. Material properties, run conditions and supplied
+measurement noise are never fitted. Likelihood fitting requires supplied
+positive variances for scored measurements; MAE does not. Predictions describe
+physical trajectories; adding measurement noise is a separate, explicit step
+(`measurement_samples`).
 
 Read the [development documentation](https://danielepessina.github.io/CriSTool.jl/dev/),
 the [model workflow guide](docs/src/model-workflow.md), and the
-[migration guide](docs/src/migration.md). Existing low-level solver interfaces
-remain available for advanced numerical work; positional inference routines are
-no longer the recommended interface.
+[migration guide](docs/src/migration.md). `runsimulation` remains available as
+the low-level interface for automatic differentiation and sensitivity work.
 
 Run tests with `julia --project=. -e 'using Pkg; Pkg.test()'`.
 Build docs with `julia --project=docs docs/make.jl` after instantiating `docs`.
