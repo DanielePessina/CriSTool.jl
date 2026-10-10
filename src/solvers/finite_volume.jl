@@ -127,66 +127,36 @@ function _mesh_boundary_flow_state(solver::FiniteVol, problem, ode_solution)
 end
 
 """Physical mesh solution shared by the `FiniteVol` and `WENO` solvers."""
-function _wrap_solution(problem::CrystallisationProblem{<:Any, <:Any, <:Any, <:Any,
-                                                        <:Union{FiniteVol, WENO}},
-                        ode_solution; boundary_flow_state = nothing)
-    cell_centre = problem.solver.cell_centre
+function _wrap_solution(solver::AbstractDiscretisedSolver, problem::CrystallisationProblem,
+                        ode_solution, boundary_flow_state::NamedTuple)
+    cell_centre = solver.cell_centre
     nd_matrix = ode_solution[_population_state_range(problem), :]
     vol_weighted_dens = volumeweighteddensity(cell_centre, nd_matrix,
                                               problem.volume_shape_factor)
-    moments = _momentsizes(cell_centre, nd_matrix)
-    solvent_solution_state = _solvent_solution_state(problem, ode_solution)
-    reactor_state = merge(_reactor_solution_state(problem, ode_solution),
-                          something(boundary_flow_state,
-                                    _mesh_boundary_flow_state(problem.solver, problem,
-                                                              ode_solution)))
-    return CrystallisationFVSolution(ode_solution.t,
-                                     solvent_solution_state.concentration,
-                                     nd_matrix,
-                                     vol_weighted_dens,
-                                     quantilecalculator(cell_centre, vol_weighted_dens, 0.1),
-                                     quantilecalculator(cell_centre, vol_weighted_dens, 0.5),
-                                     quantilecalculator(cell_centre, vol_weighted_dens, 0.9),
-                                     moments.d10,
-                                     moments.d32,
-                                     moments.d43,
-                                     moments.moment2,
-                                     solvent_solution_state,
+    population = MeshPopulation(nd_matrix, vol_weighted_dens,
+                                quantilecalculator(cell_centre, vol_weighted_dens, 0.1),
+                                quantilecalculator(cell_centre, vol_weighted_dens, 0.5),
+                                quantilecalculator(cell_centre, vol_weighted_dens, 0.9))
+    return _crystallisation_solution(problem, ode_solution, population,
+                                     _momentsizes(cell_centre, nd_matrix),
                                      vec(ode_solution[:, end]),
-                                     ode_solution.stats,
-                                     OrdinaryDiffEq.SciMLBase.successful_retcode(ode_solution.retcode),
-                                     reactor_state)
+                                     merge(_reactor_solution_state(problem, ode_solution),
+                                           boundary_flow_state))
 end
 
+"""
+    crystallisation_odeproblem(solver::FiniteVol, problem, saveat)
+
+High-resolution (OSPRE-limited) transport for scalar growth, first-order
+signed upwinding for length-dependent growth; selected by the growth law.
+"""
+crystallisation_odeproblem(solver::FiniteVol, problem::CrystallisationProblem, saveat) =
+    _finite_volume_odeproblem(problem.kinetics_growthfunction, solver, problem, saveat)
+
 """Build the high-resolution FV ODE for scalar growth."""
-
-function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
-                                                                      FiniteVol, NuP, GrP,
-           BrP, AggP, TP, SM, SS, SD, DissF, DissP},
-                                   saveat) where {NuclF <:
-                                                                             AbstractNucleationFunction,
-                                                                             GrF <:
-                                                                             Union{AbstractFPScalarGrowthFunction,
-                                                                                   AbstractFPScalarDissolutionFunction},
-                                                                             BrF <:
-                                                                             AbstractBreakageFunction,
-                                                                             AggF <:
-                                                                             AbstractAggregationFunction,
-                                                                             NuP <:
-                                                                             AbstractVector{<:Real},
-                                                                             GrP <:
-                                                                             AbstractVector{<:Real},
-                                                                             BrP <:
-                                                                             AbstractVector{<:Real},
-                                                                             AggP <:
-                                                                             AbstractVector{<:Real},
-                  TP <: AbstractTemperature,
-                  SM <: AbstractSolubilityModel,
-                  SS <: NamedTuple,
-                  SD,
-                  DissF <: AbstractDissolutionFunction,
-                  DissP <: AbstractVector{<:Real}}
-
+function _finite_volume_odeproblem(growthfunction::Union{AbstractFPScalarGrowthFunction,
+                                                         AbstractFPScalarDissolutionFunction},
+                                   solver::FiniteVol, CryProblem::CrystallisationProblem, saveat)
     # Pre-allocate flux cache using DiffCache for ForwardDiff compatibility
     # DiffCache automatically handles type conversion for dual numbers during AD
     _flux_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 1))
@@ -202,7 +172,7 @@ function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, Gr
         cell_centre = CryProblem.solver.cell_centre
         dissolutionfunction = CryProblem.kinetics_dissolutionfunction
 
-        if DissF <: AbstractFPLengthDissolutionFunction
+        if dissolutionfunction isa AbstractFPLengthDissolutionFunction
             net_growth_rates = get_tmp(_growth_rate_cache_dc, st)
             net_growth_rate!(net_growth_rates,
                                    CryProblem.kinetics_growthfunction,
@@ -286,39 +256,6 @@ function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, Gr
         return nothing
     end
 
-    # function CFLcallback(c)
-    #     return CryProblem.solver.cell_dL[1] /
-    #            growthrate(CryProblem.kinetics_growthfunction,
-    #                       CryProblem.parameterset_growth,
-    #                       c / _get_saturationconcentration(CryProblem.temp_profile, t),
-    #                       CryProblem, temperature(CryProblem.temp_profile, t),
-    #                       zeros(Float64, CryProblem.solver.meshsize))
-    # end
-    function CFLcallback(u, integrator, p, t)
-        if DissF <: AbstractFPLengthDissolutionFunction
-            net_growth_rates = get_tmp(_growth_rate_cache_dc, u)
-            net_growth_rate!(net_growth_rates,
-                                   CryProblem.kinetics_growthfunction,
-                                   p.gr,
-                                   CryProblem.kinetics_dissolutionfunction,
-                                   p.diss,
-                                   CryProblem,
-                                   u,
-                                   t,
-                                   CryProblem.solver.cell_centre)
-            return _signed_cfl(CryProblem.solver.cell_dL, net_growth_rates)
-        end
-        scalar_growth_rate = _fv_scalar_net_growth_rate(
-            CryProblem.kinetics_growthfunction,
-            p.gr,
-            CryProblem.kinetics_dissolutionfunction,
-            p.diss,
-            CryProblem,
-            u,
-            t)
-        return _signed_cfl(CryProblem.solver.cell_dL, scalar_growth_rate)
-    end
-
     θ = (;
                        nucl = CryProblem.parameterset_nucleation,
                        gr = CryProblem.parameterset_growth,
@@ -335,34 +272,13 @@ function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, Gr
                          u0_typed, # eltype-matched plain state (do NOT convert to the params type)
                          (saveat[1], saveat[end]),
                          θ)
-    tstep_solver = _resolve_timestepping_algorithm(CryProblem.solver, :tsit5;
-                                        step_limiter = CFLcallback);
-    return (ODEprob, tstep_solver)
+    return (ODEprob, _timestepping_algorithm(solver, Tsit5()))
 end
 
 """Build the FV ODE for length-dependent (mesh-aligned) growth."""
-function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
-                                                                      FiniteVol, NuP, GrP,
-                                                                      BrP, AggP, TP},
-                                   saveat) where {NuclF <:
-                                                                             AbstractNucleationFunction,
-                                                                             GrF <:
-                                                                             Union{AbstractFPLengthGrowthFunction,
-                                                                                   AbstractFPLengthDissolutionFunction},
-                                                                             BrF <:
-                                                                             AbstractBreakageFunction,
-                                                                             AggF <:
-                                                                             AbstractAggregationFunction,
-                                                                             NuP <:
-                                                                             AbstractVector{<:Real},
-                                                                             GrP <:
-                                                                             AbstractVector{<:Real},
-                                                                             BrP <:
-                                                                             AbstractVector{<:Real},
-                                                                             AggP <:
-                                                                             AbstractVector{<:Real},
-                                                                             TP <:
-                                                                             AbstractTemperature}
+function _finite_volume_odeproblem(growthfunction::Union{AbstractFPLengthGrowthFunction,
+                                                         AbstractFPLengthDissolutionFunction},
+                                   solver::FiniteVol, CryProblem::CrystallisationProblem, saveat)
     # Pre-allocate flux cache using DiffCache for ForwardDiff compatibility
     _flux_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 1))
     _growth_rate_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize))
@@ -441,20 +357,6 @@ function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, Gr
         return nothing
     end
 
-    function CFLcallback(u, integrator, p, t)
-        net_growth_rates = get_tmp(_growth_rate_cache_dc, u)
-        net_growth_rate!(net_growth_rates,
-                               CryProblem.kinetics_growthfunction,
-                               p.gr,
-                               CryProblem.kinetics_dissolutionfunction,
-                               p.diss,
-                               CryProblem,
-                               u,
-                               t,
-                               CryProblem.solver.cell_centre)
-        return _signed_cfl(CryProblem.solver.cell_dL, net_growth_rates)
-    end
-
     θ = (;
                        nucl = CryProblem.parameterset_nucleation,
                        gr = CryProblem.parameterset_growth,
@@ -469,7 +371,5 @@ function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, Gr
                          u0_typed, # eltype-matched plain state (do NOT convert to the params type)
                          (saveat[1], saveat[end]),
                          θ)
-    tstep_solver = _resolve_timestepping_algorithm(CryProblem.solver, :ssprk43;
-                                        step_limiter = CFLcallback);
-    return (ODEprob, tstep_solver)
+    return (ODEprob, _timestepping_algorithm(solver, SSPRK43()))
 end

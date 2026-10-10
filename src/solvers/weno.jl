@@ -530,18 +530,7 @@ function _weno_rhs!(dstdt, st, p, t, CryProblem,
     return nothing
 end
 
-function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
-                                                                     WENO, NuP, GrP, BrP,
-                                                                     AggP, TP},
-                                  saveat) where {NuclF <: AbstractNucleationFunction,
-                                                 GrF <: AbstractGrowthFunction,
-                                                 BrF <: AbstractBreakageFunction,
-                                                 AggF <: AbstractAggregationFunction,
-                                                 NuP <: AbstractVector{<:Real},
-                                                 GrP <: AbstractVector{<:Real},
-                                                 BrP <: AbstractVector{<:Real},
-                                                 AggP <: AbstractVector{<:Real},
-                                                 TP <: AbstractTemperature}
+function crystallisation_odeproblem(solver::WENO, CryProblem::CrystallisationProblem, saveat)
     # Pre-allocate caches using DiffCache for ForwardDiff compatibility.
     _flux_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 1))
     _ndens_pad_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 4))
@@ -602,7 +591,6 @@ function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, Gr
         !(CryProblem.kinetics_dissolutionfunction isa nodissolution) ||
         (CryProblem.kinetics_growthfunction isa AbstractFPScalarDissolutionFunction) ||
         (CryProblem.kinetics_growthfunction isa AbstractFPLengthDissolutionFunction)
-    default_algorithm = signed_growth_transport ? :ssprk43 : :tsit5
     # Stage/step limiter hooks discard returned values.  A solve-local
     # callback instead caps the next step from the accepted-state transport
     # rate, including initialization.  For varying rates this is a local
@@ -625,6 +613,5 @@ function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, Gr
         save_positions = (false, false))
     ODEprob = ODEProblem(WENO_Model, utyped, (saveat[1], saveat[end]), θ;
                          callback = solve_cfl_callback)
-    tstep_solver = _resolve_timestepping_algorithm(CryProblem.solver, default_algorithm)
-    return (ODEprob, tstep_solver)
+    return (ODEprob, _timestepping_algorithm(solver, signed_growth_transport ? SSPRK43() : Tsit5()))
 end

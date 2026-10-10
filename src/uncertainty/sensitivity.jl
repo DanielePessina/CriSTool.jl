@@ -2,18 +2,19 @@
 Functions for forward sensitivity analysis of crystallisation models using SciMLSensitivity.
 """
 
-function forwardsensitivity(CryProblem::CrystallisationProblem{NuclF, GrF, nobreakage,
-                                                               noaggregation, MoM, NuP, GrP,
-                                                               BrP, AggP, TP, SM},
-                            saveat) where {NuclF <: AbstractNucleationFunction,
-                                           GrF <: AbstractGrowthFunction,
-                                           NuP <: AbstractVector{<:Real},
-                                           GrP <: AbstractVector{<:Real},
-                                           BrP <: AbstractVector{<:Real},
-                                           AggP <: AbstractVector{<:Real},
-                                           TP <: AbstractTemperature,
-                                           SM <: AbstractSolubilityModel}
+"""
+    forwardsensitivity(problem, saveat)
 
+Forward parameter sensitivities of a batch `MoM` or scalar-growth `FiniteVol`
+problem, solved with SciMLSensitivity's `ODEForwardSensitivityProblem`.
+"""
+forwardsensitivity(CryProblem::CrystallisationProblem, saveat) =
+    forwardsensitivity(CryProblem.solver, CryProblem, saveat)
+forwardsensitivity(solver::AbstractSolver, CryProblem::CrystallisationProblem, saveat) =
+    throw(ArgumentError("forwardsensitivity supports MoM and FiniteVol, not $(typeof(solver))."))
+
+function forwardsensitivity(solver::MoM, CryProblem::CrystallisationProblem, saveat)
+    _validate_solver_kinetics(solver, CryProblem)
     CryProblem.operation isa BatchOperation ||
         throw(ArgumentError("forwardsensitivity currently supports batch operations; differentiate runsimulation for flow operations."))
 
@@ -23,9 +24,7 @@ function forwardsensitivity(CryProblem::CrystallisationProblem{NuclF, GrF, nobre
                                        CryProblem.kinetics_dissolutionfunction,
                                        p.diss, CryProblem, u, t)
 
-        n_mom = CryProblem.solver.nmoments
-        @assert n_mom >= 2 "MoM solver requires nmoments >= 2 (concentration closure uses µ2)"
-
+        n_mom = solver.nmoments
         du[1] = nucleationrate(CryProblem.kinetics_nucleationfunction,
                                p.nucl, CryProblem, u, t)
         for k in 2:(n_mom + 1)
@@ -46,9 +45,8 @@ function forwardsensitivity(CryProblem::CrystallisationProblem{NuclF, GrF, nobre
                                            (saveat[1], saveat[end]),
                                            θ)
 
-    tstep_solver = _resolve_timestepping_algorithm(CryProblem.solver, :tsit5)
     sol = solve(ODEprob,
-                tstep_solver;
+                _timestepping_algorithm(solver, Tsit5());
                 saveat = saveat,
                 reltol = CryProblem.solver.reltol,
                 abstol = CryProblem.solver.abstol,)
@@ -56,20 +54,7 @@ function forwardsensitivity(CryProblem::CrystallisationProblem{NuclF, GrF, nobre
     return sol
 end
 
-function forwardsensitivity(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
-                                                               FiniteVol, NuP, GrP, BrP,
-                                                               AggP, TP, SM},
-                            saveat) where {NuclF <: AbstractNucleationFunction,
-                                           GrF <: AbstractGrowthFunction,
-                                           BrF <: AbstractBreakageFunction,
-                                           AggF <: AbstractAggregationFunction,
-                                           NuP <: AbstractVector{<:Real},
-                                           GrP <: AbstractVector{<:Real},
-                                           BrP <: AbstractVector{<:Real},
-                                           AggP <: AbstractVector{<:Real},
-                                           TP <: AbstractTemperature,
-                                           SM <: AbstractSolubilityModel}
-
+function forwardsensitivity(solver::FiniteVol, CryProblem::CrystallisationProblem, saveat)
     CryProblem.operation isa BatchOperation ||
         throw(ArgumentError("forwardsensitivity currently supports batch operations; differentiate runsimulation for flow operations."))
     CryProblem.kinetics_aggregationfunction isa noaggregation ||
@@ -119,8 +104,7 @@ function forwardsensitivity(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, 
                                            Float64.(_get_initial_state(CryProblem)),
                                            (0.0, saveat[end]), θ)
 
-    tstep_solver = _resolve_timestepping_algorithm(CryProblem.solver, :tsit5)
-    ODEsol = solve(ODEprob, tstep_solver;
+    ODEsol = solve(ODEprob, _timestepping_algorithm(solver, Tsit5());
                    saveat = saveat,
                    maxiters = CRISTOOL_MAX_SOLVER_ITERS)
 

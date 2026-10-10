@@ -26,8 +26,6 @@ include("dqmom_operations.jl")
     return solver
 end
 
-@inline _dqmom_population_count(solver::DQMOM) = 2 * solver.nquadrature
-
 function _validate_dqmom_public_state(problem::CrystallisationProblem)
     solver = problem.solver
     _validate_dqmom_solver(solver)
@@ -623,19 +621,7 @@ function _dqmom_rhs!(destination,
 end
 
 """Construct the DQMOM ODE problem and selected time-stepping algorithm."""
-function crystallisation_odeproblem(problem::CrystallisationProblem{NuclF, GrF, BrF,
-                                                                    AggF, DQMOM,
-                                                                    NuP, GrP, BrP,
-                                                                    AggP, TP},
-                                    saveat) where {NuclF <: AbstractNucleationFunction,
-                                                   GrF <: AbstractGrowthFunction,
-                                                   BrF <: AbstractBreakageFunction,
-                                                   AggF <: AbstractAggregationFunction,
-                                                   NuP <: AbstractVector{<:Real},
-                                                   GrP <: AbstractVector{<:Real},
-                                                   BrP <: AbstractVector{<:Real},
-                                                   AggP <: AbstractVector{<:Real},
-                                                   TP <: AbstractTemperature}
+function crystallisation_odeproblem(solver::DQMOM, problem::CrystallisationProblem, saveat)
     _validate_dqmom_problem(problem)
     length(saveat) >= 2 ||
         throw(ArgumentError("saveat must contain at least two time points."))
@@ -690,19 +676,16 @@ function crystallisation_odeproblem(problem::CrystallisationProblem{NuclF, GrF, 
                                  (saveat[1], saveat[end]),
                                  parameters)
     end
-    time_step_solver = _resolve_timestepping_algorithm(problem.solver, :tsit5)
-    return ode_problem, time_step_solver
+    return ode_problem, _timestepping_algorithm(solver, Tsit5())
 end
 
-function _wrap_solution(problem::CrystallisationProblem{<:Any, <:Any, <:Any, <:Any, DQMOM},
-                        solution)
-    solver = problem.solver
+function _wrap_solution(solver::DQMOM, problem::CrystallisationProblem, solution,
+                        boundary_flow_state::NamedTuple)
     nquadrature = solver.nquadrature
     n_solvent = length(propertynames(problem.initial_solvent_state))
     n_reactor = _operation_state_count(problem.operation)
     internal_matrix = Array(solution)
-    time_points = collect(solution.t)
-    n_time_points = length(time_points)
+    n_time_points = length(solution.t)
     element_type = eltype(internal_matrix)
     weight_matrix = zeros(element_type, nquadrature, n_time_points)
     node_matrix = zeros(element_type, nquadrature, n_time_points)
@@ -765,22 +748,6 @@ function _wrap_solution(problem::CrystallisationProblem{<:Any, <:Any, <:Any, <:A
         projection_diagnostics = nothing
     end
 
-    d10 = [_safe_moment_size_ratio(moment_matrix[2, index],
-                                   moment_matrix[1, index],
-                                   moment_matrix[1, index])
-           for index in 1:n_time_points]
-    d32 = [_safe_moment_size_ratio(moment_matrix[4, index],
-                                   moment_matrix[3, index],
-                                   moment_matrix[1, index])
-           for index in 1:n_time_points]
-    d43 = 2 * nquadrature >= 5 ?
-          [_safe_moment_size_ratio(moment_matrix[5, index],
-                                   moment_matrix[4, index],
-                                   moment_matrix[1, index])
-           for index in 1:n_time_points] :
-          zeros(element_type, n_time_points)
-    moment2 = collect(@view moment_matrix[3, :])
-    solvent_solution_state = _solvent_solution_state(problem, solution)
     reactor_solution_state = _reactor_solution_state(problem, solution)
     solvent_final = Vector{element_type}(undef, n_solvent)
     first_solvent = first(_solvent_state_range(problem))
@@ -799,8 +766,6 @@ function _wrap_solution(problem::CrystallisationProblem{<:Any, <:Any, <:Any, <:A
                        collect(view(node_matrix, :, n_time_points)),
                        reactor_final,
                        solvent_final)
-    successful = OrdinaryDiffEq.SciMLBase.successful_retcode(solution.retcode)
-
     if element_type <: AbstractFloat
         all(node -> node > solver.minimum_size, node_matrix) ||
             throw(DomainError(minimum(node_matrix),
@@ -810,82 +775,27 @@ function _wrap_solution(problem::CrystallisationProblem{<:Any, <:Any, <:Any, <:A
                               "DQMOM trajectory produced a nonpositive weight."))
     end
 
-    return CrystallisationDQMOMSolution(time_points,
-                                        solvent_solution_state.concentration,
-                                        weight_matrix,
-                                        node_matrix,
-                                        moment_matrix,
-                                        d10,
-                                        d32,
-                                        d43,
-                                        moment2,
-                                        solvent_solution_state,
-                                        final_state,
-                                        solution.stats,
-                                        successful,
-                                        reactor_solution_state,
-                                        projection_diagnostics)
+    return _crystallisation_solution(problem, solution,
+                                     QuadraturePopulation(moment_matrix, node_matrix, weight_matrix,
+                                                          projection_diagnostics),
+                                     _raw_moment_size_metrics(moment_matrix), final_state,
+                                     merge(reactor_solution_state, boundary_flow_state))
 end
 
-
-"""Reconstruct a physical quadrature rule at one DQMOM output index."""
-function quadrature(solution::CrystallisationDQMOMSolution, time_index::Integer)
-    1 <= time_index <= length(solution.time) ||
-        throw(BoundsError(solution.time, time_index))
-    diagnostics = solution.projection_diagnostics === nothing ? nothing :
-                  solution.projection_diagnostics[time_index]
-    nquadrature = size(solution.nodes, 1)
-    return QMOMQuadrature(collect(view(solution.nodes, :, time_index)),
-                          collect(view(solution.weights, :, time_index)),
-                          nquadrature,
-                          diagnostics)
-end
-
-quadrature(solution::CrystallisationDQMOMSolution) =
-    [quadrature(solution, index) for index in eachindex(solution.time)]
-"""
-    dqmom_quadrature(solution::CrystallisationDQMOMSolution, time_index::Integer)
-
-Compatibility alias for `quadrature(solution, time_index)` on a DQMOM
-solution.
-"""
-dqmom_quadrature(solution::CrystallisationDQMOMSolution, time_index::Integer) =
-    quadrature(solution, time_index)
-
-time(solution::CrystallisationDQMOMSolution) = solution.time
-state_vars(solution::CrystallisationDQMOMSolution) =
-    merge(solution.solvent_state,
-          reactor_vars(solution),
-          (; weights = solution.weights,
-             nodes = solution.nodes,
-             moments = solution.moments,
-             quadrature_weights = solution.weights,
-             quadrature_nodes = solution.nodes))
-size_metrics(solution::CrystallisationDQMOMSolution) =
-    (; d10 = solution.d10,
-       d32 = solution.d32,
-       d43 = solution.d43,
-       moment2 = solution.moment2)
-get_characteristic_size(solution::CrystallisationDQMOMSolution) = solution.d43[end]
-_size_trajectory(solution::CrystallisationDQMOMSolution) = solution.d43
-
-function getmomentsizes(problem::CrystallisationProblem,
-                        solution::CrystallisationDQMOMSolution)
-    return size_metrics(solution)
-end
-
-"""Third physical length moment for secondary nucleation closures."""
-function _secondary_third_moment(solver::DQMOM,
-                                 problem::CrystallisationProblem,
-                                 direct_population)
+"""Physical raw moment `µ_order` of a normalized DQMOM state."""
+function _dqmom_physical_moment(solver::DQMOM, direct_population, order::Integer)
     nquadrature = solver.nquadrature
-    volume_moment = zero(promote_type(eltype(direct_population),
+    scaled_moment = zero(promote_type(eltype(direct_population),
                                       typeof(solver.coordinate_scale),
                                       typeof(solver.weight_scale)))
     @inbounds for node_index in 1:nquadrature
         scaled_weight = direct_population[node_index]
         scaled_node = direct_population[nquadrature + node_index] / scaled_weight
-        volume_moment += scaled_weight * scaled_node^3
+        scaled_moment += scaled_weight * scaled_node^order
     end
-    return solver.weight_scale * solver.coordinate_scale^3 * volume_moment
+    return solver.weight_scale * solver.coordinate_scale^order * scaled_moment
 end
+
+"""Third physical length moment for secondary nucleation closures."""
+_secondary_third_moment(solver::DQMOM, problem::CrystallisationProblem, direct_population) =
+    _dqmom_physical_moment(solver, direct_population, 3)

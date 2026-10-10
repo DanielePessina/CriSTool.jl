@@ -256,8 +256,7 @@ function dissolutionrate(dissolutionfunction::AbstractFPLengthDissolutionFunctio
                          problem::CrystallisationProblem,
                          state,
                          time)
-    mesh = hasproperty(problem.solver, :cell_centre) ? problem.solver.cell_centre :
-           throw(ArgumentError("$(typeof(dissolutionfunction)) requires a discretised solver mesh."))
+    mesh = _length_mesh(problem.solver)
     rate_type = promote_type(eltype(parameters), eltype(state))
     destination = Vector{rate_type}(undef, length(mesh))
     dissolutionrate!(destination, dissolutionfunction, parameters, problem, state,
@@ -568,9 +567,7 @@ function growthrate(gf::growth_empirical_length,
                     prob::CrystallisationProblem,
                     state,
                     time) where {T <: AbstractVector}
-    mesh = hasproperty(prob.solver, :cell_centre) ? prob.solver.cell_centre :
-           throw(ArgumentError("growth_empirical_length requires a discretised solver mesh " *
-                               "for the allocating growthrate method."))
+    mesh = _length_mesh(prob.solver)
     rate_type = promote_type(eltype(parameters), eltype(state), eltype(mesh))
     destination = Vector{rate_type}(undef, length(mesh))
     return growthrate!(destination, gf, parameters, prob, state, time, mesh)
@@ -724,8 +721,7 @@ Calculate length-dependent dissolution rate (negative growth).
 """
 function dissolutionrate(gf::growth_dissolution_length, parameters::T,
                          prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
-    mesh = hasproperty(prob.solver, :cell_centre) ? prob.solver.cell_centre :
-           throw(ArgumentError("growth_dissolution_length requires a discretised solver mesh."))
+    mesh = _length_mesh(prob.solver)
     rate_type = promote_type(eltype(parameters), eltype(state))
     destination = Vector{rate_type}(undef, length(mesh))
     dissolutionrate!(destination, gf, parameters, prob, state, t, mesh)
@@ -752,8 +748,7 @@ function growthrate!(destination::AbstractVector,
                      prob::CrystallisationProblem,
                      state,
                      t)
-    mesh = hasproperty(prob.solver, :cell_centre) ? prob.solver.cell_centre :
-           throw(ArgumentError("growth_dissolution_length requires a discretised solver mesh."))
+    mesh = _length_mesh(prob.solver)
     return dissolutionrate!(destination, gf, parameters, prob, state, t, mesh)
 end
 
