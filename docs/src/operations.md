@@ -7,7 +7,10 @@ precision requirement. Every cell still contributes to the full-state residual.
 Supply `residual_scales` to select explicit component scales. Size-domain boundary
 flows are reported separately from the physical outlet and included in the
 steady total-inventory balance. `balance_reltol` controls the accepted relative
-balance error; mesh/domain refinement remains necessary for resolved solvers.
+balance error. Mesh solvers conserve the total of dissolved solute and their
+cell-centre `µ3` exactly, so their balance closes to the residual tolerance
+like the moment solvers. Mesh/domain refinement is still needed for an
+accurate distribution and steady concentration.
 
 CriSTool models **one well-mixed vessel with at most one inlet** and a
 one-dimensional crystal population. Three hydraulic operations are supported

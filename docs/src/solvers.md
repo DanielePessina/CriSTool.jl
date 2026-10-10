@@ -45,6 +45,27 @@ length-dependent dissolution rate accepts an explicit mesh argument when it
 is evaluated outside the solver; use the solver-owned scratch buffer with
 `growthrate!` in custom discretised code.
 
+With the default solvent dynamics, mesh solvers take dissolved solute from
+the exact change of the cell-centre third moment `µ3 = Σᵢ cᵢ³ nᵢ ΔL` that
+their face fluxes `F` produce, plus the crystal volume crossing `lmin` and
+`lmax` at face size:
+
+```math
+\frac{dC}{dt} = -\rho k_v \Big[\sum_i c_i^3 (F_i - F_{i+1})
+  + F_{N+1} L_{\max}^3 - F_1 L_{\min}^3\Big].
+```
+
+`C + ρ kv µ3` therefore changes only through operation flows and the reported
+size-boundary flows, to round-off, for nucleation, growth and dissolution
+through `lmin`. Mesh error shows up in the population, which is spread by
+numerical diffusion and so holds slightly more `µ3` than the exact one; the
+solute pays for that extra mass, so `concentration` carries the same
+first-order error and converges as the mesh is refined. A custom
+`solvent_dynamics` callable receives growth rates, not fluxes. If it calls
+`default_solvent_dynamics` on a mesh state, that call uses the cell-centre
+quadrature of `3∫G L² n dL`, which is first-order consistent but not exactly
+conservative.
+
 WENO limits each proposed time step to `0.9 * cell_dL / maximum(abs, G)`
 using the net growth or dissolution rate at the current accepted state. It
 applies the limit at initialization and after accepted steps, and preserves

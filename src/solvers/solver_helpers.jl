@@ -108,52 +108,77 @@ end
 @inline _rate_zero(net_growth_rates::AbstractVector) = zero(eltype(net_growth_rates))
 
 """
-    _fused_solvent_coupling_enabled(problem)
+    _mesh_transport_divergence!(population_derivative, face_flux, solver) -> solid_volume_rate
 
-True when the solvent block is exactly one `:concentration` variable driven by
-`DefaultSolventDynamics`.  In that case the discretised RHS can compute the
-concentration depletion inside the divergence sweep (`_fused_depletion_divergence!`)
-instead of a separate pass, and write the solvent slot directly.
+Write the conservative transport divergence `-(F[i+1] - F[i]) / ΔL` of the mesh
+face fluxes `F` (number/m³/s) into `population_derivative` and return the
+crystal volume per suspension volume that this transport step creates
+(m³/m³/s), the quantity the solute supplies:
 
-The gate is a compile-time constant for a concrete problem type, so the
-`if` in the solver closures folds to the fused path with zero runtime cost.
+    Σᵢ cᵢ³ (Fᵢ - Fᵢ₊₁) + F_{N+1} lmax³ - F₁ lmin³ = Σⱼ Fⱼ (ℓⱼ³ - ℓⱼ₋₁³)
+
+with cell centres `cᵢ` and transport points `ℓ₀ = lmin`, `ℓⱼ = cⱼ` (1 ≤ j ≤ N),
+`ℓ_{N+1} = lmax` (the right-hand side is the summation-by-parts face form,
+the discrete counterpart of `3∫G L² n dL = ∫ G n d(L³)`).
+The first sum is exactly the rate of the cell-centre third moment
+`µ3 = Σᵢ cᵢ³ nᵢ ΔL` (the moment reported by mesh solutions and steady
+balances) under these fluxes. The boundary terms are the crystal volume
+crossing `lmax` and `lmin` at the face sizes, i.e. the reported
+size-boundary solid flows, which the solute balance treats as exchanges with
+the unrepresented size range. Hence `C + ρ kv µ3` changes only through
+operation flows and these size-boundary flows, to round-off, for every flux
+the scheme produces (nucleation inflow, growth, dissolution through `lmin`).
 """
-@inline _fused_solvent_coupling_enabled(problem) =
-    problem.solvent_dynamics isa DefaultSolventDynamics &&
-    propertynames(problem.initial_solvent_state) == (:concentration,)
-
-"""Scalar-growth fused divergence + concentration-depletion sweep.
-
-The depletion sum is bit-identical to `_concentration_depletion(cell_dL,
-numberdensity, scalar_growth_rate, cell_centre)` (same expression, same
-accumulation order), so the produced concentration rate matches
-`DefaultSolventDynamics` exactly.
-"""
-@inline function _fused_depletion_divergence!(dstdt_nd_view, flux, numberdensity,
-                                              cell_centre, cell_dL,
-                                              scalar_growth_rate)
-    acc = zero(promote_type(eltype(numberdensity), typeof(scalar_growth_rate)))
-    @inbounds for i in eachindex(dstdt_nd_view)
-        dstdt_nd_view[i] = -(flux[i + 1] - flux[i]) / cell_dL
-        acc += cell_dL * numberdensity[i] * scalar_growth_rate *
-               (cell_centre[i] * cell_centre[i])
+@inline function _mesh_transport_divergence!(population_derivative, face_flux,
+                                             solver::AbstractDiscretisedSolver)
+    cell_centre = solver.cell_centre
+    cell_dL = solver.cell_dL
+    transported_volume_rate = zero(eltype(face_flux))
+    @inbounds for cell_index in eachindex(population_derivative)
+        face_flux_difference = face_flux[cell_index + 1] - face_flux[cell_index]
+        population_derivative[cell_index] = -face_flux_difference / cell_dL
+        centre_length = cell_centre[cell_index]
+        transported_volume_rate -= centre_length * centre_length * centre_length *
+                                   face_flux_difference
     end
-    return acc
+    lower_length = first(solver.cell_face)
+    upper_length = last(solver.cell_face)
+    return transported_volume_rate + last(face_flux) * upper_length^3 -
+           first(face_flux) * lower_length^3
 end
 
-"""Mesh-aligned-growth fused divergence + concentration-depletion sweep."""
-@inline function _fused_depletion_divergence!(dstdt_nd_view, flux, numberdensity,
-                                              cell_centre, cell_dL,
-                                              net_growth_rates::AbstractVector)
-    length(numberdensity) == length(net_growth_rates) == length(cell_centre) ||
-        throw(ArgumentError("numberdensity, net_growth_rates, and cell_centre must have the same length."))
-    acc = zero(promote_type(eltype(numberdensity), eltype(net_growth_rates)))
-    @inbounds for i in eachindex(dstdt_nd_view)
-        dstdt_nd_view[i] = -(flux[i + 1] - flux[i]) / cell_dL
-        acc += cell_dL * numberdensity[i] * net_growth_rates[i] *
-               (cell_centre[i] * cell_centre[i])
+"""
+    _write_mesh_solvent_derivatives!(derivative, problem, state, time, growth, solid_volume_rate)
+
+Solvent block of a mesh RHS. `DefaultSolventDynamics` takes the solute from
+`solid_volume_rate` of [`_mesh_transport_divergence!`](@ref), so the discrete
+scheme conserves `C + ρ kv µ3`; every other solvent variable has zero rate.
+Custom solvent dynamics keep the `(problem, state, time, growth)` contract.
+"""
+@inline _write_mesh_solvent_derivatives!(derivative, problem, state, time, growth,
+                                         solid_volume_rate) =
+    _write_mesh_solvent_derivatives!(problem.solvent_dynamics, derivative, problem,
+                                     state, time, growth, solid_volume_rate)
+
+@inline function _write_mesh_solvent_derivatives!(::DefaultSolventDynamics, derivative,
+                                                  problem, state, time, growth,
+                                                  solid_volume_rate)
+    @inbounds for solvent_index in _solvent_state_range(problem)
+        derivative[solvent_index] = zero(eltype(derivative))
     end
-    return acc
+    material_system = problem.model.system
+    derivative[_solvent_state_index(problem, :concentration)] =
+        -material_system.volume_shape_factor * material_system.crystal_density *
+        solid_volume_rate
+    return nothing
+end
+
+@inline function _write_mesh_solvent_derivatives!(solvent_dynamics, derivative, problem,
+                                                  state, time, growth, solid_volume_rate)
+    _write_solvent_derivatives!(derivative, problem,
+                                _solvent_derivatives(problem, state, time, growth,
+                                                     solvent_dynamics))
+    return nothing
 end
 
 @inline function _signed_upwind_flux(growth_rate, left_density, right_density)

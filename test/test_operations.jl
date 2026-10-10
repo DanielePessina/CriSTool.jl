@@ -195,9 +195,14 @@ end
 @testset "Mesh growth reports the solid mass leaving the size domain" begin
     # A narrow seed at 18 µm grows 3 µm past lmax = 20 µm. Total solute inventory
     # lost from the batch must equal the time-integrated upper-boundary solid
-    # flow; the error shrinks with mesh refinement.
+    # flow. Mesh solvers conserve C + ρkv·µ3 up to the size-boundary flows
+    # exactly on any mesh, so the only error left is the trapezoid rule on the
+    # sampled flow: second order in the 0.025 s spacing (measured ≤ 2.7e-6 of
+    # the inventory; 1.3e-4 → 1.3e-6 → 1.3e-8 for 25 / 241 / 2401 samples).
+    # The former 3ρkv·G·µ2 coupling left an O(ΔL) defect here (8e-3 / 2.5e-3
+    # for FiniteVol on 24 / 48 cells, 9.5e-3 / 2.3e-3 for WENO).
     boundary_seed = GaussianInitialCrystals(mass_concentration = 4.0, d43 = 18e-6, standard_deviation = 0.5e-6)
-    boundary_times = collect(range(0.0, 6.0; length = 25))
+    boundary_times = collect(range(0.0, 6.0; length = 241))
     trapezoid_integral(samples) = sum((boundary_times[index + 1] - boundary_times[index]) *
         (samples[index + 1] + samples[index]) / 2 for index in 1:(length(boundary_times) - 1))
     for solver_type in (FiniteVol, WENO)
@@ -220,7 +225,6 @@ end
             @test inventory_loss > 0.5 * reactor_volume_value * first(solid_mass)
             abs(inventory_loss - boundary_loss) / (reactor_volume_value * first(total_solute))
         end
-        @test all(<(0.03), balance_errors)
-        @test balance_errors[2] < balance_errors[1]
+        @test all(<(1e-5), balance_errors)
     end
 end
