@@ -159,19 +159,6 @@ end
 _bound_parameter_vector(bound_kinetic::KineticModel) =
     isempty(bound_kinetic.parameters) ? Float64[] : ComponentArray(; bound_kinetic.parameters...)
 
-_checked_operation(operation_settings::BatchOperation) = operation_settings
-function _checked_operation(operation_settings::Union{MSMPROperation, FedBatchOperation})
-    original_feed = operation_settings.feed
-    checked_feed = CrystallisationFeed(
-        concentration = original_feed.solvent_state.concentration,
-        solvent_state = Base.structdiff(original_feed.solvent_state, (; concentration = nothing)),
-        crystals = original_feed.crystals === nothing ? nothing : _checked_seed_description(original_feed.crystals),
-        transport = original_feed.transport)
-    return operation_settings isa MSMPROperation ?
-        MSMPROperation(volume = operation_settings.volume, inflow = operation_settings.inflow, feed = checked_feed) :
-        FedBatchOperation(initial_volume = operation_settings.initial_volume, inflow = operation_settings.inflow, feed = checked_feed)
-end
-_checked_operation(operation_settings::AbstractCrystallisationOperation) = operation_settings
 
 """
     CrystallisationProblem(model, conditions; solver=MoM(), kwargs...)
@@ -205,7 +192,7 @@ function CrystallisationProblem(crystal_model::CrystallisationModel, run_conditi
         parameterset_breakage = _bound_parameter_vector(crystal_model.breakage),
         initial_concentration = initial_solvent.concentration,
         initial_solvent_state = initial_solvent, temp_profile = run_conditions.temperature, solver,
-        operation = _checked_operation(run_conditions.operation))
+        operation = run_conditions.operation)
     reserved_settings = intersect((keys(model_settings)..., :initial_state), keys(kwargs))
     isempty(reserved_settings) || throw(ArgumentError(
         "Material, kinetic and run conditions are set by the model and conditions: $(Tuple(reserved_settings))."))

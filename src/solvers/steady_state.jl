@@ -64,17 +64,6 @@ function SteadyStateOptions(; relaxation_horizon = nothing, minimum_relaxation =
                               balance_reltol)
 end
 
-# Compatibility for prepared inference, which still stores steady options as a
-# NamedTuple (`prepare_loss(...; steady_options)`). Remove both methods below
-# once `prepare_loss` / `PreparedExperiment` hold a `SteadyStateOptions`.
-_steady_state_options(options::SteadyStateOptions) = options
-function _steady_state_options(options::NamedTuple)
-    all(option -> option in fieldnames(SteadyStateOptions), keys(options)) ||
-        throw(ArgumentError("steady_options contains an unsupported option."))
-    return SteadyStateOptions(; options...)
-end
-_steady_option(options, name::Symbol, default) =
-    something(getfield(_steady_state_options(options), name), Some(default))
 
 """
 Result of relaxing an autonomous MSMPR to a numerically checked steady state.
@@ -411,11 +400,11 @@ discarding the solver retcode.
 """
 function _solve_steadystate_ode(problem::CrystallisationProblem, ode_problem,
                                 algorithm;
-                                steady_options = SteadyStateOptions(),
+                                steady_options::SteadyStateOptions = SteadyStateOptions(),
                                 solve_options::NamedTuple = (;),
                                 callback_factory = nothing,
                                 reconstruction_failure_handler = nothing)
-    options = _steady_state_options(steady_options)
+    options = steady_options
     _validate_steadystate_problem(problem; autonomous = options.autonomous)
 
     start_time, original_end_time = ode_problem.tspan

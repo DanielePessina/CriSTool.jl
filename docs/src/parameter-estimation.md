@@ -35,7 +35,7 @@ does not fit initial conditions or silently move the start to a later
 measurement. In steady mode (`mode = :steady`), each experiment's conditions must
 be numeric (no placeholders) and use an autonomous MSMPR operation; the run relaxes
 from those values, and steady observations are targets, not initial conditions.
-Callable kinetic laws require `steady_options=(autonomous=true,)`, an explicit
+Callable kinetic laws require `steady_options = SteadyStateOptions(autonomous = true)`, an explicit
 declaration that their rate does not depend on time. The package cannot infer
 that property from arbitrary user code.
 

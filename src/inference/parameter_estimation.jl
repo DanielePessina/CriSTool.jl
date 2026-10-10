@@ -21,7 +21,7 @@ struct PreparedExperiment
     solve_options::NamedTuple
     callback_factory::Any
     mode::Symbol
-    steady_options::NamedTuple
+    steady_options::SteadyStateOptions
 end
 
 # A numerical return-code failure must remain a failed candidate even if its
@@ -87,7 +87,7 @@ function prepare_loss(problem::CrystallisationProblem,
                       exclude_initial_concentration::Bool = true,
                       algorithm = nothing, solve_options::NamedTuple = (;),
                       callback_factory = nothing, observable_projections::NamedTuple = (;),
-                      mode::Symbol = :transient, steady_options::NamedTuple = (;))
+                      mode::Symbol = :transient, steady_options::SteadyStateOptions = SteadyStateOptions())
     mode in (:transient, :steady) || throw(ArgumentError("mode must be :transient or :steady."))
     if mode === :steady
         steady_problems = [_experiment_problem(problem, expt;
@@ -174,7 +174,7 @@ function prepare_loss(configured_problems::AbstractVector{<:CrystallisationProbl
                       algorithm = nothing, solve_options::NamedTuple = (;),
                       callback_factory = nothing, initial_time::Real = 0.0,
                       observable_projections::NamedTuple = (;), mode::Symbol = :transient,
-                      steady_options::NamedTuple = (;))
+                      steady_options::SteadyStateOptions = SteadyStateOptions())
     mode in (:transient, :steady) || throw(ArgumentError("mode must be :transient or :steady."))
     mode === :steady && exclude_initial_concentration &&
         throw(ArgumentError("Steady concentration measurements cannot supply initial conditions."))
@@ -196,13 +196,9 @@ function prepare_loss(configured_problems::AbstractVector{<:CrystallisationProbl
         _validate_crystallisation_problem(configured)
         _validate_save_times(saveat)
         integration_times = if mode === :steady
-            declared_autonomous = _steady_option(steady_options, :autonomous, false)
-            declared_autonomous isa Bool ||
-                throw(ArgumentError("steady_options.autonomous must be Bool."))
-            _validate_steadystate_problem(configured; autonomous = declared_autonomous)
-            requested_horizon = _steady_option(steady_options, :relaxation_horizon, nothing)
-            relaxation_horizon = isnothing(requested_horizon) ?
-                _default_steady_relaxation_horizon(configured) : requested_horizon
+            _validate_steadystate_problem(configured; autonomous = steady_options.autonomous)
+            relaxation_horizon = something(steady_options.relaxation_horizon,
+                _default_steady_relaxation_horizon(configured))
             [0.0, Float64(relaxation_horizon)]
         else
             saveat
@@ -438,8 +434,13 @@ function _simulated_at(solution::AbstractSolution, name::Symbol,
     return [_linear_interpolate(solution.time, simulated, t) for t in target_time]
 end
 
+# Projections always see a trajectory; a steady result exposes scalars, so they get its endpoint solution.
+_projection_trajectory(solution::AbstractSolution) = solution
+_projection_trajectory(steady_result::CrystallisationSteadyStateSolution) = steady_result.solution
+
 function _setup_observable_values(setup::LossSetup, solution::AbstractSolution, name::Symbol)
     hasproperty(setup.observable_projections, name) || return observable_values(solution, name)
+    solution = _projection_trajectory(solution)
     projected_values = getproperty(setup.observable_projections, name)(solution)
     projected_values isa AbstractVector && length(projected_values) == length(solution.time) ||
         throw(ArgumentError("Projection :$name must return a trajectory matching the solution times."))
