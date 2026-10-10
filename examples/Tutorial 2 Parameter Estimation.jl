@@ -18,7 +18,7 @@ function main()
     # The fit remembers its experiments, solver and settings.
     fitted_trajectories = predict(fitted_result)
     println("Predicted final concentrations: ",
-        [ensemble.concentration[1, end] for ensemble in fitted_trajectories.ensembles])
+        [observable_values(ensemble, :concentration)[1, end] for ensemble in fitted_trajectories.ensembles])
     # For a larger study increase particles/iterations and inspect backend convergence.
     fitted_result
 end

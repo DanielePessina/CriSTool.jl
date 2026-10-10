@@ -12,7 +12,7 @@ identical port: Base's own implementation of `OncePerTask` is exactly
 `get!(f, task_local_storage(), self)::T` keyed by the object.
 
 `T` is passed explicitly (never inferred) so the model's
-`loss_setup_per_task()` call site - which runs once per NUTS
+`prepared_fit_per_task()` call site - which runs once per NUTS
 log-probability evaluation - stays type stable on every supported Julia.
 """
 function _cristool_once_per_task(initializer, ::Type{T}) where {T}
@@ -34,14 +34,13 @@ end
 # arguments are captured by a zero-argument adapter below because the generated
 # DynamicPPL 0.39 evaluator for nonempty model arguments references a global
 # defined later in that dependency; Julia 1.12+ rejects that world-age access.
-Turing.@model function _cristool_nuts_loss_model_with_data(prior, lossfunction,
-                                                            loss_setup_per_task)
+Turing.@model function _cristool_nuts_loss_model_with_data(prior, prepared_fit_per_task)
     n = length(prior)
     θ = Vector{Float64}(undef, n)
     for i in 1:n
         θ[i] ~ prior[i]
     end
-    Turing.@addlogprob!(-loss(lossfunction, loss_setup_per_task(), θ))
+    Turing.@addlogprob!(-loss(prepared_fit_per_task(), θ))
 end
 
 struct _CristoolNUTSModelEvaluator{CompiledModel, ModelArguments, ModelDefaults}
@@ -60,9 +59,8 @@ function (evaluator::_CristoolNUTSModelEvaluator)(outer_model, varinfo)
                             evaluator.model_defaults...)
 end
 
-function _cristool_nuts_loss_model(prior, lossfunction, loss_setup_per_task)
-    compiled_model = _cristool_nuts_loss_model_with_data(
-        prior, lossfunction, loss_setup_per_task)
+function _cristool_nuts_loss_model(prior, prepared_fit_per_task)
+    compiled_model = _cristool_nuts_loss_model_with_data(prior, prepared_fit_per_task)
     evaluator = _CristoolNUTSModelEvaluator(
         compiled_model, Tuple(values(compiled_model.args)), compiled_model.defaults)
     return Turing.DynamicPPL.Model{false}(evaluator, NamedTuple(), NamedTuple())

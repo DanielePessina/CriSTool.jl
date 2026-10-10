@@ -48,7 +48,7 @@ Random.rand(sequence_rng::FitPredictSequenceRNG) =
     @test fitpredict_prepared.selection.names == ["growth.speed"]
     # At the truth every residual vanishes: 3 scored concentrations (t = 0 is the
     # initial condition) and 4 scored d43 values contribute only their normalisers.
-    truth_terms = loss_terms(fitpredict_prepared.specification.loss, fitpredict_prepared.setup, [0.01, 2.0])
+    truth_terms = loss_terms(fitpredict_prepared, [0.01])
     @test keys(truth_terms) == (:concentration, :d43)
     @test collect(values(truth_terms)) ≈
           [3 * fitpredict_gaussian_nll(0.0, 0.01), 4 * fitpredict_gaussian_nll(0.0, 1e-14)] rtol = 1e-9
@@ -65,7 +65,8 @@ Random.rand(sequence_rng::FitPredictSequenceRNG) =
         OptimisationSpec(bounds = (growth = (speed = (0.03, 0.001),),), algorithm = DE()))
     @test_throws ArgumentError prepare_fit(fitpredict_model, [fitpredict_experiment],
         OptimisationSpec(bounds = (growth = (unknown_rate = (0.0, 1.0),),), algorithm = DE()))
-    @test_throws ArgumentError prepare_fit(fitpredict_model, [fitpredict_experiment],
+    # The time-zero start is not a preparation option.
+    @test_throws MethodError prepare_fit(fitpredict_model, [fitpredict_experiment],
         fitpredict_prepared.specification; initial_time = 10.0)
     @test_throws ArgumentError prepare_fit(fitpredict_model, [fitpredict_experiment],
         fitpredict_prepared.specification; problem_options = (initial_state = zeros(5),))
@@ -149,13 +150,13 @@ end
     fitted_prediction = predict(lbfgs_fit)
     @test fitted_prediction.experiments == [31]
     @test only(fitted_prediction.ensembles).time == fitpredict_times
-    @test vec(only(fitted_prediction.ensembles).concentration) ≈
+    @test vec(observable_values(only(fitted_prediction.ensembles), :concentration)) ≈
           fixture_translation_concentration.(fitpredict_times; speed = fitted_speed) atol = 1e-8
-    @test vec(only(fitted_prediction.ensembles).d43) ≈ fixture_translation_d43.(fitpredict_times; speed = fitted_speed) rtol = 1e-7
+    @test vec(observable_values(only(fitted_prediction.ensembles), :d43)) ≈ fixture_translation_d43.(fitpredict_times; speed = fitted_speed) rtol = 1e-7
     # New run conditions at new times extrapolate the fitted model.
     extrapolated = predict(lbfgs_fit, [fixture_seeded_conditions(concentration = 25.0)]; saveat = [0.0, 5000.0],
         observables = (:concentration,))
-    @test only(extrapolated.ensembles).concentration[1, end] ≈
+    @test observable_values(only(extrapolated.ensembles), :concentration)[1, end] ≈
           fixture_translation_concentration(5000.0; speed = fitted_speed, concentration = 25.0) atol = 1e-8
 end
 
@@ -266,7 +267,7 @@ end
     @test all(0.001 .< tiny_posterior.samples.values .< 0.03)
     # Each posterior draw predicts its own closed-form trajectory.
     posterior_predictions = predict(tiny_posterior; observables = (:concentration,))
-    @test only(posterior_predictions.ensembles).concentration ≈
+    @test observable_values(only(posterior_predictions.ensembles), :concentration) ≈
           [fixture_translation_concentration(prediction_time; speed = posterior_speed)
            for posterior_speed in vec(tiny_posterior.samples.values), prediction_time in fitpredict_times] atol = 1e-8
 end
@@ -310,21 +311,21 @@ end
     user_predictions = predict(fitpredict_model, [fitpredict_experiment, fitpredict_experiment], user_draws;
         solver = MoM(), observables = (:concentration, :d43))
     @test user_predictions.samples.sample_ids == [1, 2, 3]
-    @test user_predictions.ensembles[1].concentration == user_predictions.ensembles[2].concentration
-    @test user_predictions.ensembles[1].concentration ≈
+    @test observable_values(user_predictions.ensembles[1], :concentration) == observable_values(user_predictions.ensembles[2], :concentration)
+    @test observable_values(user_predictions.ensembles[1], :concentration) ≈
           [fixture_translation_concentration(prediction_time; speed = draw_speed)
            for draw_speed in vec(user_draws.values), prediction_time in fitpredict_times] atol = 1e-8
     concentration_summary = prediction_summary(user_predictions, :concentration)[1]
     @test concentration_summary.sample_count == 3
-    @test concentration_summary.mean ≈ vec(sum(user_predictions.ensembles[1].concentration; dims = 1)) ./ 3
+    @test concentration_summary.mean ≈ vec(sum(observable_values(user_predictions.ensembles[1], :concentration); dims = 1)) ./ 3
 
-    physical_before = copy(user_predictions.ensembles[1].concentration)
+    physical_before = copy(observable_values(user_predictions.ensembles[1], :concentration))
     noisy_values = measurement_samples(user_predictions, :concentration; noise = Uniform(1.0, 2.0), rng = MersenneTwister(43))
     @test noisy_values[1][1, 1] == physical_before[1, 1] + rand(MersenneTwister(43), Uniform(1.0, 2.0))
-    @test user_predictions.ensembles[1].concentration == physical_before
+    @test observable_values(user_predictions.ensembles[1], :concentration) == physical_before
     conditions_prediction = predict(fitpredict_model, [fixture_seeded_conditions()],
         ParameterSamples(growth = (speed = [0.01],)); solver = MoM(), saveat = [0.0, 100.0], observables = (:concentration,))
-    @test conditions_prediction.ensembles[1].concentration[1, end] ≈ fixture_translation_concentration(100.0) atol = 1e-8
+    @test observable_values(conditions_prediction.ensembles[1], :concentration)[1, end] ≈ fixture_translation_concentration(100.0) atol = 1e-8
 
     @test_throws ArgumentError ParameterSamples(["growth.speed", "growth.speed"], ones(2, 3))
     @test_throws ArgumentError predict(fitpredict_model, [fitpredict_experiment],
@@ -357,7 +358,7 @@ end
         priors = (growth = (speed = Uniform(0.001, 0.03),),)); solver = DQMOM(nquadrature = 3))
     length_posterior = CriSTool.InferenceResult(length_model, ParameterSamples(growth = (speed = [0.01, 0.02],)),
         nothing, length_prepared)
-    @test predict(length_posterior; observables = (:concentration,)).ensembles[1].concentration ≈
+    @test observable_values(predict(length_posterior; observables = (:concentration,)).ensembles[1], :concentration) ≈
           [fixture_translation_concentration(prediction_time; speed = draw_speed)
            for draw_speed in (0.01, 0.02), prediction_time in fitpredict_times] atol = 1e-7
 end
