@@ -76,27 +76,27 @@ export AbstractTemperature, ConstantTemperature, LinearTemperature, RampTemperat
        CallableTemperature, temperature
 export AbstractSolution, state_vars, size_metrics, observable_values, solvent_state,
        default_solvent_dynamics
-export AbstractNucleationFunction, AbstractGrowthFunction, AbstractFPGrowthFunction,
-       AbstractFPScalarGrowthFunction, AbstractFPLengthGrowthFunction, nucl_CNT,
-       nucl_empirical, nucl_empirical_energy, nucl_CNTnoS, nucl_secondary,
+export AbstractNucleationFunction, AbstractGrowthFunction,
+       AbstractScalarGrowthFunction, AbstractLengthGrowthFunction, CNTNucleation,
+       EmpiricalNucleation, ArrheniusNucleation, CNTNucleationNoSupersaturation, SecondaryNucleation,
        CombinedNucleation, AbstractDissolutionFunction,
-       AbstractFPScalarDissolutionFunction, AbstractFPLengthDissolutionFunction,
-       nodissolution, dissolutionrate, dissolutionrate!, dissolutionrate_at_length,
+       AbstractScalarDissolutionFunction, AbstractLengthDissolutionFunction,
+       NoDissolution, dissolutionrate, dissolutionrate!, dissolutionrate_at_length,
        net_growth_rate, net_growth_rate!, net_growth_rate_at_length,
-       growth_empirical, growth_energy,
-       growth_empirical_length, growth_BpS, growth_BCF,
-       growth_dissolution, growth_dissolution_length,
+       EmpiricalGrowth, ArrheniusGrowth,
+       EmpiricalLengthGrowth, BirthSpreadGrowth, BCFGrowth,
+       ArrheniusDissolution, ArrheniusLengthDissolution,
        nucleationrate, growthrate, aggregationrate, breakagerate,
        growthrate!, growthrate_at_length
-export AbstractAggregationFunction, AbstractBreakageFunction, nobreakage,
-       breakage_empirical, breakage_uniform, noaggregation,
-       aggr_scalar, aggr_linear, aggr_linearvol, aggr_avg
+export AbstractAggregationFunction, AbstractBreakageFunction, NoBreakage,
+       EmpiricalBreakage, UniformBreakage, NoAggregation,
+       ConstantAggregation, SizeSumAggregation, VolumeSumAggregation, AverageAggregation
 export runsimulation, paramaxis, crystallisation_odeproblem,
        crystallisation_solution,
        solve_steadystate,
        initial_state_from_characteristics
 export AbstractPELossFunction, AbstractVarianceModel, MeasuredVariance, RelativeVariance,
-       logMLE, mae, loss
+       GaussianNLL, MeanAbsoluteError, loss
 export experiments_from_table, load_measurements,
        bootstrap_repeatmeasurements, balance_variances, repeatmeasurementbalancer,
        psd_measurementbalancer, bootstrap_measurements

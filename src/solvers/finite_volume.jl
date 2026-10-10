@@ -1,6 +1,6 @@
 @inline _fv_scalar_net_growth_rate(growthfunction,
                                    growth_parameters,
-                                   ::nodissolution,
+                                   ::NoDissolution,
                                    dissolution_parameters,
                                    problem,
                                    state,

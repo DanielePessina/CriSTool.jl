@@ -16,7 +16,7 @@ AbstractPELossFunction
 AbstractVarianceModel
 MeasuredVariance
 RelativeVariance
-logMLE
-mae
+GaussianNLL
+MeanAbsoluteError
 loss
 ```

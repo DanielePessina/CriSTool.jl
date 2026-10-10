@@ -7,13 +7,6 @@ Abstract supertype for all nucleation laws.
 abstract type AbstractNucleationFunction end
 
 """
-    AbstractFPNucleationFunction <: AbstractNucleationFunction
-
-Abstract supertype for first-principles nucleation functions.
-"""
-abstract type AbstractFPNucleationFunction <: AbstractNucleationFunction end
-
-"""
     AbstractGrowthFunction
 
 Abstract supertype for crystal growth laws. Growth laws occupy the model's
@@ -23,25 +16,18 @@ Abstract supertype for crystal growth laws. Growth laws occupy the model's
 abstract type AbstractGrowthFunction end
 
 """
-    AbstractFPGrowthFunction <: AbstractGrowthFunction
-
-Abstract supertype for first-principles growth functions.
-"""
-abstract type AbstractFPGrowthFunction <: AbstractGrowthFunction end
-
-"""
-    AbstractFPScalarGrowthFunction <: AbstractFPGrowthFunction
+    AbstractScalarGrowthFunction <: AbstractGrowthFunction
 
 Growth laws whose rate is independent of crystal length.
 """
-abstract type AbstractFPScalarGrowthFunction <: AbstractFPGrowthFunction end
+abstract type AbstractScalarGrowthFunction <: AbstractGrowthFunction end
 
 """
-    AbstractFPLengthGrowthFunction <: AbstractFPGrowthFunction
+    AbstractLengthGrowthFunction <: AbstractGrowthFunction
 
 Growth laws that return a rate per crystal length.
 """
-abstract type AbstractFPLengthGrowthFunction <: AbstractFPGrowthFunction end
+abstract type AbstractLengthGrowthFunction <: AbstractGrowthFunction end
 
 """
     AbstractDissolutionFunction
@@ -53,20 +39,20 @@ rate to obtain the signed net crystal growth rate.
 abstract type AbstractDissolutionFunction end
 
 """
-    AbstractFPScalarDissolutionFunction <: AbstractDissolutionFunction
+    AbstractScalarDissolutionFunction <: AbstractDissolutionFunction
 
 Dissolution laws whose rate is independent of crystal length. The rate is
 negative below saturation and zero in the equilibrium deadband.
 """
-abstract type AbstractFPScalarDissolutionFunction <: AbstractDissolutionFunction end
+abstract type AbstractScalarDissolutionFunction <: AbstractDissolutionFunction end
 
 """
-    AbstractFPLengthDissolutionFunction <: AbstractDissolutionFunction
+    AbstractLengthDissolutionFunction <: AbstractDissolutionFunction
 
 Dissolution laws that return a rate per crystal length. They are supported by
 the discretised solvers only.
 """
-abstract type AbstractFPLengthDissolutionFunction <: AbstractDissolutionFunction end
+abstract type AbstractLengthDissolutionFunction <: AbstractDissolutionFunction end
 
 """
     AbstractAggregationFunction
@@ -89,8 +75,8 @@ struct _KineticLawConstruction end
 # Defines a kinetic law with one keyword constructor. Struct fields are
 # configuration with defaults; any other keywords are kinetic parameter values
 # and return a bound `KineticModel`, whose constructor reports missing and
-# unknown names. `nucl_CNT()` is the unbound law, while
-# `nucl_CNT(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4)` binds it.
+# unknown names. `CNTNucleation()` is the unbound law, while
+# `CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4)` binds it.
 macro kinetic_law(law_definition)
     law_definition isa Expr && law_definition.head === :struct ||
         throw(ArgumentError("@kinetic_law expects a struct definition."))
@@ -131,67 +117,67 @@ empty axis. `paramaxis` is the single source of truth for a law's parameters.
 _parameter_count(kinetic_law) = ComponentArrays.last_index(paramaxis(kinetic_law))
 
 """
-    nodissolution <: AbstractFPScalarDissolutionFunction
+    NoDissolution <: AbstractScalarDissolutionFunction
 
 Zero-rate dissolution law without parameters.
 """
-@kinetic_law struct nodissolution <: AbstractFPScalarDissolutionFunction end
+@kinetic_law struct NoDissolution <: AbstractScalarDissolutionFunction end
 
-paramaxis(::nodissolution) = ComponentArrays.Axis()
+paramaxis(::NoDissolution) = ComponentArrays.Axis()
 
 """
-    nucl_CNT <: AbstractFPNucleationFunction
+    CNTNucleation <: AbstractNucleationFunction
 
 Classical Nucleation Theory (CNT) nucleation law.
 Parameters: `ln_nucleation_prefactor`, `surface_energy` (J/m²).
 """
-@kinetic_law struct nucl_CNT <: AbstractFPNucleationFunction end
+@kinetic_law struct CNTNucleation <: AbstractNucleationFunction end
 
-paramaxis(::nucl_CNT) = ComponentArrays.Axis(ln_nucleation_prefactor = 1, surface_energy = 2)
+paramaxis(::CNTNucleation) = ComponentArrays.Axis(ln_nucleation_prefactor = 1, surface_energy = 2)
 
 """
-    nucl_empirical <: AbstractFPNucleationFunction
+    EmpiricalNucleation <: AbstractNucleationFunction
 
 Empirical power-law nucleation.
 Parameters: `log10_nucleation_prefactor`, `nucleation_order`.
 """
-@kinetic_law struct nucl_empirical <: AbstractFPNucleationFunction end
+@kinetic_law struct EmpiricalNucleation <: AbstractNucleationFunction end
 
-paramaxis(::nucl_empirical) = ComponentArrays.Axis(log10_nucleation_prefactor = 1, nucleation_order = 2)
+paramaxis(::EmpiricalNucleation) = ComponentArrays.Axis(log10_nucleation_prefactor = 1, nucleation_order = 2)
 
 """
-    nucl_empirical_energy <: AbstractFPNucleationFunction
+    ArrheniusNucleation <: AbstractNucleationFunction
 
 Empirical power-law nucleation with an Arrhenius temperature dependence.
 Parameters: `ln_nucleation_prefactor`, `activation_energy` (J/mol),
 `nucleation_order`.
 """
-@kinetic_law struct nucl_empirical_energy <: AbstractFPNucleationFunction end
+@kinetic_law struct ArrheniusNucleation <: AbstractNucleationFunction end
 
-paramaxis(::nucl_empirical_energy) = ComponentArrays.Axis(ln_nucleation_prefactor = 1,
+paramaxis(::ArrheniusNucleation) = ComponentArrays.Axis(ln_nucleation_prefactor = 1,
                                                           activation_energy = 2,
                                                           nucleation_order = 3)
 
 """
-    nucl_CNTnoS <: AbstractFPNucleationFunction
+    CNTNucleationNoSupersaturation <: AbstractNucleationFunction
 
 Classical Nucleation Theory without the supersaturation prefactor.
 Parameters: `ln_nucleation_prefactor`, `surface_energy` (J/m²).
 """
-@kinetic_law struct nucl_CNTnoS <: AbstractFPNucleationFunction end
+@kinetic_law struct CNTNucleationNoSupersaturation <: AbstractNucleationFunction end
 
-paramaxis(::nucl_CNTnoS) = paramaxis(nucl_CNT())
+paramaxis(::CNTNucleationNoSupersaturation) = paramaxis(CNTNucleation())
 
 """
-    nucl_secondary <: AbstractFPNucleationFunction
+    SecondaryNucleation <: AbstractNucleationFunction
 
 Secondary nucleation proportional to the crystal third moment.
 Parameters: `ln_nucleation_prefactor`, `activation_energy` (J/mol),
 `nucleation_order`.
 """
-@kinetic_law struct nucl_secondary <: AbstractFPNucleationFunction end
+@kinetic_law struct SecondaryNucleation <: AbstractNucleationFunction end
 
-paramaxis(::nucl_secondary) = paramaxis(nucl_empirical_energy())
+paramaxis(::SecondaryNucleation) = paramaxis(ArrheniusNucleation())
 
 """
     CombinedNucleation(primary, secondary) <: AbstractNucleationFunction
@@ -199,8 +185,8 @@ paramaxis(::nucl_secondary) = paramaxis(nucl_empirical_energy())
 Sum of two nucleation laws. Its parameters nest each component's axis under
 `primary` and `secondary`. Passing two bound `KineticModel`s returns the bound
 combined model, e.g.
-`CombinedNucleation(nucl_CNT(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4),
-nucl_secondary(ln_nucleation_prefactor = 20.0, activation_energy = 0.0, nucleation_order = 2.0))`.
+`CombinedNucleation(CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4),
+SecondaryNucleation(ln_nucleation_prefactor = 20.0, activation_energy = 0.0, nucleation_order = 2.0))`.
 """
 struct CombinedNucleation{Primary <: AbstractNucleationFunction,
                           Secondary <: AbstractNucleationFunction} <: AbstractNucleationFunction
@@ -218,85 +204,85 @@ function paramaxis(combined_law::CombinedNucleation)
 end
 
 """
-    growth_empirical <: AbstractFPScalarGrowthFunction
+    EmpiricalGrowth <: AbstractScalarGrowthFunction
 
 Empirical power-law growth.
 Parameters: `growth_coefficient` (m/s), `growth_order`.
 """
-@kinetic_law struct growth_empirical <: AbstractFPScalarGrowthFunction end
+@kinetic_law struct EmpiricalGrowth <: AbstractScalarGrowthFunction end
 
-paramaxis(::growth_empirical) = ComponentArrays.Axis(growth_coefficient = 1, growth_order = 2)
+paramaxis(::EmpiricalGrowth) = ComponentArrays.Axis(growth_coefficient = 1, growth_order = 2)
 
 """
-    growth_empirical_length <: AbstractFPLengthGrowthFunction
+    EmpiricalLengthGrowth <: AbstractLengthGrowthFunction
 
 Empirical growth multiplied by the length factor
 `(1 + size_dependence_coefficient * L / Lref)^size_dependence_exponent`.
 Parameters: `growth_coefficient`, `growth_order`, `size_dependence_coefficient`,
 `size_dependence_exponent`. Configuration: `Lref` (m, default 1 µm).
 """
-@kinetic_law struct growth_empirical_length <: AbstractFPLengthGrowthFunction
+@kinetic_law struct EmpiricalLengthGrowth <: AbstractLengthGrowthFunction
     Lref::Float64 = CRISTOOL_DISSOLUTION_LREF
 end
 
-paramaxis(::growth_empirical_length) = ComponentArrays.Axis(
+paramaxis(::EmpiricalLengthGrowth) = ComponentArrays.Axis(
     growth_coefficient = 1,
     growth_order = 2,
     size_dependence_coefficient = 3,
     size_dependence_exponent = 4)
 
 """
-    growth_energy <: AbstractFPScalarGrowthFunction
+    ArrheniusGrowth <: AbstractScalarGrowthFunction
 
 Power-law growth with an Arrhenius temperature dependence.
 Parameters: `log10_growth_coefficient`, `activation_energy` (J/mol),
 `growth_order`. Fix the activation energy by leaving it out of the fitted
 parameter selection.
 """
-@kinetic_law struct growth_energy <: AbstractFPScalarGrowthFunction end
+@kinetic_law struct ArrheniusGrowth <: AbstractScalarGrowthFunction end
 
-paramaxis(::growth_energy) = ComponentArrays.Axis(log10_growth_coefficient = 1,
+paramaxis(::ArrheniusGrowth) = ComponentArrays.Axis(log10_growth_coefficient = 1,
                                                   activation_energy = 2,
                                                   growth_order = 3)
 
 """
-    growth_BCF <: AbstractFPScalarGrowthFunction
+    BCFGrowth <: AbstractScalarGrowthFunction
 
 Burton-Cabrera-Frank (BCF) growth.
 Parameters: `growth_coefficient` (m/s), `activation_temperature` (K).
 """
-@kinetic_law struct growth_BCF <: AbstractFPScalarGrowthFunction end
+@kinetic_law struct BCFGrowth <: AbstractScalarGrowthFunction end
 
-paramaxis(::growth_BCF) = ComponentArrays.Axis(growth_coefficient = 1,
+paramaxis(::BCFGrowth) = ComponentArrays.Axis(growth_coefficient = 1,
                                                activation_temperature = 2)
 
 """
-    growth_BpS <: AbstractFPScalarGrowthFunction
+    BirthSpreadGrowth <: AbstractScalarGrowthFunction
 
 Birth-and-spread growth.
 Parameters: `growth_coefficient` (m/s), `energy_barrier_temperature_squared` (K²).
 """
-@kinetic_law struct growth_BpS <: AbstractFPScalarGrowthFunction end
+@kinetic_law struct BirthSpreadGrowth <: AbstractScalarGrowthFunction end
 
-paramaxis(::growth_BpS) = ComponentArrays.Axis(growth_coefficient = 1,
+paramaxis(::BirthSpreadGrowth) = ComponentArrays.Axis(growth_coefficient = 1,
                                                energy_barrier_temperature_squared = 2)
 
 #### Dissolution
 """
-    growth_dissolution <: AbstractFPScalarDissolutionFunction
+    ArrheniusDissolution <: AbstractScalarDissolutionFunction
 
 Scalar dissolution with an Arrhenius temperature dependence.
 Parameters: `dissolution_coefficient` (m/s), `activation_energy` (J/mol),
 `dissolution_order`.
 """
-@kinetic_law struct growth_dissolution <: AbstractFPScalarDissolutionFunction end
+@kinetic_law struct ArrheniusDissolution <: AbstractScalarDissolutionFunction end
 
-paramaxis(::growth_dissolution) = ComponentArrays.Axis(dissolution_coefficient = 1,
+paramaxis(::ArrheniusDissolution) = ComponentArrays.Axis(dissolution_coefficient = 1,
                                                        activation_energy = 2,
                                                        dissolution_order = 3)
 
 """
-    growth_dissolution_length <: AbstractFPLengthDissolutionFunction
+    ArrheniusLengthDissolution <: AbstractLengthDissolutionFunction
 
 Arrhenius dissolution multiplied by the length factor
 `(1 + size_dependence_coefficient * L / Lref)^size_dependence_exponent`.
@@ -304,95 +290,95 @@ Parameters: `dissolution_coefficient`, `activation_energy`,
 `dissolution_order`, `size_dependence_coefficient`,
 `size_dependence_exponent`. Configuration: `Lref` (m, default 1 µm).
 """
-@kinetic_law struct growth_dissolution_length <: AbstractFPLengthDissolutionFunction
+@kinetic_law struct ArrheniusLengthDissolution <: AbstractLengthDissolutionFunction
     Lref::Float64 = CRISTOOL_DISSOLUTION_LREF
 end
 
-paramaxis(::growth_dissolution_length) = ComponentArrays.Axis(
+paramaxis(::ArrheniusLengthDissolution) = ComponentArrays.Axis(
     dissolution_coefficient = 1, activation_energy = 2, dissolution_order = 3,
     size_dependence_coefficient = 4, size_dependence_exponent = 5)
 
 """
-    nobreakage <: AbstractBreakageFunction
+    NoBreakage <: AbstractBreakageFunction
 
 Zero-rate breakage law without parameters.
 """
-@kinetic_law struct nobreakage <: AbstractBreakageFunction end
+@kinetic_law struct NoBreakage <: AbstractBreakageFunction end
 
-paramaxis(::nobreakage) = ComponentArrays.Axis()
+paramaxis(::NoBreakage) = ComponentArrays.Axis()
 
 """
-    breakage_empirical <: AbstractBreakageFunction
+    EmpiricalBreakage <: AbstractBreakageFunction
 
 Binary breakage with uniform-volume daughters and a power-law frequency.
 Parameters: `breakage_coefficient`, `breakage_size_exponent`.
 """
-@kinetic_law struct breakage_empirical <: AbstractBreakageFunction end
+@kinetic_law struct EmpiricalBreakage <: AbstractBreakageFunction end
 
-paramaxis(::breakage_empirical) = ComponentArrays.Axis(breakage_coefficient = 1,
+paramaxis(::EmpiricalBreakage) = ComponentArrays.Axis(breakage_coefficient = 1,
                                                        breakage_size_exponent = 2)
 
 """
-    breakage_uniform <: AbstractBreakageFunction
+    UniformBreakage <: AbstractBreakageFunction
 
 Binary breakage with uniform-volume daughters and a log-parameterised
 frequency. Parameters: `ln_breakage_coefficient`, `breakage_size_exponent`.
 Configuration: `reference_length` (m, default 1 µm).
 """
-@kinetic_law struct breakage_uniform <: AbstractBreakageFunction
+@kinetic_law struct UniformBreakage <: AbstractBreakageFunction
     reference_length::Float64 = 1e-6
 end
 
-paramaxis(::breakage_uniform) = ComponentArrays.Axis(ln_breakage_coefficient = 1,
+paramaxis(::UniformBreakage) = ComponentArrays.Axis(ln_breakage_coefficient = 1,
                                                      breakage_size_exponent = 2)
 
 """
-    noaggregation <: AbstractAggregationFunction
+    NoAggregation <: AbstractAggregationFunction
 
 Zero-rate aggregation law without parameters.
 """
-@kinetic_law struct noaggregation <: AbstractAggregationFunction end
+@kinetic_law struct NoAggregation <: AbstractAggregationFunction end
 
-paramaxis(::noaggregation) = ComponentArrays.Axis()
+paramaxis(::NoAggregation) = ComponentArrays.Axis()
 
 """
-    aggr_scalar <: AbstractAggregationFunction
+    ConstantAggregation <: AbstractAggregationFunction
 
 Size-independent aggregation kernel. Parameter: `log10_aggregation_coefficient`.
 """
-@kinetic_law struct aggr_scalar <: AbstractAggregationFunction end
+@kinetic_law struct ConstantAggregation <: AbstractAggregationFunction end
 
-paramaxis(::aggr_scalar) = ComponentArrays.Axis(log10_aggregation_coefficient = 1)
+paramaxis(::ConstantAggregation) = ComponentArrays.Axis(log10_aggregation_coefficient = 1)
 
 """
-    aggr_linear <: AbstractAggregationFunction
+    SizeSumAggregation <: AbstractAggregationFunction
 
 Aggregation kernel proportional to the sum of sizes.
 Parameter: `log10_aggregation_coefficient`.
 """
-@kinetic_law struct aggr_linear <: AbstractAggregationFunction end
+@kinetic_law struct SizeSumAggregation <: AbstractAggregationFunction end
 
-paramaxis(::aggr_linear) = ComponentArrays.Axis(log10_aggregation_coefficient = 1)
+paramaxis(::SizeSumAggregation) = ComponentArrays.Axis(log10_aggregation_coefficient = 1)
 
 """
-    aggr_linearvol <: AbstractAggregationFunction
+    VolumeSumAggregation <: AbstractAggregationFunction
 
 Aggregation kernel proportional to the sum of volumes.
 Parameter: `log10_aggregation_coefficient`.
 """
-@kinetic_law struct aggr_linearvol <: AbstractAggregationFunction end
+@kinetic_law struct VolumeSumAggregation <: AbstractAggregationFunction end
 
-paramaxis(::aggr_linearvol) = ComponentArrays.Axis(log10_aggregation_coefficient = 1)
+paramaxis(::VolumeSumAggregation) = ComponentArrays.Axis(log10_aggregation_coefficient = 1)
 
 """
-    aggr_avg <: AbstractAggregationFunction
+    AverageAggregation <: AbstractAggregationFunction
 
 Aggregation kernel proportional to the mean of sizes.
 Parameter: `log10_aggregation_coefficient`.
 """
-@kinetic_law struct aggr_avg <: AbstractAggregationFunction end
+@kinetic_law struct AverageAggregation <: AbstractAggregationFunction end
 
-paramaxis(::aggr_avg) = ComponentArrays.Axis(log10_aggregation_coefficient = 1)
+paramaxis(::AverageAggregation) = ComponentArrays.Axis(log10_aggregation_coefficient = 1)
 
 ## Kinetic traits. Each has a `false` default; custom laws opt in by adding a method.
 
@@ -403,17 +389,17 @@ Whether a growth or dissolution law returns a rate per crystal length rather
 than one scalar rate. Subtypes of the `*Length*` families are length laws.
 """
 _is_length_law(kinetic_law) = false
-_is_length_law(::AbstractFPLengthGrowthFunction) = true
-_is_length_law(::AbstractFPLengthDissolutionFunction) = true
+_is_length_law(::AbstractLengthGrowthFunction) = true
+_is_length_law(::AbstractLengthDissolutionFunction) = true
 
 """
     _is_null_kinetic(kinetic_law) -> Bool
 
-Whether a law is a zero-rate placeholder (`nodissolution`, `noaggregation`,
-`nobreakage`), letting solvers skip the corresponding source.
+Whether a law is a zero-rate placeholder (`NoDissolution`, `NoAggregation`,
+`NoBreakage`), letting solvers skip the corresponding source.
 """
 _is_null_kinetic(kinetic_law) = false
-_is_null_kinetic(::Union{nodissolution, noaggregation, nobreakage}) = true
+_is_null_kinetic(::Union{NoDissolution, NoAggregation, NoBreakage}) = true
 
 """
     _has_moment_closure(kinetic_law) -> Bool
@@ -422,8 +408,8 @@ Whether an aggregation or breakage law has a validated QMOM/DQMOM moment
 source closure.
 """
 _has_moment_closure(kinetic_law) = false
-_has_moment_closure(::Union{noaggregation, aggr_scalar, aggr_linear, aggr_linearvol, aggr_avg,
-                            nobreakage, breakage_empirical, breakage_uniform}) = true
+_has_moment_closure(::Union{NoAggregation, ConstantAggregation, SizeSumAggregation, VolumeSumAggregation, AverageAggregation,
+                            NoBreakage, EmpiricalBreakage, UniformBreakage}) = true
 
 """
     _is_time_invariant(model_component) -> Bool
@@ -434,11 +420,11 @@ callables and custom types default to `false`; steady solves then require
 `autonomous = true`.
 """
 _is_time_invariant(model_component) = false
-_is_time_invariant(::Union{nucl_CNT, nucl_empirical, nucl_empirical_energy, nucl_CNTnoS,
-                           nucl_secondary, growth_empirical, growth_empirical_length,
-                           growth_energy, growth_BCF, growth_BpS, nodissolution,
-                           growth_dissolution, growth_dissolution_length,
-                           nobreakage, breakage_empirical, breakage_uniform, noaggregation,
-                           aggr_scalar, aggr_linear, aggr_linearvol, aggr_avg}) = true
+_is_time_invariant(::Union{CNTNucleation, EmpiricalNucleation, ArrheniusNucleation, CNTNucleationNoSupersaturation,
+                           SecondaryNucleation, EmpiricalGrowth, EmpiricalLengthGrowth,
+                           ArrheniusGrowth, BCFGrowth, BirthSpreadGrowth, NoDissolution,
+                           ArrheniusDissolution, ArrheniusLengthDissolution,
+                           NoBreakage, EmpiricalBreakage, UniformBreakage, NoAggregation,
+                           ConstantAggregation, SizeSumAggregation, VolumeSumAggregation, AverageAggregation}) = true
 _is_time_invariant(combined_law::CombinedNucleation) =
     _is_time_invariant(combined_law.primary) && _is_time_invariant(combined_law.secondary)

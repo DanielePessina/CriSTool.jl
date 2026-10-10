@@ -8,8 +8,8 @@ MSMPR and fed-batch population balances with five solver families.
 using CriSTool
 
 crystal_model = CrystallisationModel(LysozymeSystem();
-    nucleation = nucl_CNT(ln_nucleation_prefactor = 38.0, surface_energy = 0.0006),
-    growth = growth_empirical(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
+    nucleation = CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 0.0006),
+    growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
 
 batch_run = RunConditions(temperature = 293.15, concentration = 18.0)
 trajectory = simulate(crystal_model, batch_run; solver = MoM(), saveat = 0.0:3600.0:28800.0)
@@ -18,7 +18,7 @@ trajectory.concentration[end]
 trajectory.d43[end]
 ```
 
-Calling a law with all of its parameter names binds the values; `nucl_CNT()`
+Calling a law with all of its parameter names binds the values; `CNTNucleation()`
 alone is the unbound law. `RunConditions` hold everything else about a run:
 temperature, initial concentration, an optional seed and the reactor operation.
 `runsimulation` remains the low-level interface for automatic differentiation

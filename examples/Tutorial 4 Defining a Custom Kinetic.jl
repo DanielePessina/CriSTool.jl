@@ -9,7 +9,7 @@ function main()
         end; parameters = (coefficient = 2e-11, half_saturation = 0.3))
     # Callable laws carry their values and are bound automatically.
     crystal_model = CrystallisationModel(LysozymeSystem();
-        nucleation = nucl_CNT(ln_nucleation_prefactor = 38.0, surface_energy = 0.0006),
+        nucleation = CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 0.0006),
         growth = saturation_growth)
     trajectory = simulate(crystal_model, RunConditions(temperature = 293.15, concentration = 18.0);
         saveat = 0.0:600.0:21600.0)

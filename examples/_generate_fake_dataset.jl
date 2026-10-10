@@ -3,9 +3,9 @@ Generate a synthetic experimental crystallisation dataset for CriSTool's
 `load_measurements(csv_path)` loader.
 
 Truth model:
-    nucl = nucl_CNT(),         params = [ln_nucleation_prefactor = 38.0, surface_energy=0.0006]
-    gr   = growth_empirical(), params = [growth_coefficient = 1e-9 / 60, growth_order = 3.0]
-    agg  = noaggregation(), br = nobreakage(), solver = MoM()
+    nucl = CNTNucleation(),         params = [ln_nucleation_prefactor = 38.0, surface_energy=0.0006]
+    gr   = EmpiricalGrowth(), params = [growth_coefficient = 1e-9 / 60, growth_order = 3.0]
+    agg  = NoAggregation(), br = NoBreakage(), solver = MoM()
 
 CSV layout matches `CriSTool.load_measurements(filepath)` (long format):
     Exp_ID | System | Temperature [K] | Time [s]
@@ -31,8 +31,8 @@ const OUT_PATH = joinpath(@__DIR__, "fake-experimental-dataset.csv")
 # ----------------------------------------------------------------------
 
 const TRUTH_MODEL = CrystallisationModel(LysozymeSystem();
-    nucleation = nucl_CNT(ln_nucleation_prefactor = 38.0, surface_energy = 0.0006),
-    growth = growth_empirical(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
+    nucleation = CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 0.0006),
+    growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
 solver = MoM()
 
 # ----------------------------------------------------------------------

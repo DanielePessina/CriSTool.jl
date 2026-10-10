@@ -26,7 +26,7 @@ using CriSTool
 
 msmpr_model = CrystallisationModel(LysozymeSystem(saturation_model = ConstantSolubility(1.0));
     nucleation = CallableNucleation((rate_values, rate_context) -> 0.0; parameters = (;)),
-    growth = growth_empirical(growth_coefficient = 1e-9 / 60, growth_order = 1.0))
+    growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 1.0))
 
 feed  = CrystallisationFeed(concentration = 2.0)                  # kg/m³, clear feed
 msmpr = MSMPROperation(volume = 2.0, inflow = 0.5, feed = feed)   # m³, m³/s

@@ -68,10 +68,10 @@ Fields:
 - `parameterset_nucleation::NuP`: Nucleation parameters
 - `parameterset_growth::GrP`: Growth parameters
 - `parameterset_dissolution::DissP`: Dissolution parameters
-- `kinetics_breakagefunction::BrF`: Breakage function (default: nobreakage())
-- `parameterset_breakage::BrP`: Breakage parameters (default: empty for `nobreakage()`)
-- `kinetics_aggregationfunction::AggF`: Aggregation function (default: noaggregation())
-- `parameterset_aggregation::AggP`: Aggregation parameters (default: empty for `noaggregation()`)
+- `kinetics_breakagefunction::BrF`: Breakage function (default: NoBreakage())
+- `parameterset_breakage::BrP`: Breakage parameters (default: empty for `NoBreakage()`)
+- `kinetics_aggregationfunction::AggF`: Aggregation function (default: NoAggregation())
+- `parameterset_aggregation::AggP`: Aggregation parameters (default: empty for `NoAggregation()`)
 - `R_gas_constant::Float64`: Gas constant (J/mol/K)
 - `boltzmann_constant::Float64`: Boltzmann constant (J/K)
 - `solver::solmethod`: Numerical solver (holds time-stepping configuration).
@@ -107,15 +107,15 @@ Base.@kwdef @concrete struct CrystallisationProblem{NuF <: AbstractNucleationFun
     solvent_dynamics::SD = default_solvent_dynamics
 
     # Chosen Kinetics
-    kinetics_nucleationfunction::NuF = nucl_CNT()
-    kinetics_growthfunction::GrF = growth_empirical()
+    kinetics_nucleationfunction::NuF = CNTNucleation()
+    kinetics_growthfunction::GrF = EmpiricalGrowth()
     parameterset_nucleation::NuP = [1.0, 1e-3]
     parameterset_growth::GrP = [1e-9 / 60, 1.0]
 
-    kinetics_breakagefunction::BrF = nobreakage()
+    kinetics_breakagefunction::BrF = NoBreakage()
     parameterset_breakage::BrP = Float64[]
 
-    kinetics_aggregationfunction::AggF = noaggregation()
+    kinetics_aggregationfunction::AggF = NoAggregation()
     parameterset_aggregation::AggP = Float64[]
 
     initial_state::Union{Nothing, AbstractVector{<:Real}} = nothing
@@ -127,7 +127,7 @@ Base.@kwdef @concrete struct CrystallisationProblem{NuF <: AbstractNucleationFun
     solver::solmethod = MoM()
 
     # Dissolution is an independent signed crystal-growth-rate contribution.
-    kinetics_dissolutionfunction::DissF = nodissolution()
+    kinetics_dissolutionfunction::DissF = NoDissolution()
     parameterset_dissolution::DissP = Float64[]
     operation::OP = BatchOperation()
     material_system = nothing

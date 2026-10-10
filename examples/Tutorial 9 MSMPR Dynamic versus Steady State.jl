@@ -35,7 +35,7 @@ function main()
     # No nucleation (a callable law returning zero) and a zero growth coefficient.
     msmpr_model = CrystallisationModel(LysozymeSystem(saturation_model = ConstantSolubility(1.0));
         nucleation = CallableNucleation((rate_values, rate_context) -> 0.0; parameters = (;)),
-        growth = growth_empirical(growth_coefficient = 0.0, growth_order = 1.0))
+        growth = EmpiricalGrowth(growth_coefficient = 0.0, growth_order = 1.0))
     qmom_solver = QMOM(nquadrature = 3, reltol = 1e-10, abstol = 1e-12)
 
     tank_seed = LogNormalInitialCrystals(mass_concentration = 0.5, d43 = 20e-6,

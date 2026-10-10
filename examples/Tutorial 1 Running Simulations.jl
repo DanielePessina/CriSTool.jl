@@ -5,8 +5,8 @@ function main()
     # A model is a material system plus bound kinetic laws. Calling a law with
     # its parameter names binds the values; aggregation and breakage default to none.
     crystal_model = CrystallisationModel(LysozymeSystem();
-        nucleation = nucl_CNT(ln_nucleation_prefactor = 38.0, surface_energy = 0.0006),
-        growth = growth_empirical(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
+        nucleation = CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 0.0006),
+        growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
 
     # Run conditions are separate from the model: temperature (K), initial
     # concentration (kg/m³), optional seed and reactor operation.

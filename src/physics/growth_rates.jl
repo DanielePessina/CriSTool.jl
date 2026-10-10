@@ -1,7 +1,7 @@
 ## Growth
 
 """
-    growthrate!(destination, gf::AbstractFPScalarGrowthFunction, parameters,
+    growthrate!(destination, gf::AbstractScalarGrowthFunction, parameters,
                 problem, state, time, mesh)
 
 Fill a mesh-sized destination with a scalar signed growth rate.  Scalar models
@@ -10,7 +10,7 @@ the length-dependent implementation lets discretised RHSs reuse their
 `DiffCache` storage.
 """
 function growthrate!(destination::AbstractVector,
-                     gf::AbstractFPScalarGrowthFunction,
+                     gf::AbstractScalarGrowthFunction,
                      parameters,
                      problem::CrystallisationProblem,
                      state,
@@ -24,13 +24,13 @@ function growthrate!(destination::AbstractVector,
 end
 
 """
-    growthrate_at_length(gf::AbstractFPScalarGrowthFunction, parameters,
+    growthrate_at_length(gf::AbstractScalarGrowthFunction, parameters,
                          problem, state, time, crystal_length)
 
 Scalar growth/dissolution laws are independent of crystal length, so this
 adapter returns the scalar rate without allocating a mesh-sized vector.
 """
-growthrate_at_length(gf::AbstractFPScalarGrowthFunction,
+growthrate_at_length(gf::AbstractScalarGrowthFunction,
                      parameters,
                      problem::CrystallisationProblem,
                      state,
@@ -50,7 +50,7 @@ growthrate_at_length(gf::AbstractFPScalarGrowthFunction,
 end
 
 @inline function _length_dissolution_context(
-    dissolutionfunction::growth_dissolution_length,
+    dissolutionfunction::ArrheniusLengthDissolution,
     parameters,
     problem::CrystallisationProblem,
     state,
@@ -73,7 +73,7 @@ end
 end
 
 @inline function _length_dissolution_size_factor_base(
-    dissolutionfunction::growth_dissolution_length,
+    dissolutionfunction::ArrheniusLengthDissolution,
     named_parameters,
     crystal_length::Real)
     size_factor_base = one(crystal_length) +
@@ -81,12 +81,12 @@ end
                        (crystal_length / dissolutionfunction.Lref)
     size_factor_base > zero(size_factor_base) ||
         throw(DomainError(size_factor_base,
-                          "growth_dissolution_length size factor must be positive."))
+                          "ArrheniusLengthDissolution size factor must be positive."))
     return size_factor_base
 end
 
 @inline function _length_dissolution_rate_from_context(
-    dissolutionfunction::growth_dissolution_length,
+    dissolutionfunction::ArrheniusLengthDissolution,
     named_parameters,
     dissolution_prefactor,
     crystal_length::Real)
@@ -97,7 +97,7 @@ end
 end
 
 function _add_length_dissolution_rates!(destination::AbstractVector,
-                                        dissolutionfunction::growth_dissolution_length,
+                                        dissolutionfunction::ArrheniusLengthDissolution,
                                         parameters,
                                         problem::CrystallisationProblem,
                                         state,
@@ -118,7 +118,7 @@ function _add_length_dissolution_rates!(destination::AbstractVector,
 end
 
 function _add_length_dissolution_rates!(destination::AbstractVector,
-                                        dissolutionfunction::AbstractFPLengthDissolutionFunction,
+                                        dissolutionfunction::AbstractLengthDissolutionFunction,
                                         parameters,
                                         problem::CrystallisationProblem,
                                         state,
@@ -147,12 +147,12 @@ end
     zero(promote_type(eltype(parameters), eltype(state)))
 
 """Return the scalar dissolution contribution of a dissolution model."""
-@inline dissolutionrate(::nodissolution, parameters, problem, state, time) =
+@inline dissolutionrate(::NoDissolution, parameters, problem, state, time) =
     _dissolution_zero(parameters, state)
 
 """Fill a mesh-sized destination with scalar dissolution."""
 function dissolutionrate!(destination::AbstractVector,
-                          dissolutionfunction::AbstractFPScalarDissolutionFunction,
+                          dissolutionfunction::AbstractScalarDissolutionFunction,
                           parameters,
                           problem::CrystallisationProblem,
                           state,
@@ -167,7 +167,7 @@ end
 
 """Evaluate length-dependent dissolution at one mesh/node location."""
 @inline dissolutionrate_at_length(
-    dissolutionfunction::AbstractFPScalarDissolutionFunction,
+    dissolutionfunction::AbstractScalarDissolutionFunction,
     parameters,
     problem::CrystallisationProblem,
     state,
@@ -177,7 +177,7 @@ end
 
 """Fill a mesh-sized destination with length-dependent dissolution."""
 function dissolutionrate!(destination::AbstractVector,
-                          dissolutionfunction::AbstractFPLengthDissolutionFunction,
+                          dissolutionfunction::AbstractLengthDissolutionFunction,
                           parameters,
                           problem::CrystallisationProblem,
                           state,
@@ -194,7 +194,7 @@ function dissolutionrate!(destination::AbstractVector,
 end
 
 """Allocate a mesh-sized dissolution rate for convenience callers."""
-function dissolutionrate(dissolutionfunction::AbstractFPLengthDissolutionFunction,
+function dissolutionrate(dissolutionfunction::AbstractLengthDissolutionFunction,
                          parameters,
                          problem::CrystallisationProblem,
                          state,
@@ -305,7 +305,7 @@ function _validate_dissolution_parameters(model::AbstractDissolutionFunction,
     return nothing
 end
 
-function _validate_dissolution_parameters(model::growth_dissolution,
+function _validate_dissolution_parameters(model::ArrheniusDissolution,
                                           parameters,
                                           problem::CrystallisationProblem)
     _validate_dissolution_scalar_parameters(model, parameters)
@@ -317,12 +317,12 @@ function _validate_dissolution_parameters(model::growth_dissolution,
     return nothing
 end
 
-function _validate_dissolution_parameters(model::growth_dissolution_length,
+function _validate_dissolution_parameters(model::ArrheniusLengthDissolution,
                                           parameters,
                                           problem::CrystallisationProblem)
     _validate_dissolution_scalar_parameters(model, parameters)
     isfinite(model.Lref) && model.Lref > 0.0 ||
-        throw(ArgumentError("growth_dissolution_length Lref must be finite and strictly positive."))
+        throw(ArgumentError("ArrheniusLengthDissolution Lref must be finite and strictly positive."))
     p = _named_params(model, parameters)
     p.dissolution_coefficient >= 0.0 ||
         throw(ArgumentError("dissolution_coefficient must be nonnegative."))
@@ -332,18 +332,18 @@ function _validate_dissolution_parameters(model::growth_dissolution_length,
         lower_base = 1.0 + p.size_dependence_coefficient * problem.solver.lmin / model.Lref
         upper_base = 1.0 + p.size_dependence_coefficient * problem.solver.lmax / model.Lref
         lower_base > 0.0 && upper_base > 0.0 ||
-            throw(ArgumentError("growth_dissolution_length size factor must stay positive " *
+            throw(ArgumentError("ArrheniusLengthDissolution size factor must stay positive " *
                                 "over the configured mesh."))
     end
     return nothing
 end
 
-function _validate_growth_parameters(model::growth_empirical_length,
+function _validate_growth_parameters(model::EmpiricalLengthGrowth,
                                      parameters,
                                      problem::CrystallisationProblem)
     _validate_dissolution_scalar_parameters(model, parameters)
     isfinite(model.Lref) && model.Lref > 0.0 ||
-        throw(ArgumentError("growth_empirical_length Lref must be finite and strictly positive."))
+        throw(ArgumentError("EmpiricalLengthGrowth Lref must be finite and strictly positive."))
     p = _named_params(model, parameters)
     p.growth_coefficient >= 0.0 ||
         throw(ArgumentError("growth_coefficient must be nonnegative."))
@@ -353,7 +353,7 @@ function _validate_growth_parameters(model::growth_empirical_length,
 end
 
 """
-    growthrate(::growth_empirical, parameters::AbstractVector,
+    growthrate(::EmpiricalGrowth, parameters::AbstractVector,
                problem::CrystallisationProblem, state, t) -> Real
 
 Calculate crystal growth rate using an empirical power law model.
@@ -368,7 +368,7 @@ Calculate crystal growth rate using an empirical power law model.
 # Returns
 - Growth rate (m/s) if S > 1.001, otherwise 0
 """
-function growthrate(gf::growth_empirical, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
+function growthrate(gf::EmpiricalGrowth, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     p = _named_params(gf, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
@@ -376,7 +376,7 @@ function growthrate(gf::growth_empirical, parameters::T, prob::CrystallisationPr
 end
 
 @inline function _growth_empirical_length_size_factor_base(
-    growthfunction::growth_empirical_length,
+    growthfunction::EmpiricalLengthGrowth,
     named_parameters,
     crystal_length::Real)
     size_factor_base = one(crystal_length) +
@@ -384,12 +384,12 @@ end
                        (crystal_length / growthfunction.Lref)
     size_factor_base > zero(size_factor_base) ||
         throw(DomainError(size_factor_base,
-                          "growth_empirical_length size factor must be positive."))
+                          "EmpiricalLengthGrowth size factor must be positive."))
     return size_factor_base
 end
 
 """
-    growthrate_at_length(gf::growth_empirical_length, parameters,
+    growthrate_at_length(gf::EmpiricalLengthGrowth, parameters,
                          problem, state, time, crystal_length)
 
 Evaluate the empirical growth law with the length-dependent multiplier
@@ -398,7 +398,7 @@ Evaluate the empirical growth law with the length-dependent multiplier
 The returned rate is in metres per second.  The multiplier base must remain
 positive so non-integer exponents remain real-valued.
 """
-@inline function growthrate_at_length(gf::growth_empirical_length,
+@inline function growthrate_at_length(gf::EmpiricalLengthGrowth,
                                       parameters,
                                       prob::CrystallisationProblem,
                                       state,
@@ -423,7 +423,7 @@ end
 
 """Fill a mesh-sized destination with length-dependent empirical growth."""
 function growthrate!(destination::AbstractVector,
-                     gf::growth_empirical_length,
+                     gf::EmpiricalLengthGrowth,
                      parameters,
                      prob::CrystallisationProblem,
                      state,
@@ -461,7 +461,7 @@ function growthrate!(destination::AbstractVector,
 end
 
 """Allocate a mesh-sized length-dependent empirical growth field."""
-function growthrate(gf::growth_empirical_length,
+function growthrate(gf::EmpiricalLengthGrowth,
                     parameters::T,
                     prob::CrystallisationProblem,
                     state,
@@ -473,7 +473,7 @@ function growthrate(gf::growth_empirical_length,
 end
 
 """
-    growthrate(gf::growth_energy, parameters::AbstractVector,
+    growthrate(gf::ArrheniusGrowth, parameters::AbstractVector,
                problem::CrystallisationProblem, state, t) -> Real
 
 Power-law growth with an Arrhenius temperature dependence.
@@ -489,7 +489,7 @@ Power-law growth with an Arrhenius temperature dependence.
 # Returns
 - Growth rate (m/s) if S > 1.001, otherwise 0
 """
-function growthrate(gf::growth_energy, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
+function growthrate(gf::ArrheniusGrowth, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     p = _named_params(gf, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
@@ -498,7 +498,7 @@ function growthrate(gf::growth_energy, parameters::T, prob::CrystallisationProbl
 end
 
 """
-    growthrate(::growth_BCF, parameters::AbstractVector,
+    growthrate(::BCFGrowth, parameters::AbstractVector,
                problem::CrystallisationProblem, state, t) -> Real
 
 Calculate crystal growth rate using Burton-Cabrera-Frank (BCF) surface diffusion model.
@@ -518,7 +518,7 @@ Calculate crystal growth rate using Burton-Cabrera-Frank (BCF) surface diffusion
 - Assumes surface diffusion of adsorbed species is rate-limiting
 - Alternative to Birth and Spread model for low supersaturation conditions
 """
-function growthrate(gf::growth_BCF, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
+function growthrate(gf::BCFGrowth, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     p = _named_params(gf, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
@@ -532,7 +532,7 @@ function growthrate(gf::growth_BCF, parameters::T, prob::CrystallisationProblem,
 end
 
 """
-    growthrate(::growth_BpS, parameters::AbstractVector,
+    growthrate(::BirthSpreadGrowth, parameters::AbstractVector,
                problem::CrystallisationProblem, state, t) -> Real
 
 Calculate crystal growth rate using Birth and Spread (B+S) model based on nucleation theory.
@@ -554,7 +554,7 @@ Calculate crystal growth rate using Birth and Spread (B+S) model based on nuclea
 - Assumes smooth crystal surface at high supersaturations
 - May deviate from measured values at low supersaturations
 """
-function growthrate(gf::growth_BpS, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
+function growthrate(gf::BirthSpreadGrowth, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     p = _named_params(gf, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
@@ -571,7 +571,7 @@ end
 ### Dissolution
 
 function dissolutionrate!(destination::AbstractVector,
-                          gf::growth_dissolution_length,
+                          gf::ArrheniusLengthDissolution,
                           parameters,
                           prob::CrystallisationProblem,
                           state,
@@ -597,13 +597,13 @@ function dissolutionrate!(destination::AbstractVector,
 end
 
 """
-    dissolutionrate_at_length(gf::growth_dissolution_length, parameters,
+    dissolutionrate_at_length(gf::ArrheniusLengthDissolution, parameters,
                               prob, state, t, length)
 
 Evaluate a length-dependent signed dissolution rate at one crystal length
 without constructing a mesh-sized result.
 """
-function dissolutionrate_at_length(gf::growth_dissolution_length,
+function dissolutionrate_at_length(gf::ArrheniusLengthDissolution,
                                    parameters,
                                    prob::CrystallisationProblem,
                                    state,
@@ -620,7 +620,7 @@ function dissolutionrate_at_length(gf::growth_dissolution_length,
 end
 
 """
-    dissolutionrate(gf::growth_dissolution, parameters::AbstractVector,
+    dissolutionrate(gf::ArrheniusDissolution, parameters::AbstractVector,
                     problem::CrystallisationProblem, state, t) -> Real
 
 Scalar dissolution rate (negative growth) with Arrhenius temperature dependence.
@@ -636,7 +636,7 @@ Scalar dissolution rate (negative growth) with Arrhenius temperature dependence.
 # Returns
 - Dissolution rate (negative m/s) if undersaturated, 0 otherwise
 """
-function dissolutionrate(gf::growth_dissolution, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
+function dissolutionrate(gf::ArrheniusDissolution, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     p = _named_params(gf, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)

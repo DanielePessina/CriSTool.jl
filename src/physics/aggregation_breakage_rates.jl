@@ -1,11 +1,11 @@
 ## Aggregation
 
-@inline _aggregation_kernel(::aggr_scalar, kernel_scale, shape_factor, length_one, length_two) = kernel_scale
-@inline _aggregation_kernel(::aggr_linear, kernel_scale, shape_factor, length_one, length_two) =
+@inline _aggregation_kernel(::ConstantAggregation, kernel_scale, shape_factor, length_one, length_two) = kernel_scale
+@inline _aggregation_kernel(::SizeSumAggregation, kernel_scale, shape_factor, length_one, length_two) =
     kernel_scale * (length_one + length_two)
-@inline _aggregation_kernel(::aggr_linearvol, kernel_scale, shape_factor, length_one, length_two) =
+@inline _aggregation_kernel(::VolumeSumAggregation, kernel_scale, shape_factor, length_one, length_two) =
     kernel_scale * shape_factor * (length_one^3 + length_two^3)
-@inline _aggregation_kernel(::aggr_avg, kernel_scale, shape_factor, length_one, length_two) =
+@inline _aggregation_kernel(::AverageAggregation, kernel_scale, shape_factor, length_one, length_two) =
     kernel_scale * (length_one + length_two) / 2
 
 @inline function _aggregation_pivot_index(length_mesh, product_volume)
@@ -117,7 +117,7 @@ function _aggregation_rate_discrete(aggregationfunction,
 end
 
 """
-    aggregationrate(::noaggregation, parameters::AbstractVector,
+    aggregationrate(::NoAggregation, parameters::AbstractVector,
                     problem::CrystallisationProblem, state, t) -> Real
 
 Return zero aggregation rate (placeholder for no aggregation).
@@ -125,12 +125,12 @@ Return zero aggregation rate (placeholder for no aggregation).
 # Returns
 - 0.0
 """
-function aggregationrate(::noaggregation, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
+function aggregationrate(::NoAggregation, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     return 0.0
 end
 
 """
-    aggregationrate(::aggr_scalar, parameters::AbstractVector,
+    aggregationrate(::ConstantAggregation, parameters::AbstractVector,
                     problem::CrystallisationProblem, state, t) -> Vector
 
 Calculate size-independent (scalar) aggregation rate.
@@ -146,12 +146,12 @@ Calculate size-independent (scalar) aggregation rate.
 # Returns
 - Vector of aggregation rates at each cell
 """
-function aggregationrate(af::aggr_scalar, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
+function aggregationrate(af::ConstantAggregation, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     return _aggregation_rate_discrete(af, parameters, prob, state)
 end
 
 """
-    aggregationrate(::aggr_linear, parameters::AbstractVector,
+    aggregationrate(::SizeSumAggregation, parameters::AbstractVector,
                     problem::CrystallisationProblem, state, t) -> Vector
 
 Calculate linear size-dependent aggregation rate (kernel proportional to sum of sizes).
@@ -167,12 +167,12 @@ Calculate linear size-dependent aggregation rate (kernel proportional to sum of 
 # Returns
 - Vector of aggregation rates at each cell
 """
-function aggregationrate(af::aggr_linear, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
+function aggregationrate(af::SizeSumAggregation, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     return _aggregation_rate_discrete(af, parameters, prob, state)
 end
 
 """
-    aggregationrate(::aggr_linearvol, parameters::AbstractVector,
+    aggregationrate(::VolumeSumAggregation, parameters::AbstractVector,
                     problem::CrystallisationProblem, state, t) -> Vector
 
 Calculate linear volume-dependent aggregation rate (kernel proportional to sum of volumes).
@@ -188,18 +188,18 @@ Calculate linear volume-dependent aggregation rate (kernel proportional to sum o
 # Returns
 - Vector of aggregation rates at each cell
 """
-function aggregationrate(af::aggr_linearvol, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
+function aggregationrate(af::VolumeSumAggregation, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     return _aggregation_rate_discrete(af, parameters, prob, state)
 end
 
-function aggregationrate(af::aggr_avg, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
+function aggregationrate(af::AverageAggregation, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     return _aggregation_rate_discrete(af, parameters, prob, state)
 end
 
-@inline _breakage_frequency(breakagefunction::breakage_empirical, parameters, crystal_length) =
+@inline _breakage_frequency(breakagefunction::EmpiricalBreakage, parameters, crystal_length) =
     parameters.breakage_coefficient *
     crystal_length^(3 * parameters.breakage_size_exponent)
-@inline _breakage_frequency(breakagefunction::breakage_uniform, parameters, crystal_length) =
+@inline _breakage_frequency(breakagefunction::UniformBreakage, parameters, crystal_length) =
     exp(parameters.ln_breakage_coefficient) *
     (crystal_length / breakagefunction.reference_length)^(
         3 * parameters.breakage_size_exponent)
@@ -252,7 +252,7 @@ function _breakage_rate_uniform_volume(breakagefunction,
 end
 
 """
-    breakagerate(::nobreakage, parameters::AbstractVector,
+    breakagerate(::NoBreakage, parameters::AbstractVector,
                  problem::CrystallisationProblem, state, t) -> Real
 
 Return zero breakage rate (placeholder for no breakage).
@@ -260,12 +260,12 @@ Return zero breakage rate (placeholder for no breakage).
 # Returns
 - 0.0
 """
-function breakagerate(::nobreakage, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
+function breakagerate(::NoBreakage, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     return 0.0
 end
 
 """
-    breakagerate(::breakage_empirical, parameters::AbstractVector,
+    breakagerate(::EmpiricalBreakage, parameters::AbstractVector,
                  problem::CrystallisationProblem, state, t) -> Vector
 
 Calculate empirical breakage rate.
@@ -279,12 +279,12 @@ Calculate empirical breakage rate.
 # Returns
 - Breakage rate contribution
 """
-function breakagerate(bf::breakage_empirical, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
+function breakagerate(bf::EmpiricalBreakage, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     return _breakage_rate_uniform_volume(bf, parameters, prob, state)
 end
 
 """
-    breakagerate(::breakage_uniform, parameters::AbstractVector,
+    breakagerate(::UniformBreakage, parameters::AbstractVector,
                  problem::CrystallisationProblem, state, t) -> Vector
 
 Calculate uniform breakage rate (daughter fragments uniformly distributed).
@@ -298,6 +298,6 @@ Calculate uniform breakage rate (daughter fragments uniformly distributed).
 # Returns
 - Vector of breakage rates at each cell
 """
-function breakagerate(bf::breakage_uniform, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
+function breakagerate(bf::UniformBreakage, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     return _breakage_rate_uniform_volume(bf, parameters, prob, state)
 end

@@ -25,19 +25,19 @@ Key ideas:
 ## Bind a law to named values
 
 ```julia
-bound_growth = growth_empirical(growth_coefficient = 1e-9, growth_order = 2.0)
-same_growth  = KineticModel(growth_empirical(); parameters = (
+bound_growth = EmpiricalGrowth(growth_coefficient = 1e-9, growth_order = 2.0)
+same_growth  = KineticModel(EmpiricalGrowth(); parameters = (
     growth_coefficient = 1e-9, growth_order = 2.0))
-energy_growth = growth_energy(log10_growth_coefficient = -8.0,
+energy_growth = ArrheniusGrowth(log10_growth_coefficient = -8.0,
     activation_energy = 60e3, growth_order = 2.0)
 ```
 
-A built-in law called with no keywords, such as `growth_empirical()`, is the
+A built-in law called with no keywords, such as `EmpiricalGrowth()`, is the
 unbound law. Called with all of its parameter names it returns a bound
 `KineticModel`; a partial set of names is an error. Keywords naming a struct
-field, such as `Lref` on `growth_empirical_length`, configure the law rather
-than bind a parameter. Laws without parameters (`noaggregation()`,
-`nobreakage()`, `nodissolution()`) are bound automatically when placed in a
+field, such as `Lref` on `EmpiricalLengthGrowth`, configure the law rather
+than bind a parameter. Laws without parameters (`NoAggregation()`,
+`NoBreakage()`, `NoDissolution()`) are bound automatically when placed in a
 `CrystallisationModel`.
 
 Unlisted parameters in a fitting specification remain fixed, so no separate
@@ -52,31 +52,31 @@ The dispatch-based interface below remains available for advanced extensions.
 ```julia
 using CriSTool
 
-nucl     = nucl_CNT()        # Axis(ln_nucleation_prefactor=1, surface_energy=2)
-nucl_emp = nucl_empirical()  # Axis(log10_nucleation_prefactor=1, nucleation_order=2)
-growth   = growth_empirical()# Axis(growth_coefficient=1, growth_order=2)
-growth_L = growth_empirical_length() # adds a length multiplier; four parameters
-growth_E = growth_energy()   # log10_growth_coefficient, activation_energy, growth_order
+nucl     = CNTNucleation()        # Axis(ln_nucleation_prefactor=1, surface_energy=2)
+nucl_emp = EmpiricalNucleation()  # Axis(log10_nucleation_prefactor=1, nucleation_order=2)
+growth   = EmpiricalGrowth()# Axis(growth_coefficient=1, growth_order=2)
+growth_L = EmpiricalLengthGrowth() # adds a length multiplier; four parameters
+growth_E = ArrheniusGrowth()   # log10_growth_coefficient, activation_energy, growth_order
 ```
 
 Common parameter blocks are:
 
 | Family | Model | Parameter order |
 | --- | --- | --- |
-| Nucleation | `nucl_CNT()` | `ln_nucleation_prefactor`, `surface_energy` |
-| Nucleation | `nucl_empirical()` | `log10_nucleation_prefactor`, `nucleation_order` |
-| Nucleation | `nucl_empirical_energy()` | `ln_nucleation_prefactor`, `activation_energy`, `nucleation_order` |
-| Growth | `growth_empirical()` | `growth_coefficient` (m/s), `growth_order` |
-| Growth | `growth_empirical_length()` | `growth_coefficient` (m/s), `growth_order`, `size_dependence_coefficient`, `size_dependence_exponent` |
-| Nucleation | `nucl_secondary()` | `ln_nucleation_prefactor`, `activation_energy`, `nucleation_order` |
+| Nucleation | `CNTNucleation()` | `ln_nucleation_prefactor`, `surface_energy` |
+| Nucleation | `EmpiricalNucleation()` | `log10_nucleation_prefactor`, `nucleation_order` |
+| Nucleation | `ArrheniusNucleation()` | `ln_nucleation_prefactor`, `activation_energy`, `nucleation_order` |
+| Growth | `EmpiricalGrowth()` | `growth_coefficient` (m/s), `growth_order` |
+| Growth | `EmpiricalLengthGrowth()` | `growth_coefficient` (m/s), `growth_order`, `size_dependence_coefficient`, `size_dependence_exponent` |
+| Nucleation | `SecondaryNucleation()` | `ln_nucleation_prefactor`, `activation_energy`, `nucleation_order` |
 | Nucleation | `CombinedNucleation(primary, secondary)` | the two component axes nested under `primary` and `secondary` |
-| Growth | `growth_energy()` | `log10_growth_coefficient`, `activation_energy`, `growth_order` |
-| Growth | `growth_BCF()` | `growth_coefficient`, `activation_temperature` |
-| Growth | `growth_BpS()` | `growth_coefficient`, `energy_barrier_temperature_squared` |
+| Growth | `ArrheniusGrowth()` | `log10_growth_coefficient`, `activation_energy`, `growth_order` |
+| Growth | `BCFGrowth()` | `growth_coefficient`, `activation_temperature` |
+| Growth | `BirthSpreadGrowth()` | `growth_coefficient`, `energy_barrier_temperature_squared` |
 
 Use `paramaxis(model)` rather than hard-coding a block length when building a
 general fitting or sampling workflow. To fix a parameter, such as the
-activation energy of `growth_energy`, bind its value and leave it out of the
+activation energy of `ArrheniusGrowth`, bind its value and leave it out of the
 fitted parameter selection.
 
 `CombinedNucleation` sums any two nucleation laws. Called with two bound laws
@@ -84,8 +84,8 @@ it returns the bound combination:
 
 ```julia
 primary_plus_secondary = CombinedNucleation(
-    nucl_CNT(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4),
-    nucl_secondary(ln_nucleation_prefactor = 20.0, activation_energy = 0.0, nucleation_order = 2.0))
+    CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4),
+    SecondaryNucleation(ln_nucleation_prefactor = 20.0, activation_energy = 0.0, nucleation_order = 2.0))
 ```
 
 ## Growth and dissolution
@@ -99,19 +99,19 @@ dissolve them. The default equilibrium deadband is `|S - 1| ≤ 0.001`, where
 
 ```julia
 dissolving_model = CrystallisationModel(LysozymeSystem();
-    nucleation = nucl_CNT(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4),
-    growth = growth_energy(log10_growth_coefficient = -8.0, activation_energy = 53e3, growth_order = 2.0),
-    dissolution = growth_dissolution(dissolution_coefficient = 1e-8, activation_energy = 40e3,
+    nucleation = CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4),
+    growth = ArrheniusGrowth(log10_growth_coefficient = -8.0, activation_energy = 53e3, growth_order = 2.0),
+    dissolution = ArrheniusDissolution(dissolution_coefficient = 1e-8, activation_energy = 40e3,
         dissolution_order = 1.0))
-length_dissolution = growth_dissolution_length() # adds size-dependence terms
-length_growth = growth_empirical_length()        # empirical growth with size factor
+length_dissolution = ArrheniusLengthDissolution() # adds size-dependence terms
+length_growth = EmpiricalLengthGrowth()        # empirical growth with size factor
 ```
 
-`growth_dissolution` uses the dimensionless undersaturation driving force
+`ArrheniusDissolution` uses the dimensionless undersaturation driving force
 `(1 - S)^d` and returns a scalar rate. The
 length-dependent dissolution model evaluates `(1 + κ * L / Lref)^p` at each
 mesh length, with `Lref = 1e-6` m by default; it is supported by `FiniteVol`
-and `WENO`. The analogous `growth_empirical_length()` model uses
+and `WENO`. The analogous `EmpiricalLengthGrowth()` model uses
 
 ```math
 G(L,S) = k_g(S-1)^{g}\left[1+\kappa_g\frac{L}{L_{ref}}\right]^{p_g},
@@ -144,8 +144,8 @@ Use the composite form to wrap a flat parameter vector with named slices:
 
 ```julia
 flat = [38.0, 0.0007, 1e-9 / 60, 3.0]
-p    = ComponentArray(flat, paramaxis(nucl_CNT(), growth_empirical(), nodissolution(),
-                                       noaggregation(), nobreakage()))
+p    = ComponentArray(flat, paramaxis(CNTNucleation(), EmpiricalGrowth(), NoDissolution(),
+                                       NoAggregation(), NoBreakage()))
 p.nucl.ln_nucleation_prefactor    # 38.0
 p.gr.growth_order                 # 3.0
 ```
@@ -168,17 +168,17 @@ here for nucleation and growth:
 
 ```julia
 using CriSTool
-using CriSTool: AbstractFPNucleationFunction, AbstractFPScalarGrowthFunction,
+using CriSTool: AbstractNucleationFunction, AbstractScalarGrowthFunction,
                 named_parameters
 import CriSTool: paramaxis, nucleationrate, growthrate
 using ComponentArrays
 
 # --- Custom nucleation ---
-struct nucl_custom <: AbstractFPNucleationFunction end
+struct CustomNucleation <: AbstractNucleationFunction end
 
-paramaxis(::nucl_custom) = ComponentArrays.Axis(ln_prefactor = 1, nucleation_order = 2)
+paramaxis(::CustomNucleation) = ComponentArrays.Axis(ln_prefactor = 1, nucleation_order = 2)
 
-function nucleationrate(nf::nucl_custom, parameters,
+function nucleationrate(nf::CustomNucleation, parameters,
                         prob::CrystallisationProblem, state, t)
     p = named_parameters(nf, parameters)
     S = supersaturation(prob, state, t)
@@ -186,11 +186,11 @@ function nucleationrate(nf::nucl_custom, parameters,
 end
 
 # --- Custom growth ---
-struct growth_custom <: AbstractFPScalarGrowthFunction end
+struct CustomGrowth <: AbstractScalarGrowthFunction end
 
-paramaxis(::growth_custom) = ComponentArrays.Axis(growth_coefficient = 1, growth_order = 2)
+paramaxis(::CustomGrowth) = ComponentArrays.Axis(growth_coefficient = 1, growth_order = 2)
 
-function growthrate(gf::growth_custom, parameters,
+function growthrate(gf::CustomGrowth, parameters,
                     prob::CrystallisationProblem, state, t)
     p = named_parameters(gf, parameters)
     S = supersaturation(prob, state, t)
@@ -202,9 +202,9 @@ Then bind them by name like any built-in law:
 
 ```julia
 custom_model = CrystallisationModel(LysozymeSystem();
-    nucleation = KineticModel(nucl_custom(); parameters = (
+    nucleation = KineticModel(CustomNucleation(); parameters = (
         ln_prefactor = 38.0, nucleation_order = 2.0)),
-    growth = KineticModel(growth_custom(); parameters = (
+    growth = KineticModel(CustomGrowth(); parameters = (
         growth_coefficient = 1e-9 / 60, growth_order = 3.0)))
 solution = simulate(custom_model, RunConditions(temperature = 293.15, concentration = 18.0);
     solver = MoM(), saveat = 0.0:3600.0:28800.0)
@@ -218,8 +218,8 @@ Aggregation and breakage follow the same pattern using
 each new struct. For most runs you can use the provided no-op models:
 
 ```julia
-agg = noaggregation()  # paramaxis = Axis() (no parameters)
-br  = nobreakage()     # paramaxis = Axis()
+agg = NoAggregation()  # paramaxis = Axis() (no parameters)
+br  = NoBreakage()     # paramaxis = Axis()
 ```
 
 ### Built-in aggregation kernels
@@ -235,19 +235,19 @@ The available kernels are:
 
 | Type | Kernel | `log10_aggregation_coefficient` convention |
 | --- | --- | --- |
-| `aggr_scalar` | `β` | `β = 10^log10_aggregation_coefficient` |
-| `aggr_linear` | `β * (L1 + L2)` | `L` is in metres |
-| `aggr_linearvol` | `β * volume_shape_factor * (L1^3 + L2^3)` | `volume_shape_factor` is the problem volume shape factor |
-| `aggr_avg` | `β * (L1 + L2) / 2` | arithmetic mean of the two lengths |
+| `ConstantAggregation` | `β` | `β = 10^log10_aggregation_coefficient` |
+| `SizeSumAggregation` | `β * (L1 + L2)` | `L` is in metres |
+| `VolumeSumAggregation` | `β * volume_shape_factor * (L1^3 + L2^3)` | `volume_shape_factor` is the problem volume shape factor |
+| `AverageAggregation` | `β * (L1 + L2) / 2` | arithmetic mean of the two lengths |
 
 The aggregation prefactor is dimensional. Its units depend on the selected
 kernel, so fitted values must not be moved between kernels without converting
-their units. `aggr_linearvol` uses physical crystal volume
+their units. `VolumeSumAggregation` uses physical crystal volume
 `v = volume_shape_factor * L^3`.
 
 ### Built-in breakage kernels
 
-`breakage_empirical` and `breakage_uniform` use binary breakage with a
+`EmpiricalBreakage` and `UniformBreakage` use binary breakage with a
 daughter-number distribution uniform in crystal volume. For a parent of
 length `λ`, the equivalent distribution on the length coordinate is
 `b(L | λ) = 6L^2 / λ^3` for `0 ≤ L ≤ λ`. It produces two daughters and
@@ -258,8 +258,8 @@ fitted parameters:
 
 | Type | Parent selection rate |
 | --- | --- |
-| `breakage_empirical` | `Γ(L) = b * L^(3n)` with `L` in metres |
-| `breakage_uniform` | `Γ(L) = exp(ln_breakage_coefficient) * (L / 1e-6 m)^(3n)` |
+| `EmpiricalBreakage` | `Γ(L) = b * L^(3n)` with `L` in metres |
+| `UniformBreakage` | `Γ(L) = exp(ln_breakage_coefficient) * (L / 1e-6 m)^(3n)` |
 
 Both models use `breakagerate` to return daughter birth minus parent death.
 Fragments outside the finite length mesh are not represented; mesh-refinement

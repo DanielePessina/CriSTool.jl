@@ -29,8 +29,8 @@ linear_T = LinearTemperature(293.15, -0.01 / 60)
 periodic_T = CallableTemperature(t -> 293.15 + 2.0 * sin(2π * t / 36000))
 
 crystal_model = CrystallisationModel(LysozymeSystem();
-    nucleation = nucl_CNT(ln_nucleation_prefactor = 38.0, surface_energy = 0.0007),
-    growth = growth_empirical(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
+    nucleation = CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 0.0007),
+    growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
 cooling_run = RunConditions(temperature = linear_T, concentration = 18.0)
 solution = simulate(crystal_model, cooling_run; solver = MoM(), saveat = 0.0:3600.0:28800.0)
 ```

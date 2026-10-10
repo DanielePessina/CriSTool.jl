@@ -33,8 +33,8 @@ using QuasiMonteCarlo
 using Distributions
 
 baseline_model = CrystallisationModel(LysozymeSystem();
-    nucleation = nucl_CNT(ln_nucleation_prefactor = 38.0, surface_energy = 0.0007),
-    growth = growth_empirical(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
+    nucleation = CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 0.0007),
+    growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
 problem = CrystallisationProblem(baseline_model,
     RunConditions(temperature = 293.15, concentration = 18.0); solver = MoM())
 save_grid = 0.0:360.0:21600.0

@@ -116,11 +116,11 @@ end
     # Two nodes (0.5, 1.5 µm), weights (2, 3). Constant kernel K = 1: event
     # count ½(2+3)² = 12.5 removes one particle each and conserves M₃.
     source_rule = QMOMQuadrature([0.5e-6, 1.5e-6], [2.0, 3.0])
-    aggregation_source = aggregation_moment_source(aggr_scalar(), [0.0], source_rule, 3)
+    aggregation_source = aggregation_moment_source(ConstantAggregation(), [0.0], source_rule, 3)
     @test aggregation_source[1] ≈ -12.5
     @test aggregation_source[4] ≈ 0.0 atol = 1e-24
     # Unit-frequency binary breakage: +1 particle per parent (5), M₃ conserved.
-    breakage_source = breakage_moment_source(breakage_uniform(), [0.0, 0.0], source_rule, 3)
+    breakage_source = breakage_moment_source(UniformBreakage(), [0.0, 0.0], source_rule, 3)
     @test breakage_source[1] ≈ 5.0
     @test breakage_source[4] ≈ 0.0 atol = 1e-24
 
@@ -131,11 +131,11 @@ end
 
     # DQMOM normalised weights (0.25, 0.75), pair scale 1e12: total collision
     # rate W/2 with K = 1; unit-frequency breakage adds one daughter.
-    dqmom_aggregation = CriSTool._aggregation_moment_source(aggr_scalar(), [0.0], [0.5e-6, 1.5e-6],
+    dqmom_aggregation = CriSTool._aggregation_moment_source(ConstantAggregation(), [0.0], [0.5e-6, 1.5e-6],
         [0.25, 0.75], 3; shape_factor = 0.81, pair_weight_scale = 1e12)
     @test dqmom_aggregation[1] ≈ -0.5e12
     @test dqmom_aggregation[4] ≈ 0.0 atol = 1e-20
-    dqmom_breakage = CriSTool._breakage_moment_source(breakage_empirical(), [1.0, 0.0],
+    dqmom_breakage = CriSTool._breakage_moment_source(EmpiricalBreakage(), [1.0, 0.0],
         [0.5e-6, 1.5e-6], [0.25, 0.75], 3)
     @test dqmom_breakage[1] ≈ 1.0
     @test dqmom_breakage[4] == 0.0
@@ -155,40 +155,40 @@ end
     # One parent in cell 1, K = 1: hand rate [-27/52, 1/52, 0] (fixed-pivot
     # split of L³ = 0.25 between pivots 0.125 and 3.375), scaled by each
     # kernel's value at (0.5, 0.5). Number falls by ½K, volume conserved.
-    for (aggregation_law, kernel_scale) in ((aggr_scalar(), 1.0), (aggr_linear(), 1.0),
-            (aggr_linearvol(), 0.2025), (aggr_avg(), 0.5))
+    for (aggregation_law, kernel_scale) in ((ConstantAggregation(), 1.0), (SizeSumAggregation(), 1.0),
+            (VolumeSumAggregation(), 0.2025), (AverageAggregation(), 0.5))
         single_parent_rate = CriSTool.aggregationrate(aggregation_law, [0.0], kernel_problem(), [1.0, 0.0, 0.0, 1.0], 0.0)
         @test single_parent_rate ≈ kernel_scale .* [-27 / 52, 1 / 52, 0.0]
         @test sum(kernel_solver.cell_centre .^ 3 .* single_parent_rate) ≈ 0.0 atol = 1e-12
     end
     # Populations (1, 2, 0): hand-summed collision rates per kernel.
-    for (aggregation_law, event_rate) in ((aggr_scalar(), 4.5), (aggr_linear(), 10.5),
-            (aggr_linearvol(), 16.70625), (aggr_avg(), 5.25))
+    for (aggregation_law, event_rate) in ((ConstantAggregation(), 4.5), (SizeSumAggregation(), 10.5),
+            (VolumeSumAggregation(), 16.70625), (AverageAggregation(), 5.25))
         two_cell_rate = CriSTool.aggregationrate(aggregation_law, [0.0], kernel_problem(), [1.0, 2.0, 0.0, 1.0], 0.0)
         @test sum(two_cell_rate) ≈ -event_rate
         @test sum(kernel_solver.cell_centre .^ 3 .* two_cell_rate) ≈ 0.0 atol = 1e-12
     end
     # 2.5³ + 2.5³ = 31.25 > 27: the product leaves the domain, not the last pivot.
-    @test CriSTool.aggregationrate(aggr_scalar(), [0.0], kernel_problem(), [0.0, 0.0, 1.0, 1.0], 0.0) ≈ [0.0, 0.0, -1.0]
+    @test CriSTool.aggregationrate(ConstantAggregation(), [0.0], kernel_problem(), [0.0, 0.0, 1.0, 1.0], 0.0) ≈ [0.0, 0.0, -1.0]
 
     # Parent at 1.5 with unit frequency, uniform-in-volume daughters:
     # 2ΔV/V per overlapped cell, minus the parent → [16/27, 11/27, 0].
     middle_parent_state = [0.0, 1.0, 0.0, 1.0]
-    @test CriSTool.breakagerate(breakage_empirical(), [1.0, 0.0], kernel_problem(), middle_parent_state, 0.0) ≈
+    @test CriSTool.breakagerate(EmpiricalBreakage(), [1.0, 0.0], kernel_problem(), middle_parent_state, 0.0) ≈
           [16 / 27, 11 / 27, 0.0]
-    @test CriSTool.breakagerate(breakage_uniform(), [0.0, 0.0], kernel_problem(), middle_parent_state, 0.0) ≈
+    @test CriSTool.breakagerate(UniformBreakage(), [0.0, 0.0], kernel_problem(), middle_parent_state, 0.0) ≈
           [16 / 27, 11 / 27, 0.0]
     # Exactly one net daughter per event wherever the parent sits.
     for parent_index in 1:3
         parent_state = zeros(4)
         parent_state[parent_index] = 1.0
-        @test sum(CriSTool.breakagerate(breakage_empirical(), [1.0, 0.0], kernel_problem(), parent_state, 0.0)) ≈ 1.0
+        @test sum(CriSTool.breakagerate(EmpiricalBreakage(), [1.0, 0.0], kernel_problem(), parent_state, 0.0)) ≈ 1.0
     end
     # Uniform population, constant selection: continuous M₃ source is exactly
     # zero, so the discrete M₃ error must converge (better than first order).
     volume_moment_errors = map((20, 40, 80)) do meshsize
         refined_solver = kernel_problem(meshsize, 1.0).solver
-        refined_rate = CriSTool.breakagerate(breakage_empirical(), [1.0, 0.0],
+        refined_rate = CriSTool.breakagerate(EmpiricalBreakage(), [1.0, 0.0],
             kernel_problem(meshsize, 1.0), [ones(meshsize); 1.0], 0.0)
         abs(sum(refined_solver.cell_centre .^ 3 .* refined_rate) * refined_solver.cell_dL)
     end
@@ -201,38 +201,38 @@ end
     supersaturated_state = numerics_state(3, 15.0)   # S = 1.5
     undersaturated_state = numerics_state(3, 5.0)    # S = 0.5
     # 10^10 (1.5 - 1)^2 and (1e-9/60)(0.5)^3.
-    @test CriSTool.nucleationrate(nucl_empirical(), [10.0, 2.0], rate_problem, supersaturated_state, 0.0) ≈ 2.5e9
-    @test CriSTool.growthrate(growth_empirical(), [1e-9 / 60, 3.0], rate_problem, supersaturated_state, 0.0) ≈ 1e-9 / 480
-    @test CriSTool.growthrate(growth_empirical(), [1e-9 / 60, 3.0], rate_problem, undersaturated_state, 0.0) == 0.0
+    @test CriSTool.nucleationrate(EmpiricalNucleation(), [10.0, 2.0], rate_problem, supersaturated_state, 0.0) ≈ 2.5e9
+    @test CriSTool.growthrate(EmpiricalGrowth(), [1e-9 / 60, 3.0], rate_problem, supersaturated_state, 0.0) ≈ 1e-9 / 480
+    @test CriSTool.growthrate(EmpiricalGrowth(), [1e-9 / 60, 3.0], rate_problem, undersaturated_state, 0.0) == 0.0
     # CNT without the leading S factor differs by exactly S = 1.5.
-    @test CriSTool.nucleationrate(nucl_CNTnoS(), [38.0, 0.0007], rate_problem, supersaturated_state, 0.0) * 1.5 ≈
-          CriSTool.nucleationrate(nucl_CNT(), [38.0, 0.0007], rate_problem, supersaturated_state, 0.0)
+    @test CriSTool.nucleationrate(CNTNucleationNoSupersaturation(), [38.0, 0.0007], rate_problem, supersaturated_state, 0.0) * 1.5 ≈
+          CriSTool.nucleationrate(CNTNucleation(), [38.0, 0.0007], rate_problem, supersaturated_state, 0.0)
     # Dissolution with zero activation energy: -(2e-9/60)(1 - 0.5)^1.5; inside
     # the deadband (S = 0.9995) the rate is exactly zero.
-    @test CriSTool.dissolutionrate(growth_dissolution(), [2e-9 / 60, 0.0, 1.5], rate_problem, undersaturated_state, 0.0) ≈
+    @test CriSTool.dissolutionrate(ArrheniusDissolution(), [2e-9 / 60, 0.0, 1.5], rate_problem, undersaturated_state, 0.0) ≈
           -(2e-9 / 60) * sqrt(0.125)
-    @test CriSTool.dissolutionrate(growth_dissolution(), [2e-9 / 60, 0.0, 1.5], rate_problem,
+    @test CriSTool.dissolutionrate(ArrheniusDissolution(), [2e-9 / 60, 0.0, 1.5], rate_problem,
         numerics_state(3, 9.995), 0.0) == 0.0
     # Arrhenius growth with zero activation energy: 10^-8 (1.5 - 1)^2.
-    @test CriSTool.growthrate(growth_energy(), [-8.0, 0.0, 2.0], rate_problem, supersaturated_state, 0.0) ≈ 2.5e-9
+    @test CriSTool.growthrate(ArrheniusGrowth(), [-8.0, 0.0, 2.0], rate_problem, supersaturated_state, 0.0) ≈ 2.5e-9
     # Combined nucleation sums its components: 10^10·0.5² + 10^9·0.5¹.
-    combined_nucleation = CombinedNucleation(nucl_empirical(), nucl_empirical())
+    combined_nucleation = CombinedNucleation(EmpiricalNucleation(), EmpiricalNucleation())
     @test CriSTool.nucleationrate(combined_nucleation, [10.0, 2.0, 9.0, 1.0], rate_problem,
         supersaturated_state, 0.0) ≈ 3.0e9
 end
 
 @testset "Kinetic parameter schema" begin
     # paramaxis is the only parameter declaration; an empty axis counts zero.
-    @test CriSTool._parameter_count(nodissolution()) == 0
-    @test CriSTool._parameter_count(CombinedNucleation(nucl_CNT(), nucl_secondary())) == 5
-    bound_combination = CombinedNucleation(nucl_CNT(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4),
-        nucl_empirical(log10_nucleation_prefactor = 9.0, nucleation_order = 1.0))
+    @test CriSTool._parameter_count(NoDissolution()) == 0
+    @test CriSTool._parameter_count(CombinedNucleation(CNTNucleation(), SecondaryNucleation())) == 5
+    bound_combination = CombinedNucleation(CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4),
+        EmpiricalNucleation(log10_nucleation_prefactor = 9.0, nucleation_order = 1.0))
     @test bound_combination.parameters ==
           (primary = (ln_nucleation_prefactor = 38.0, surface_energy = 6e-4),
            secondary = (log10_nucleation_prefactor = 9.0, nucleation_order = 1.0))
     # Partial or misspelled keywords name both the missing and unknown entries.
     partial_binding_error = try
-        nucl_CNT(ln_nucleation_prefactor = 38.0, surface_energi = 6e-4)
+        CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energi = 6e-4)
     catch binding_error
         binding_error
     end
@@ -240,12 +240,12 @@ end
     @test occursin("missing (:surface_energy,)", partial_binding_error.msg)
     @test occursin("unknown (:surface_energi,)", partial_binding_error.msg)
     # Configuration keywords stay on the law; parameter keywords bind it.
-    @test growth_empirical_length(Lref = 2e-6).Lref == 2e-6
+    @test EmpiricalLengthGrowth(Lref = 2e-6).Lref == 2e-6
 end
 
 @eval begin
     # Custom length dissolution counting scalar-fallback evaluations.
-    mutable struct NumericsCountingLengthDissolution <: CriSTool.AbstractFPLengthDissolutionFunction
+    mutable struct NumericsCountingLengthDissolution <: CriSTool.AbstractLengthDissolutionFunction
         evaluations::Base.RefValue{Int}
     end
     function CriSTool.dissolutionrate_at_length(counting_law::NumericsCountingLengthDissolution, parameters,
@@ -261,7 +261,7 @@ end
     supersaturated_state = numerics_state(3, 15.0)
     undersaturated_state = numerics_state(3, 5.0)
     # 3e-8 · 0.5² · (1 + 0.5 L/1µm)²  at L = 0.5, 1, 2 µm.
-    length_growth = growth_empirical_length(Lref = 1e-6)
+    length_growth = EmpiricalLengthGrowth(Lref = 1e-6)
     growth_destination = zeros(3)
     CriSTool.growthrate!(growth_destination, length_growth, [3e-8, 2.0, 0.5, 2.0], rate_problem,
         supersaturated_state, 0.0, length_mesh)
@@ -276,7 +276,7 @@ end
         rate_problem, supersaturated_state, 0.0, [2.5e-6, 2.6e-6, 2.7e-6])
 
     # -6e-8 · 0.5 · (1 + 0.5 L/1µm)²; undersaturated growth contributes zero.
-    length_dissolution = growth_dissolution_length(Lref = 1e-6)
+    length_dissolution = ArrheniusLengthDissolution(Lref = 1e-6)
     net_destination = zeros(3)
     CriSTool.net_growth_rate!(net_destination, length_growth, [3e-8, 2.0, 0.5, 2.0], length_dissolution,
         [6e-8, 0.0, 1.0, 0.5, 2.0], rate_problem, undersaturated_state, 0.0, length_mesh)
@@ -284,7 +284,7 @@ end
 
     # Custom scalar fallback: -0.03 L, evaluated once per mesh point.
     counting_law = NumericsCountingLengthDissolution(Ref(0))
-    CriSTool.net_growth_rate!(net_destination, growth_empirical(), [3e-8, 2.0], counting_law, [0.03],
+    CriSTool.net_growth_rate!(net_destination, EmpiricalGrowth(), [3e-8, 2.0], counting_law, [0.03],
         rate_problem, undersaturated_state, 0.0, length_mesh)
     @test net_destination ≈ [-1.5e-8, -3.0e-8, -6.0e-8] rtol = 1e-14
     @test counting_law.evaluations[] == 3
@@ -296,11 +296,11 @@ struct NumericsBoundaryNucleation <: CriSTool.AbstractNucleationFunction end
 CriSTool.paramaxis(::NumericsBoundaryNucleation) = CriSTool.ComponentArrays.Axis(boundary_birth = 1)
 CriSTool.nucleationrate(::NumericsBoundaryNucleation, parameters, problem, state, time) = parameters[1] * (1 + time / 10)
 
-struct NumericsBoundaryScalarGrowth <: CriSTool.AbstractFPScalarGrowthFunction end
+struct NumericsBoundaryScalarGrowth <: CriSTool.AbstractScalarGrowthFunction end
 CriSTool.paramaxis(::NumericsBoundaryScalarGrowth) = CriSTool.ComponentArrays.Axis(boundary_speed = 1)
 CriSTool.growthrate(::NumericsBoundaryScalarGrowth, parameters, problem, state, time) = parameters[1]
 
-struct NumericsBoundaryLengthGrowth <: CriSTool.AbstractFPLengthGrowthFunction
+struct NumericsBoundaryLengthGrowth <: CriSTool.AbstractLengthGrowthFunction
     boundary_cell_rate_count::Int
 end
 CriSTool.paramaxis(law::NumericsBoundaryLengthGrowth) =

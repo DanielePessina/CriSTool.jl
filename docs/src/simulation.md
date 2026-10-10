@@ -4,8 +4,8 @@
 using CriSTool
 
 crystal_model = CrystallisationModel(LysozymeSystem();
-    nucleation = nucl_CNT(ln_nucleation_prefactor = 38.0, surface_energy = 0.0006),
-    growth = growth_empirical(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
+    nucleation = CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 0.0006),
+    growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
 
 batch_run = RunConditions(temperature = 293.15, concentration = 18.0)
 trajectory = simulate(crystal_model, batch_run; solver = MoM(), saveat = 0.0:3600.0:28800.0)
@@ -15,10 +15,10 @@ trajectory.d43[end]
 ```
 
 A model contains the material system and the bound kinetic laws. A law called
-with all of its parameter names returns a bound `KineticModel`; `nucl_CNT()`
+with all of its parameter names returns a bound `KineticModel`; `CNTNucleation()`
 alone is the unbound law, and a partial set of names is an error. Keywords that
 name a law's configuration fields (for example `Lref` on
-`growth_empirical_length`) configure the law instead of binding a parameter. Read named
+`EmpiricalLengthGrowth`) configure the law instead of binding a parameter. Read named
 values through `crystal_model.growth.parameters`.
 
 `RunConditions(; temperature, concentration, solvent=(;), crystals=nothing,

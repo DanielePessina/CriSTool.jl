@@ -28,7 +28,7 @@ LysozymeSystem(; kwargs...) = CrystallisationSystem(;
 
 """`required_properties(law)` declares additional material properties used by a law."""
 required_properties(kinetic_law) = ()
-required_properties(::Union{nucl_CNT, nucl_CNTnoS}) = (:molecular_volume,)
+required_properties(::Union{CNTNucleation, CNTNucleationNoSupersaturation}) = (:molecular_volume,)
 required_properties(combined_law::CombinedNucleation) =
     Tuple(union(required_properties(combined_law.primary), required_properties(combined_law.secondary)))
 
@@ -48,7 +48,7 @@ end
 Bind a law to named values. Names and nesting must match `paramaxis(law)`;
 the same schema serves simulation, selection of fit parameters, and predictions.
 Built-in laws bind more briefly through their keyword call, e.g.
-`growth_empirical(growth_coefficient = 1e-8, growth_order = 2.0)`.
+`EmpiricalGrowth(growth_coefficient = 1e-8, growth_order = 2.0)`.
 """
 struct KineticModel{Law, Parameters <: NamedTuple}
     law::Law
@@ -90,12 +90,12 @@ CombinedNucleation(primary::KineticModel, secondary::KineticModel) =
         parameters = (primary = primary.parameters, secondary = secondary.parameters))
 
 """
-    CrystallisationModel(system; nucleation, growth, dissolution=nodissolution(),
-                         aggregation=noaggregation(), breakage=nobreakage())
+    CrystallisationModel(system; nucleation, growth, dissolution=NoDissolution(),
+                         aggregation=NoAggregation(), breakage=NoBreakage())
 
 A material system and five bound kinetic slots, independent of run conditions
 and solver. Each slot takes a bound `KineticModel`, for example
-`nucl_CNT(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4)`; laws without
+`CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4)`; laws without
 parameters and callable laws are bound automatically.
 """
 struct CrystallisationModel{System, Nucleation, Growth, Dissolution, Aggregation, Breakage}
@@ -107,8 +107,8 @@ struct CrystallisationModel{System, Nucleation, Growth, Dissolution, Aggregation
     breakage::Breakage
 end
 
-CrystallisationModel(material_system; nucleation, growth, dissolution = nodissolution(),
-        aggregation = noaggregation(), breakage = nobreakage()) =
+CrystallisationModel(material_system; nucleation, growth, dissolution = NoDissolution(),
+        aggregation = NoAggregation(), breakage = NoBreakage()) =
     CrystallisationModel(material_system, _bound_kinetic(nucleation), _bound_kinetic(growth),
         _bound_kinetic(dissolution), _bound_kinetic(aggregation), _bound_kinetic(breakage))
 
@@ -238,7 +238,7 @@ temperature(rate_context::KineticContext) = temperature(rate_context.problem.tem
 solvent_state(rate_context::KineticContext) = solvent_state(rate_context.problem, rate_context.state)
 
 """`CallableGrowth(callable; parameters, required=())`: scalar law `(named_parameters, context) -> rate`."""
-struct CallableGrowth{Callable, Schema, Requirements} <: AbstractFPScalarGrowthFunction
+struct CallableGrowth{Callable, Schema, Requirements} <: AbstractScalarGrowthFunction
     callable::Callable
     schema::Schema
     required::Requirements
@@ -247,7 +247,7 @@ CallableGrowth(kinetic_callable; parameters::NamedTuple, required::Tuple = ()) =
     CallableGrowth(kinetic_callable, parameters, required)
 
 """`CallableNucleation(callable; parameters, required=())`: law `(named_parameters, context) -> rate`."""
-struct CallableNucleation{Callable, Schema, Requirements} <: AbstractFPNucleationFunction
+struct CallableNucleation{Callable, Schema, Requirements} <: AbstractNucleationFunction
     callable::Callable
     schema::Schema
     required::Requirements
@@ -256,7 +256,7 @@ CallableNucleation(kinetic_callable; parameters::NamedTuple, required::Tuple = (
     CallableNucleation(kinetic_callable, parameters, required)
 
 """Length law `(named_parameters, context, length_metres) -> rate`, including DQMOM node evaluation."""
-struct CallableLengthGrowth{Callable, Schema, Requirements} <: AbstractFPLengthGrowthFunction
+struct CallableLengthGrowth{Callable, Schema, Requirements} <: AbstractLengthGrowthFunction
     callable::Callable
     schema::Schema
     required::Requirements

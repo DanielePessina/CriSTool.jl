@@ -5,7 +5,7 @@ The same scalar dissolution rate is run with MoM, FiniteVol, and WENO.
 The seeded population starts below a constant saturation concentration, so
 the crystal growth rate is negative and the solution concentration rises.
 For a length-dependent dissolution law, use Tutorial 6's discretised solver
-pattern with `growth_dissolution_length()`; QMOM support is intentionally
+pattern with `ArrheniusLengthDissolution()`; QMOM support is intentionally
 limited to scalar signed kinetics.
 =#
 
@@ -19,8 +19,8 @@ function main()
     # dissolution acts here.
     crystal_model = CrystallisationModel(LysozymeSystem(saturation_model = ConstantSolubility(10.0));
         nucleation = CallableNucleation((rate_values, rate_context) -> 0.0; parameters = (;)),
-        growth = growth_empirical(growth_coefficient = 1e-9 / 60, growth_order = 1.0),
-        dissolution = growth_dissolution(dissolution_coefficient = 2e-9 / 60, activation_energy = 0.0,
+        growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 1.0),
+        dissolution = ArrheniusDissolution(dissolution_coefficient = 2e-9 / 60, activation_energy = 0.0,
             dissolution_order = 1.5))
     # A narrow 25 µm seed starts below saturation, so crystals dissolve and c rises.
     undersaturated_run = RunConditions(temperature = 293.15, concentration = 5.0,

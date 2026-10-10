@@ -11,8 +11,8 @@ using CairoMakie
 
 function main()
     crystal_model = CrystallisationModel(LysozymeSystem();
-        nucleation = nucl_CNT(ln_nucleation_prefactor = 38.0, surface_energy = 0.0006),
-        growth = growth_empirical(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
+        nucleation = CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 0.0006),
+        growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
     solution = simulate(crystal_model, RunConditions(temperature = 293.15, concentration = 18.0);
         solver = QMOM(nquadrature = 3), saveat = collect(0.0:1800.0:18000.0))
 

@@ -126,7 +126,7 @@ through a prepared fit, which selects the kinetic parameters by name:
 using Metaheuristics
 fit_specification = OptimisationSpec(
     bounds = (growth = (growth_coefficient = (1e-12, 1e-9), growth_order = (1.0, 4.0)),),
-    algorithm = DE(N = 16), loss = mae())
+    algorithm = DE(N = 16), loss = MeanAbsoluteError())
 prepared_fit = prepare_fit(crystal_model, experiments, fit_specification; solver = MoM())
 objective_value = loss(prepared_fit, [1e-9 / 60, 3.0])
 ```

@@ -3,8 +3,8 @@ using CriSTool, Metaheuristics
 
 function main()
     crystal_model = CrystallisationModel(LysozymeSystem();
-        nucleation = nucl_CNT(ln_nucleation_prefactor = 38.0, surface_energy = 0.0006),
-        growth = growth_empirical(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
+        nucleation = CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 0.0006),
+        growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
     real_runs = load_measurements(joinpath(pkgdir(CriSTool), "test", "fixtures", "real-experimental-dataset.csv"))
     selected_fit = OptimisationSpec(bounds = (growth = (growth_order = (1.0, 4.0),),),
         algorithm = DE(N = 12, options = Options(iterations = 3, seed = 42)))

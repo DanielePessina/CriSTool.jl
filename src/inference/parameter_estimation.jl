@@ -215,7 +215,7 @@ end
 """Observable weights by name, resolved once from the preparation loss."""
 _observable_weights(loss_function, names, ambiguous_order::Bool) =
     NamedTuple{Tuple(names)}(ntuple(_ -> 1.0, length(names)))
-_observable_weights(loss_function::Union{logMLE, mae}, names, ambiguous_order::Bool) =
+_observable_weights(loss_function::Union{GaussianNLL, MeanAbsoluteError}, names, ambiguous_order::Bool) =
     NamedTuple{Tuple(names)}(Tuple(_checked_weight.(_weights_in_order(loss_function.weighting, names, ambiguous_order))))
 
 function _weights_in_order(weighting::Union{NamedTuple, AbstractDict}, names, ambiguous_order::Bool)
@@ -373,15 +373,15 @@ _predicted_series(::SteadyMode, observable_projections::NamedTuple, solution::Ab
     fill(only(_projected_values(observable_projections, solution, name)), length(target_times))
 
 # One scored measurement's contribution, and how an observable's contributions pool.
-function _residual_term(likelihood::logMLE, measured::Observable, measurement_index::Int, residual)
+function _residual_term(likelihood::GaussianNLL, measured::Observable, measurement_index::Int, residual)
     variance = _measurement_variance(measured, measured.mean[measurement_index], measurement_index,
         likelihood.variance_model, likelihood.relative_variance_floor)
     return 0.5 * (log(2π * variance) + residual^2 / variance)
 end
-_residual_term(::mae, measured::Observable, measurement_index::Int, residual) = abs(residual)
+_residual_term(::MeanAbsoluteError, measured::Observable, measurement_index::Int, residual) = abs(residual)
 
-_pooled(::logMLE, objective_sum, observation_count::Int) = objective_sum
-_pooled(::mae, objective_sum, observation_count::Int) =
+_pooled(::GaussianNLL, objective_sum, observation_count::Int) = objective_sum
+_pooled(::MeanAbsoluteError, objective_sum, observation_count::Int) =
     observation_count > 0 ? objective_sum / observation_count : objective_sum
 
 """
@@ -391,7 +391,7 @@ One weighted objective per observable in `setup.observable_names`, pooled over
 every scored measurement of every experiment. A numerically failed solve gives
 each observable its weighted penalty.
 """
-function _loss_objectives(lossfunction::Union{logMLE, mae}, setup::LossSetup, params)
+function _loss_objectives(lossfunction::Union{GaussianNLL, MeanAbsoluteError}, setup::LossSetup, params)
     expected_count = _kinetic_parameter_count(setup)
     length(params) == expected_count || throw(DimensionMismatch(
         "Expected $expected_count kinetic parameters, received $(length(params))."))
@@ -434,7 +434,7 @@ Observable weights are those resolved from the loss the setup was prepared with.
 Unsuccessful numerical solves receive a penalty. Invalid inputs and user-code
 exceptions propagate to the caller.
 """
-loss(lossfunction::Union{mae, logMLE}, setup::LossSetup, params) =
+loss(lossfunction::Union{MeanAbsoluteError, GaussianNLL}, setup::LossSetup, params) =
     sum(_loss_objectives(lossfunction, setup, params))
 
 # Preserve caller configuration while isolating mutable status, parameters and RNG.

@@ -59,8 +59,8 @@ end
 
 # Realistic nonlinear case (README values) for regressions that need real kinetics.
 const fixture_lysozyme_model = CrystallisationModel(LysozymeSystem();
-    nucleation = nucl_CNT(ln_nucleation_prefactor = 38.0, surface_energy = 0.0007),
-    growth = growth_empirical(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
+    nucleation = CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 0.0007),
+    growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
 const fixture_lysozyme_conditions = RunConditions(temperature = 293.15, concentration = 18.0)
 
 # Continuous operations sharing one clear feed (C = 2 kg/m³).

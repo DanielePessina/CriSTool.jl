@@ -80,9 +80,9 @@ Random.rand(sequence_rng::FitPredictSequenceRNG) =
         time = [0.0, 100.0], mean = [20.0, 19.9]),), conditions = RunConditions(temperature = 293.15), exp_id = 35)
     @test_throws ArgumentError prepare_fit(fitpredict_model, [no_variance_experiment], fitpredict_prepared.specification)
     @test loss(prepare_fit(fitpredict_model, [no_variance_experiment],
-        OptimisationSpec(bounds = fitpredict_bounds, algorithm = DE(), loss = mae())), [0.0]) ≈ 0.1 atol = 1e-12
+        OptimisationSpec(bounds = fitpredict_bounds, algorithm = DE(), loss = MeanAbsoluteError())), [0.0]) ≈ 0.1 atol = 1e-12
     @test_throws ArgumentError prepare_fit(fitpredict_model, [fitpredict_experiment],
-        BayesianSpec(priors = (growth = (speed = Uniform(0.001, 0.03),),), loss = mae()))
+        BayesianSpec(priors = (growth = (speed = Uniform(0.001, 0.03),),), loss = MeanAbsoluteError()))
     @test_throws ArgumentError prepare_fit(fitpredict_model, [fitpredict_experiment],
         ABCSpec(priors = (growth = (speed = Uniform(0.005, 0.02),),), target = Inf))
 end
@@ -105,35 +105,35 @@ end
                          pooled_run(2, (concentration = concentration_series, pH = ph_series))],
                         [pooled_run(2, (pH = ph_series, concentration = concentration_series)),
                          pooled_run(1, (concentration = concentration_series,))])
-        @test pooled_loss_value(mae(), pooled_runs) ≈ 2.0
-        @test pooled_loss_value(mae(weighting = (concentration = 2.0, pH = 3.0)), pooled_runs) ≈ 5.0
+        @test pooled_loss_value(MeanAbsoluteError(), pooled_runs) ≈ 2.0
+        @test pooled_loss_value(MeanAbsoluteError(weighting = (concentration = 2.0, pH = 3.0)), pooled_runs) ≈ 5.0
     end
     # Two pH errors of 1 and four of 4 pool to a mean absolute error of 3.
     uneven_runs = [pooled_run(1, (concentration = concentration_series, pH = ph_series)),
         pooled_run(2, (concentration = concentration_series,
             pH = Observable(time = [0.0, 0.25, 0.75, 1.0], mean = fill(11.0, 4))))]
-    uneven_prepared = prepare_fit(pooled_model, uneven_runs, pooled_spec(mae()))
-    @test loss_terms(mae(), uneven_prepared.setup, [0.0]) == (concentration = 1.0, pH = 3.0)
-    ordered_prepared = prepare_fit(pooled_model, uneven_runs, pooled_spec(mae(weighting = [3.0, 2.0]));
+    uneven_prepared = prepare_fit(pooled_model, uneven_runs, pooled_spec(MeanAbsoluteError()))
+    @test loss_terms(MeanAbsoluteError(), uneven_prepared.setup, [0.0]) == (concentration = 1.0, pH = 3.0)
+    ordered_prepared = prepare_fit(pooled_model, uneven_runs, pooled_spec(MeanAbsoluteError(weighting = [3.0, 2.0]));
         observable_order = [:pH, :concentration])
-    @test loss_terms(mae(weighting = [3.0, 2.0]), ordered_prepared.setup, [0.0]) == (pH = 9.0, concentration = 2.0)
+    @test loss_terms(MeanAbsoluteError(weighting = [3.0, 2.0]), ordered_prepared.setup, [0.0]) == (pH = 9.0, concentration = 2.0)
 
     likelihood_runs = [pooled_run(1, (concentration = Observable(time = [0.0, 1.0], mean = [10.0, 11.0], variance = 1.0),
             pH = Observable(time = [0.0, 1.0], mean = [8.0, 8.0], variance = 4.0))),
         pooled_run(2, (concentration = Observable(time = [0.0, 1.0], mean = [10.0, 11.0], variance = 1.0),))]
-    likelihood_prepared = prepare_fit(pooled_model, likelihood_runs, pooled_spec(logMLE()))
-    likelihood_terms = loss_terms(logMLE(), likelihood_prepared.setup, [0.0])
+    likelihood_prepared = prepare_fit(pooled_model, likelihood_runs, pooled_spec(GaussianNLL()))
+    likelihood_terms = loss_terms(GaussianNLL(), likelihood_prepared.setup, [0.0])
     @test keys(likelihood_terms) == (:concentration, :pH)
     @test collect(values(likelihood_terms)) ≈ [2 * fitpredict_gaussian_nll(1.0, 1.0), 2 * fitpredict_gaussian_nll(1.0, 4.0)]
 
     # A local projection scores a derived signal: 2C matches, 3C misses by 20.
     signal_run = pooled_run(3, (concentration = concentration_series,
         optical_signal = Observable(time = [0.0, 1.0], mean = [20.0, 20.0])))
-    signal_terms(signal_scale) = loss_terms(mae(), prepare_fit(pooled_model, [signal_run], pooled_spec(mae());
+    signal_terms(signal_scale) = loss_terms(MeanAbsoluteError(), prepare_fit(pooled_model, [signal_run], pooled_spec(MeanAbsoluteError());
         observable_projections = (optical_signal = physical_solution -> signal_scale .* physical_solution.concentration,)).setup, [0.0])
     @test signal_terms(2.0).optical_signal == 0.0
     @test signal_terms(3.0).optical_signal ≈ 10.0
-    @test_throws ArgumentError prepare_fit(pooled_model, [signal_run], pooled_spec(mae());
+    @test_throws ArgumentError prepare_fit(pooled_model, [signal_run], pooled_spec(MeanAbsoluteError());
         observable_projections = (concentration = physical_solution -> physical_solution.concentration,))
 end
 
@@ -194,7 +194,7 @@ end
 
 @testset "NSGA2 (threaded): non-dominated Pareto set within bounds" begin
     pareto_prepared = prepare_fit(fitpredict_model, [fitpredict_experiment], OptimisationSpec(bounds = fitpredict_bounds,
-        algorithm = Metaheuristics.NSGA2(N = 12, options = Metaheuristics.Options(iterations = 3, seed = 42)), loss = mae()))
+        algorithm = Metaheuristics.NSGA2(N = 12, options = Metaheuristics.Options(iterations = 3, seed = 42)), loss = MeanAbsoluteError()))
     pareto_results = fit(pareto_prepared; threaded = true)
     pareto_objectives = [collect(values(pareto_result.objectives)) for pareto_result in pareto_results]
     @test all(pareto_result -> 0.001 <= pareto_result.parameters.growth.speed <= 0.03, pareto_results)
@@ -248,7 +248,7 @@ end
         observables = (d43 = Observable(time = size_times, mean = fixture_translation_d43.(size_times) .+ size_offsets,
             variance = size_variances),))
     size_prepared = prepare_fit(fitpredict_model, [size_run], OptimisationSpec(bounds = fitpredict_bounds,
-        algorithm = DE(), loss = logMLE(weighting = (d43 = 1.0,))))
+        algorithm = DE(), loss = GaussianNLL(weighting = (d43 = 1.0,))))
     @test loss(size_prepared, [0.01]) ≈ 0.5 * sum(log.(2π .* size_variances) .+ size_offsets .^ 2 ./ size_variances) rtol = 1e-6
 end
 
@@ -277,7 +277,7 @@ end
     target_sampler = FitPredictTargetSampler(received_target, received_reference_loss)
     abc_priors = (growth = (speed = Uniform(0.005, 0.02),),)
     forwarded_result = fit(prepare_fit(fitpredict_model, [fitpredict_experiment],
-        ABCSpec(priors = abc_priors, target = 1.5, sampler = target_sampler, loss = logMLE())))
+        ABCSpec(priors = abc_priors, target = 1.5, sampler = target_sampler, loss = GaussianNLL())))
     # The reference loss is the likelihood at the model's current (true) speed.
     @test received_reference_loss[] ≈ 3 * fitpredict_gaussian_nll(0.0, 0.01) + 4 * fitpredict_gaussian_nll(0.0, 1e-14) rtol = 1e-9
     @test received_target[] == 1.5

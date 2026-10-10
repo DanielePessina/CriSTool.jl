@@ -1,7 +1,7 @@
 #### Kinetics
 ## Nucleation
 """
-    nucleationrate(::nucl_CNT, parameters::AbstractVector,
+    nucleationrate(::CNTNucleation, parameters::AbstractVector,
                    problem::CrystallisationProblem, state, t) -> Real
 
 Calculate nucleation rate using Classical Nucleation Theory (CNT).
@@ -18,7 +18,7 @@ Calculate nucleation rate using Classical Nucleation Theory (CNT).
 # Returns
 - Nucleation rate (number/m³/s) if S > 1.001, otherwise 0
 """
-function nucleationrate(nf::nucl_CNT, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
+function nucleationrate(nf::CNTNucleation, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     p = _named_params(nf, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
@@ -33,7 +33,7 @@ function nucleationrate(nf::nucl_CNT, parameters::T, prob::CrystallisationProble
 end
 
 """
-    nucleationrate(::nucl_empirical, parameters::AbstractVector,
+    nucleationrate(::EmpiricalNucleation, parameters::AbstractVector,
                    problem::CrystallisationProblem, state, t) -> Real
 
 Calculate nucleation rate using an empirical power law model.
@@ -48,7 +48,7 @@ Calculate nucleation rate using an empirical power law model.
 # Returns
 - Nucleation rate (number/m³/s) if S > 1.001, otherwise 0
 """
-function nucleationrate(nf::nucl_empirical, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
+function nucleationrate(nf::EmpiricalNucleation, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     p = _named_params(nf, parameters)
     S = supersaturation(prob, state, t)
     return S > 1.001 ? 10^p.log10_nucleation_prefactor *
@@ -56,7 +56,7 @@ function nucleationrate(nf::nucl_empirical, parameters::T, prob::Crystallisation
 end
 
 """
-    nucleationrate(::nucl_empirical_energy, parameters::AbstractVector,
+    nucleationrate(::ArrheniusNucleation, parameters::AbstractVector,
                    problem::CrystallisationProblem, state, t) -> Real
 
 Calculate nucleation rate using empirical model with activation energy.
@@ -72,7 +72,7 @@ Calculate nucleation rate using empirical model with activation energy.
 # Returns
 - Nucleation rate (number/m³/s) if S > 1.001, otherwise 0
 """
-function nucleationrate(nf::nucl_empirical_energy, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
+function nucleationrate(nf::ArrheniusNucleation, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     p = _named_params(nf, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
@@ -83,7 +83,7 @@ function nucleationrate(nf::nucl_empirical_energy, parameters::T, prob::Crystall
 end
 
 """
-    nucleationrate(::nucl_CNTnoS, parameters::AbstractVector,
+    nucleationrate(::CNTNucleationNoSupersaturation, parameters::AbstractVector,
                    problem::CrystallisationProblem, state, t) -> Real
 
 Calculate nucleation rate using Classical Nucleation Theory (CNT) without S factor in pre-exponential term.
@@ -100,7 +100,7 @@ Calculate nucleation rate using Classical Nucleation Theory (CNT) without S fact
 # Returns
 - Nucleation rate (number/m³/s) if S > 1.001, otherwise 0
 """
-function nucleationrate(nf::nucl_CNTnoS, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
+function nucleationrate(nf::CNTNucleationNoSupersaturation, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     p = _named_params(nf, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
@@ -114,7 +114,7 @@ function nucleationrate(nf::nucl_CNTnoS, parameters::T, prob::CrystallisationPro
 end
 
 """
-    nucleationrate(::nucl_secondary, parameters::AbstractVector,
+    nucleationrate(::SecondaryNucleation, parameters::AbstractVector,
                    problem::CrystallisationProblem, state, t) -> Real
 
 Calculate secondary nucleation rate proportional to third moment (crystal mass).
@@ -131,7 +131,7 @@ Calculate secondary nucleation rate proportional to third moment (crystal mass).
 # Returns
 - Secondary nucleation rate (number/m³/s) if S > 1.001, otherwise 0
 """
-function nucleationrate(nf::nucl_secondary, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
+function nucleationrate(nf::SecondaryNucleation, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     p = _named_params(nf, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
