@@ -43,33 +43,31 @@ using Random
                   for field_name in fieldnames(typeof(configured_algorithm.parameters)))
     end
 
-    # Compare the public routine against Metaheuristics directly, with the same
-    # objective/configuration/seed. A forced DE strategy or replaced F/CR diverges.
-    optimizer_problem = CrystallisationProblem(;
-        kinetics_nucleationfunction = nucl_empirical(),
-        kinetics_growthfunction = growth_empirical(),
-        kinetics_aggregationfunction = noaggregation(),
-        kinetics_breakagefunction = nobreakage(), solver = MoM())
+    # Compare `fit` against Metaheuristics directly, with the same objective,
+    # configuration and seed. A forced DE strategy or replaced F/CR diverges.
+    optimizer_model = CrystallisationModel(LysozymeSystem();
+        nucleation = nucl_empirical(log10_nucleation_prefactor = 12.5, nucleation_order = 1.5),
+        growth = growth_empirical(growth_coefficient = 3e-8, growth_order = 1.5))
     optimizer_measurements = [CrystallisationExperiment(;
         observables = (; concentration = Observable(;
             time = [0.0, 30.0, 60.0], mean = [18.0, 17.8, 17.5],
             variance = [0.01, 0.01, 0.01])), exp_id = 921, conditions = RunConditions(temperature = 295.0))]
-    optimizer_lower = [12.0, 1.0, 1e-8, 1.0]
-    optimizer_upper = [13.0, 2.0, 5e-8, 2.0]
-    optimizer_loss = logMLE(; weighting = [1.0])
-    optimizer_setup = prepare_loss(optimizer_problem, optimizer_measurements)
+    optimizer_bounds = (nucleation = (log10_nucleation_prefactor = (12.0, 13.0), nucleation_order = (1.0, 2.0)),
+        growth = (growth_coefficient = (1e-8, 5e-8), growth_order = (1.0, 2.0)))
+    optimizer_prepared = prepare_fit(optimizer_model, optimizer_measurements,
+        OptimisationSpec(bounds = optimizer_bounds, algorithm = supplied_de, loss = logMLE(; weighting = [1.0])))
     direct_de = deepcopy(supplied_de)
     direct_de.status = Metaheuristics.State(nothing, [])
-    direct_result = Metaheuristics.optimize(
-        candidate -> CriSTool.batchLF_procSO(optimizer_loss, optimizer_setup, candidate),
-        Metaheuristics.boxconstraints(optimizer_lower, optimizer_upper), direct_de)
-    public_result = PE_Routine(optimizer_loss, optimizer_measurements,
-        optimizer_lower, optimizer_upper, nucl_empirical(), growth_empirical(),
-        noaggregation(), nobreakage(); solver = MoM(), MHAlgorithm = supplied_de,
-        savetxt = false)
+    direct_result = Metaheuristics.optimize(candidate -> loss(optimizer_prepared, candidate),
+        Metaheuristics.boxconstraints([12.0, 1.0, 1e-8, 1.0], [13.0, 2.0, 5e-8, 2.0]), direct_de)
+    public_fit = fit(optimizer_prepared)
+    public_result = public_fit.backend_result
     @test Metaheuristics.minimizer(public_result) == Metaheuristics.minimizer(direct_result)
     @test Metaheuristics.minimum(public_result) == Metaheuristics.minimum(direct_result)
     @test public_result.f_calls == direct_result.f_calls
+    @test [public_fit.parameters.nucleation.log10_nucleation_prefactor, public_fit.parameters.nucleation.nucleation_order,
+           public_fit.parameters.growth.growth_coefficient, public_fit.parameters.growth.growth_order] ==
+          Metaheuristics.minimizer(direct_result)
     @test all(getfield(supplied_de.parameters, field_name) ==
               getfield(supplied_snapshot.parameters, field_name)
               for field_name in fieldnames(typeof(supplied_de.parameters)))

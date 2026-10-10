@@ -110,15 +110,6 @@ experiment = CrystallisationExperiment(;
         @test !hasproperty(problem, :loading)
         @test !hasproperty(experiment, :loading)
 
-        ensemble = run_ensemble_fixed(reshape(params, :, 1),
-                                      nucl_CNT(), growth_empirical(),
-                                      noaggregation(), nobreakage(), MoM();
-                                      time_idx = [0.0, 6.0],
-                                      temp_profile = CriSTool.ConstantTemperature(293.15),
-                                      initial_concentration = 18.0,
-                                      initial_crystals = lognormal_initial_crystals,
-                                      verbosity = 0,
-                                      HPC = true)
         _, reference = runsimulation(params;
                                      nucl = nucl_CNT(), gr = growth_empirical(),
                                      agg = noaggregation(), br = nobreakage(),
@@ -126,22 +117,7 @@ experiment = CrystallisationExperiment(;
                                      initial_crystals = lognormal_initial_crystals,
                                      temp_profile = CriSTool.ConstantTemperature(293.15),
                                      save_idx = [0.0, 6.0])
-        @test ensemble.time == [0.0, 6.0]
-        @test ensemble.concentration[1, :] ≈ reference.concentration
-        @test ensemble.d43[1, :] ≈ reference.d43
-        @test ensemble.d43_mean ≈ reference.d43
-        @test ensemble.d43[1, 1] ≈ lognormal_initial_crystals.d43 rtol = 0.01
-
-        prior = Distributions.product_distribution([
-            Distributions.Dirac(value) for value in params
-        ])
-        measurement_ensemble = run_ensemble(
-            prior, [experiment], nucl_CNT(), growth_empirical(),
-            noaggregation(), nobreakage(), MoM(); n_samples = 1,
-            time_idx = [0.0, 6.0], verbosity = 0, HPC = true)
-        @test measurement_ensemble[1].time == [0.0, 6.0]
-        @test measurement_ensemble[1].concentration[1, :] ≈ reference.concentration
-        @test measurement_ensemble[1].d43[1, :] ≈ reference.d43
+        @test reference.d43[1] ≈ lognormal_initial_crystals.d43 rtol = 0.01
     end
 
     @testset "Table loader initial-crystal mapping" begin

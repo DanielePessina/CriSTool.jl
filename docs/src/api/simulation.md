@@ -22,8 +22,6 @@ CrystallisationQMOMSolution
 CrystallisationDQMOMSolution
 CrystallisationSteadyStateSolution
 SteadyStateConvergenceError
-EnsembleFVSolution
-EnsembleMoMSolution
 AbstractSolution
 solve_steadystate
 AbstractInitialCrystals

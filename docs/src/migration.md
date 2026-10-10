@@ -17,12 +17,30 @@ This redesign intentionally changes the recommended interface:
 
 The numerical solver implementations and solution accessors remain reusable.
 `runsimulation` stays exported as the low-level interface for automatic
-differentiation and sensitivity work. Legacy inference runners
-(`PE_Routine`, `MCMC_Routine`, `run_abc`) and vector-assembly helpers
-(`prepare_loss`, `LossSetup`, `nuts_model`) are internal and no longer exported.
-There is no promise of public backward compatibility for these old assembly
-paths. Advanced configured solver and SciML interfaces retain their distinct
+differentiation and sensitivity work. The vector-assembly helpers
+(`prepare_loss`, `LossSetup`, `run_ensemble`) are internal and no longer
+exported. Advanced configured solver and SciML interfaces retain their distinct
 capabilities.
+
+## Removed positional routines
+
+The positional inference, ensemble and plotting routines were deleted. Their
+replacements are:
+
+| Removed | Replacement |
+| --- | --- |
+| `PE_Routine`, `PE_Routine_Optimisation`, `MH_minimizer` | `fit(prepare_fit(model, experiments, OptimisationSpec(; bounds, algorithm)))`; the minimiser is `result.parameters` |
+| `batchLF_procSO`, `batchLF_procMO` | `loss(prepared_fit, values)` and `loss_terms(loss, setup, values)` |
+| `MCMC_Routine`, positional `nuts_model(experiments, prior, nucl, ...)` | `fit(prepare_fit(model, experiments, BayesianSpec(; priors)))` |
+| `run_abc`, `ABCDE_Routine`, `ABCDE_Turner_Routine` | `fit(prepare_fit(model, experiments, ABCSpec(; priors, target, sampler)))` with `ABCDESampler()` or `ABCDETurnerSampler()` |
+| `kinetic_parameter_symbols` | named paths in `result.samples.names` |
+| positional `run_ensemble(distribution or matrix, measurements, nucl, ...)`, `run_ensemble_fixed` | `predict(result)`, `predict(result, runs)` or `predict(model, runs, samples; solver)` |
+| `EnsembleMoMSolution`, `EnsembleFVSolution` | `PredictionResult` holding `PredictionEnsemble`s; summarise with `prediction_summary` |
+| `distribution_to_matrix`, `prior_to_matrix`, `create_product_prior` | `parameter_samples(names, distribution)` with `product_distribution([...])` |
+| `chains_to_matrix` (export) | `result.samples`; the chain stays in `result.backend_result` |
+| `plot_measurements_vs_ensemble`, `plot_ps_measurements_vs_ensemble`, `plot_measurements_vs_simulation`, `plot_ps_measurements_vs_simulation`, `ChainMeasurementPlots`, `ABCplot` | `plot_predictions(predictions, experiments)` |
+| `ChainPairPlots`, DataFrame `plot_posterior_pairplot` methods | `plot_posterior_pairplot(result)` or `plot_posterior_pairplot(samples; prior, reference)` |
+| `CRISTOOL_PALETTE`, terminal start/end panels, `outputdir` persistence | removed; save results and figures explicitly (`savename`, `savedir`) |
 
 ## Run conditions, law binding and study settings
 

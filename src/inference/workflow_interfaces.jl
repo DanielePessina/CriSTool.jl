@@ -63,29 +63,24 @@ end
 Named sample predictions from a prepared physical system. `predictions` contains
 matrices with samples in rows and saved times in columns. `success` and
 `diagnostics` retain every candidate, including unsuccessful simulations.
-Legacy concentration and size properties remain available through the embedded
-ensemble result. Use `observable_values` for additional solvent/reactor values.
+Named predictions are also available as properties, e.g. `ensemble.d43`.
 """
-struct PredictionEnsemble{TP <: NamedTuple, TL, TD} <: AbstractSolution
+struct PredictionEnsemble{TP <: NamedTuple, TD} <: AbstractSolution
     time::Vector{Float64}
     predictions::TP
     success::Vector{Bool}
     diagnostics::TD
-    legacy::TL
 end
 
 function Base.getproperty(prediction_ensemble::PredictionEnsemble, field_name::Symbol)
     field_name in fieldnames(typeof(prediction_ensemble)) &&
         return getfield(prediction_ensemble, field_name)
-    named_predictions = getfield(prediction_ensemble, :predictions)
-    hasproperty(named_predictions, field_name) && return getproperty(named_predictions, field_name)
-    return getproperty(getfield(prediction_ensemble, :legacy), field_name)
+    return getproperty(getfield(prediction_ensemble, :predictions), field_name)
 end
 
 Base.propertynames(prediction_ensemble::PredictionEnsemble) =
     (fieldnames(typeof(prediction_ensemble))...,
-     propertynames(getfield(prediction_ensemble, :predictions))...,
-     propertynames(getfield(prediction_ensemble, :legacy))...)
+     propertynames(getfield(prediction_ensemble, :predictions))...)
 
 observable_values(prediction_ensemble::PredictionEnsemble, observable_name::Symbol) =
     getproperty(prediction_ensemble.predictions, observable_name)
@@ -177,25 +172,6 @@ function run_ensemble(parameter_samples::AbstractMatrix, setup::LossSetup;
             prediction_matrix
         end
         named_predictions = NamedTuple{prediction_names}(Tuple(prediction_matrices))
-        # Legacy plotting requires concentration and size fields independently
-        # of the optional named projection selection.
-        function legacy_samples(observable_name)
-            prediction_matrix = fill(NaN, length(saved_times), sample_count)
-            for sample_index in 1:sample_count
-                sample_solution = sample_solutions[sample_index]
-                sample_solution.success &&
-                    (prepared_experiment.mode === :steady || covers_prediction_times(sample_solution)) || continue
-                prediction_matrix[:, sample_index] .= prepared_experiment.mode === :steady ?
-                    fill(only(observable_values(sample_solution, observable_name)), length(saved_times)) :
-                    _simulated_at(sample_solution, observable_name, saved_times)
-            end
-            return prediction_matrix
-        end
-        configured_solver = prepared_experiment.problem.solver
-        legacy_result = _create_ensemble_solution(saved_times, legacy_samples(:concentration),
-            legacy_samples(:d43), legacy_samples(:d32),
-            configured_solver isa AbstractMomentSolver ? nothing : legacy_samples(:d50q),
-            configured_solver)
         sample_success = [sample_solution.success &&
             (prepared_experiment.mode === :steady || covers_prediction_times(sample_solution))
             for sample_solution in sample_solutions]
@@ -211,7 +187,7 @@ function run_ensemble(parameter_samples::AbstractMatrix, setup::LossSetup;
                 sample_solutions[sample_index].reason : nothing)
             for sample_index in 1:sample_count]
         push!(prepared_predictions, PredictionEnsemble(saved_times, named_predictions,
-            sample_success, sample_diagnostics, legacy_result))
+            sample_success, sample_diagnostics))
     end
     return prepared_predictions
 end
@@ -235,18 +211,4 @@ function run_ensemble(parameter_distribution::Distributions.Distribution,
         parameter_samples = rand(rng, parameter_distribution, n_samples)
     end
     return run_ensemble(parameter_samples, setup; kwargs...)
-end
-
-function plot_measurements_vs_ensemble(measurements::Vector{<:AbstractExperiment},
-                                       prediction_ensembles::Vector{<:PredictionEnsemble},
-                                       optimal_solutions; kwargs...)
-    legacy_ensembles = [prediction_ensemble.legacy for prediction_ensemble in prediction_ensembles]
-    return plot_measurements_vs_ensemble(measurements, legacy_ensembles, optimal_solutions; kwargs...)
-end
-
-function plot_ps_measurements_vs_ensemble(measurements::Vector{<:AbstractExperiment},
-                                          prediction_ensembles::Vector{<:PredictionEnsemble},
-                                          optimal_solutions; kwargs...)
-    legacy_ensembles = [prediction_ensemble.legacy for prediction_ensemble in prediction_ensembles]
-    return plot_ps_measurements_vs_ensemble(measurements, legacy_ensembles, optimal_solutions; kwargs...)
 end

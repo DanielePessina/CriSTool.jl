@@ -1,9 +1,7 @@
 using CriSTool
 # Internal engine regression coverage is intentionally independent of the
 # recommended public model workflow.
-using CriSTool: PE_Routine, PE_Routine_Optimisation, ABCDE_Routine,
-    ABCDE_Turner_Routine, MCMC_Routine, run_abc, run_ensemble, run_ensemble_fixed,
-    prepare_loss, LossSetup
+using CriSTool: run_ensemble, prepare_loss, LossSetup
 using Test
 using Distributions
 using DataFrames
@@ -41,7 +39,6 @@ import StaticArrays
     include("test_staticarrays.jl")
     include("test_input_validation.jl")
     include("test_chainutilities.jl")
-    include("test_bayesian.jl")
     include("test_optimizer_configuration.jl")
     include("test_generalization.jl")
     include("test_loss_accounting.jl")

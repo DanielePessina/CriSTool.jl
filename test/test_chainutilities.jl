@@ -31,12 +31,12 @@ using Turing
         chain = Chains(data, param_names)
 
         # Test conversion
-        result = chains_to_matrix(chain, burnin = 0)
+        result = CriSTool.chains_to_matrix(chain, burnin = 0)
 
         @test size(result) == (n_params, n_iters * n_chains)
         @test result == [1.0 2.0 3.0 7.0 8.0 9.0;
                          4.0 5.0 6.0 10.0 11.0 12.0]
-        @test chains_to_matrix(chain; params = [:second_parameter]) ==
+        @test CriSTool.chains_to_matrix(chain; params = [:second_parameter]) ==
               [4.0 5.0 6.0 10.0 11.0 12.0]
     end
 
@@ -53,7 +53,7 @@ using Turing
         chain = Chains(data, param_names)
 
         # This should work after the fix
-        result = chains_to_matrix(chain, burnin = 0)
+        result = CriSTool.chains_to_matrix(chain, burnin = 0)
 
         @test size(result) == (n_params, n_iters * n_chains)
         @test eltype(result) == Float64
@@ -73,7 +73,7 @@ using Turing
         chain = Chains(data, param_names)
 
         # This should work after the fix
-        result = chains_to_matrix(chain, burnin = 0)
+        result = CriSTool.chains_to_matrix(chain, burnin = 0)
 
         @test size(result) == (n_params, n_iters * n_chains)
         @test eltype(result) == Float64
@@ -94,7 +94,7 @@ using Turing
 
         # Burnin = n_iters - 1, leaving only 1 iteration
         burnin = n_iters - 1
-        result = chains_to_matrix(chain, burnin = burnin)
+        result = CriSTool.chains_to_matrix(chain, burnin = burnin)
 
         @test size(result) == (n_params, (n_iters - burnin) * n_chains)
         @test size(result, 2) == n_chains  # Only 1 iteration per chain
@@ -116,7 +116,7 @@ using Turing
 
         # Test with different burnin values
         for burnin in [0, 10, 50, 99]
-            result = chains_to_matrix(chain, burnin = burnin)
+            result = CriSTool.chains_to_matrix(chain, burnin = burnin)
             expected_samples = (n_iters - burnin) * n_chains
 
             @test size(result) == (n_params, expected_samples)
@@ -137,7 +137,7 @@ using Turing
                       Dict(:internals => [:lp]))
 
         # Test that :lp is filtered out
-        result = chains_to_matrix(chain, burnin = 0)
+        result = CriSTool.chains_to_matrix(chain, burnin = 0)
 
         # Should only have 4 parameters (lp filtered out), in the original
         # parameter order and with both chains concatenated.
@@ -161,7 +161,7 @@ using Turing
         chain = Chains(data, param_names)
 
         # Test with burnin leaving only 1 iteration
-        result = chains_to_matrix(chain, burnin = n_iters - 1)
+        result = CriSTool.chains_to_matrix(chain, burnin = n_iters - 1)
 
         @test size(result) == (1, 1)  # 1 param, 1 iteration
         @test eltype(result) == Float64
@@ -181,109 +181,37 @@ using Turing
         chain = Chains(data, param_names)
 
         # Test negative burnin
-        @test_throws ArgumentError chains_to_matrix(chain, burnin = -1)
+        @test_throws ArgumentError CriSTool.chains_to_matrix(chain, burnin = -1)
 
         # Test burnin >= chain length
-        @test_throws ArgumentError chains_to_matrix(chain, burnin = n_iters)
-        @test_throws ArgumentError chains_to_matrix(chain, burnin = n_iters + 10)
+        @test_throws ArgumentError CriSTool.chains_to_matrix(chain, burnin = n_iters)
+        @test_throws ArgumentError CriSTool.chains_to_matrix(chain, burnin = n_iters + 10)
     end
 
-    @testset "distribution_to_matrix - Univariate distribution" begin
-        # Test with univariate distribution
-        dist = Normal(0, 1)
-        n_samples = 1000
-
-        result = distribution_to_matrix(dist, n_samples)
-
-        @test size(result) == (1, n_samples)
-        @test eltype(result) == Float64
-        @test all(isfinite.(result))
+    @testset "parameter_samples - joint distribution draws" begin
+        # Draws must be the distribution's own draws for the same RNG stream,
+        # in named-row order, so correlations survive (MvNormal off-diagonal).
+        joint_distribution = MvNormal([1.0, -2.0], [1.0 0.8; 0.8 1.0])
+        named_draws = parameter_samples(["growth.speed", "nucleation.rate"],
+            joint_distribution; n_samples = 5, rng = MersenneTwister(3))
+        @test named_draws.values == rand(MersenneTwister(3), joint_distribution, 5)
+        @test named_draws.names == ["growth.speed", "nucleation.rate"]
+        @test named_draws.source == :distribution
+        univariate_draws = parameter_samples(["growth.speed"], Normal(0, 1);
+            n_samples = 4, rng = MersenneTwister(5))
+        @test univariate_draws.values == reshape(rand(MersenneTwister(5), Normal(0, 1), 4), 1, 4)
+        @test_throws ArgumentError parameter_samples(["growth.speed"], Normal(0, 1); n_samples = 0)
+        @test_throws DimensionMismatch parameter_samples(["growth.speed"], joint_distribution; n_samples = 3)
     end
 
-    @testset "distribution_to_matrix - Multivariate distribution" begin
-        # Test with multivariate distribution
-        dist = MvNormal(zeros(4), I)
-        n_samples = 1000
-
-        result = distribution_to_matrix(dist, n_samples)
-
-        @test size(result) == (4, n_samples)
-        @test eltype(result) == Float64
-        @test all(isfinite.(result))
-    end
-
-    @testset "distribution_to_matrix - Product distribution" begin
-        # Test with product of univariate distributions
-        dists = [Normal(0, 1), Uniform(-1, 1), TriangularDist(0, 2, 1)]
-        prod_dist = product_distribution(dists)
-        n_samples = 1000
-
-        result = distribution_to_matrix(prod_dist, n_samples)
-
-        @test size(result) == (3, n_samples)
-        @test eltype(result) == Float64
-        @test all(isfinite.(result))
-    end
-
-    @testset "create_product_prior" begin
-        # Test creation of product priors
-        priors = [
-            TriangularDist(15, 65, 30),
-            TriangularDist(0.15, 2.5, 1.0),
-            TriangularDist(1e-4, 5, 1.0),
-            TriangularDist(1.0, 3.5, 2.0)
-        ]
-
-        prod_prior = create_product_prior(priors)
-
-        @test prod_prior isa Distributions.Product
-        @test length(prod_prior) == 4
-    end
-
-    @testset "create_product_prior - Empty vector error" begin
-        # Test error on empty vector - need to type it correctly
-        @test_throws ArgumentError create_product_prior(UnivariateDistribution[])
-    end
-
-    @testset "prior_to_matrix - Distribution" begin
-        # Test prior_to_matrix with Distribution
-        prior = product_distribution([
-            Normal(0, 1),
-            Uniform(-1, 1),
-            TriangularDist(0, 2, 1)
-        ])
-        n_samples = 1000
-
-        result = prior_to_matrix(prior, n_samples)
-
-        @test size(result) == (3, n_samples)
-        @test eltype(result) == Float64
-        @test all(isfinite.(result))
-    end
-
-    @testset "prior_to_matrix - Vector of distributions" begin
-        # Test prior_to_matrix with vector of distributions
-        priors = [
-            TriangularDist(15, 65, 30),
-            TriangularDist(0.15, 2.5, 1.0),
-            TriangularDist(1e-4, 5, 1.0),
-            TriangularDist(1.0, 3.5, 2.0)
-        ]
-        n_samples = 1000
-
-        result = prior_to_matrix(priors, n_samples)
-
-        @test size(result) == (4, n_samples)
-        @test eltype(result) == Float64
-        @test all(isfinite.(result))
-    end
-
-    @testset "distribution_to_matrix - Error handling" begin
-        # Test error handling for invalid inputs
-        dist = Normal(0, 1)
-
-        @test_throws ArgumentError distribution_to_matrix(dist, 0)
-        @test_throws ArgumentError distribution_to_matrix(dist, -100)
+    @testset "rename_chain" begin
+        renamed_symbols = [:ln_nucleation_prefactor, :surface_energy,
+                           :growth_coefficient, :growth_order]
+        unnamed_chain = Chains(rand(MersenneTwister(42), 50, 4, 2), [:θ1, :θ2, :θ3, :θ4])
+        renamed_chain = CriSTool.rename_chain(unnamed_chain, renamed_symbols)
+        @test names(renamed_chain, :parameters) == renamed_symbols
+        @test renamed_chain.value.data == unnamed_chain.value.data
+        @test_throws ArgumentError CriSTool.rename_chain(unnamed_chain, renamed_symbols[1:2])
     end
 
     @testset "chains_to_matrix - Real MCMC chain from file" begin
@@ -299,7 +227,7 @@ using Turing
             optimal_params = data["optimalparameters"]
 
             # Test basic conversion with no burnin
-            result = chains_to_matrix(chain, burnin = 0)
+            result = CriSTool.chains_to_matrix(chain, burnin = 0)
 
             n_iterations = size(chain, 1)
             n_chains = size(chain, 3)
@@ -312,7 +240,7 @@ using Turing
 
             # Test with burnin (same as in UQ-Methods-Comparison)
             burnin = 20
-            result_burned = chains_to_matrix(chain, burnin = burnin)
+            result_burned = CriSTool.chains_to_matrix(chain, burnin = burnin)
 
             expected_burned = (n_iterations - burnin) * n_chains
             @test size(result_burned, 1) == 4

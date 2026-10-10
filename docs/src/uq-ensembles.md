@@ -39,6 +39,25 @@ reduce invalid candidates but cannot guarantee every numerical solve succeeds.
 `parameter_samples(names, joint_distribution; n_samples, rng)` preserves a
 supplied joint distribution rather than sampling independent marginals.
 
+## Plotting predictions and posteriors
+
+`plot_predictions` draws one row per run and one column per observable: the
+median over successful draws and a quantile band (5–95 % by default). Passing
+the experiments overlays their measured means with ± one standard deviation
+error bars, matched by `exp_id`. Time is in minutes and sizes in µm. A single
+draw, such as `predict(fit_result)`, plots as a line.
+
+```julia
+plot_predictions(fitted_runs, experiments; observables = (:concentration, :d43),
+    savename = "posterior", savedir = "results")
+plot_posterior_pairplot(posterior; savename = "posterior", savedir = "results")
+```
+
+`plot_posterior_pairplot` labels each panel with the named parameter path and,
+for a posterior, overlays the specification's prior marginals. It also takes
+`ParameterSamples` directly, with optional `prior` and `reference` values.
+`ChainStatsPlots(posterior.backend_result)` gives NUTS trace and density plots.
+
 ## Future measurements
 
 Physical bands describe kinetic uncertainty. To additionally predict noisy

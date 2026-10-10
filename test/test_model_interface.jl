@@ -159,7 +159,7 @@ import OptimizationOptimJL
     tiny_posterior = fit(bayesian_prepared; rng = MersenneTwister(72), threaded = true, progress = false)
     @test tiny_posterior.samples.names == ["growth.speed"]
     @test size(tiny_posterior.samples.values) == (1, 10)
-    @test tiny_posterior.samples.values == chains_to_matrix(tiny_posterior.backend_result;
+    @test tiny_posterior.samples.values == CriSTool.chains_to_matrix(tiny_posterior.backend_result;
         params = [Symbol("growth.speed")])
     @test tiny_posterior.model.growth.parameters.held_order == 2.0
     @test_throws ArgumentError prepare_fit(interface_model, [interface_experiment],

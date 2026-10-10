@@ -17,6 +17,12 @@ function main()
     # The posterior predicts with the runs, solver and settings it was fitted with.
     posterior_predictions = predict(posterior)
     println(prediction_summary(posterior_predictions, :concentration))
+    # Median and 5-95% band per run and observable, over the measured means.
+    results_dir = joinpath(@__DIR__, "results")
+    plot_predictions(posterior_predictions, measured_runs; observables = (:concentration, :d43),
+        savename = "Tutorial 5 NUTS", savedir = results_dir, showplot = false)
+    # Posterior marginals over the BayesianSpec priors, labelled by named path.
+    plot_posterior_pairplot(posterior; savename = "Tutorial 5 NUTS", savedir = results_dir, showplot = false)
 
     # ABC accepts draws whose discrepancy is below an explicit threshold.
     abc_spec = ABCSpec(priors = selected_priors, target = 10.0, n_particles = 16, n_generations = 2)

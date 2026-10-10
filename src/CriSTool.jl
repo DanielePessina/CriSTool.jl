@@ -26,33 +26,22 @@ using QuadGK: quadgk
 using MCMCChains
 import Base.Iterators
 
-# Parallel Computing & Progress
-using ProgressMeter
-
-# File I/O & Serialization
-using JLD2
+# File I/O
 import CSV
 import JSON
 
 # Visualization
-using PairPlots
+import PairPlots
 import CairoMakie
 import Makie
 import FlexiChains
 
-# Machine Learning & Optimization
-# import Flux
-# import MLJFlux
-# import MLJGaussianProcesses
-# import SymbolicRegression
+# Optimization
 using Metaheuristics
 
 # Utilities
 using ConcreteStructs
-using Dates
 using MonteCarloMeasurements
-import Term
-using PrettyTables
 using StaticArrays
 
 # Shared numerical policies. Keeping these names centralized makes model,
@@ -62,13 +51,11 @@ const CRISTOOL_MOMENT_DENSITY_FLOOR = 1e-8
 const CRISTOOL_WENO_EPSILON = 1e-6
 const CRISTOOL_DISSOLUTION_EQUILIBRIUM_TOLERANCE = 1e-3
 const CRISTOOL_DISSOLUTION_LREF = 1e-6
-const CRISTOOL_CONFIDENCE_Z95 = 1.96
 const CRISTOOL_FAILED_SIMULATION_PENALTY = 1e6
 const CRISTOOL_MAX_SOLVER_ITERS = 1e8
 const CRISTOOL_MAX_PREPARED_SOLVER_ITERS = 1_000
 const CRISTOOL_MAX_PREPARED_DISCRETIZED_SOLVER_ITERS = 10_000
 const CRISTOOL_MAX_PREPARED_SOLVER_SECONDS = 5.0
-const CRISTOOL_PARALLEL_PE_BATCH_SIZE = 8
 const CRISTOOL_MAX_OPTIMISER_CALLS = 1e18
 const CRISTOOL_PRIOR_PLOT_SAMPLES = 2^18
 
@@ -76,7 +63,6 @@ const CRISTOOL_PRIOR_PLOT_SAMPLES = 2^18
 export CrystallisationFVSolution, CrystallisationMoMSolution,
        CrystallisationQMOMSolution, CrystallisationDQMOMSolution,
        CrystallisationSteadyStateSolution, SteadyStateConvergenceError,
-       EnsembleFVSolution, EnsembleMoMSolution,
        CrystallisationProblem
 export Observable, ObservableColumns, CrystallisationExperiment, AbstractExperiment,
        initial_concentration
@@ -126,13 +112,8 @@ export AbstractSolver, AbstractMomentSolver, FiniteVol, MoM, QMOM, DQMOM, WENO,
        aggregation_moment_source, breakage_moment_source
 export AbstractABCSampler, ABCDESampler, ABCDETurnerSampler
 export PredictionEnsemble, prediction_summary
-export plot_posterior_pairplot, plot_measurements_vs_ensemble
-export ChainPairPlots, ChainStatsPlots, ChainMeasurementPlots
-export plot_ps_measurements_vs_ensemble, plot_measurements_vs_simulation,
-       plot_ps_measurements_vs_simulation
-export chains_to_matrix, distribution_to_matrix, create_product_prior, prior_to_matrix
-export kinetic_parameter_symbols, rename_chain
-export CRISTOOL_PALETTE
+export plot_predictions, plot_posterior_pairplot, ChainStatsPlots
+export rename_chain
 export CrystallisationSystem, LysozymeSystem, KineticModel, CrystallisationModel,
        CallableGrowth, CallableNucleation, CallableLengthGrowth, KineticContext,
        required_properties, named_parameters, simulate, OptimisationSpec, BayesianSpec, ABCSpec,
@@ -181,17 +162,12 @@ include("solvers/weno.jl")
 include("solvers/runsimulation.jl")
 include("solvers/steady_state.jl")
 
-include("output/pretty_printing.jl")
-
 include("vendor/KissABC.jl")
 using .KissABC
 using .KissABC: ABCDE, smc, AIS, ApproxPosterior, ApproxKernelizedPosterior
 
 # Inference and posterior utilities.
 include("inference/parameter_estimation.jl")
-
-# include("inference/parameter_estimation_bo.jl")
-
 include("inference/abc.jl")
 
 include("inference/chain_utilities.jl")
@@ -200,16 +176,11 @@ include("inference/bayesian.jl")
 
 # Uncertainty workflows.
 include("uncertainty/sensitivity.jl")
-include("uncertainty/ensembles.jl")
 include("inference/workflow_interfaces.jl")
 include("inference/model_workflows.jl")
 
 # Plotting is included last because it consumes all public solution and
 # inference interfaces.
-include("plotting/common.jl")
-include("plotting/ensemble.jl")
-include("plotting/simulation.jl")
-
-
+include("plotting/plots.jl")
 
 end

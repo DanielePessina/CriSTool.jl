@@ -19,12 +19,7 @@ measurement_samples
 AbstractABCSampler
 ABCDESampler
 ABCDETurnerSampler
-kinetic_parameter_symbols
 rename_chain
-chains_to_matrix
-distribution_to_matrix
-create_product_prior
-prior_to_matrix
 PredictionEnsemble
 prediction_summary
 ```
