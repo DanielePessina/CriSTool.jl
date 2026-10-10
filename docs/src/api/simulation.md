@@ -24,6 +24,7 @@ CrystallisationSteadyStateSolution
 SteadyStateConvergenceError
 AbstractSolution
 solve_steadystate
+SteadyStateOptions
 AbstractInitialCrystals
 LogNormalInitialCrystals
 GaussianInitialCrystals
@@ -74,13 +75,15 @@ the process includes coupled variables such as pH or volume.
 `solve_steadystate(problem)` is the explicit steady-state route for a constant,
 autonomous `MSMPROperation`. It relaxes the generated dynamics until the scaled
 residual covers every population and solvent-state component, then returns a
-`CrystallisationSteadyStateSolution` with one value per observable, product
-flows, the full residual, the solver retcode, and physical and mass-balance
-diagnostics. If a finite relaxation horizon ends before convergence or any
-physical check fails, `SteadyStateConvergenceError` carries the unsuccessful
-result in its `solution` field with `success = false` and the solver retcode.
+`CrystallisationSteadyStateSolution`: scalar observables (`steady.concentration`,
+`steady.d43`), product flows in `steady.product`, the full residual, the solver
+retcode, and physical and mass-balance diagnostics in `steady.diagnostics`.
+Settings are passed as `options = SteadyStateOptions(...)`. If a finite
+relaxation horizon ends before convergence or any physical check fails,
+`SteadyStateConvergenceError` carries the unsuccessful result in its `solution`
+field with `success = false` and the solver retcode.
 
-Batch and fed-batch problems remain transient simulations through
-`runsimulation`. Callable flow, feed, temperature, saturation, or kinetic
-profiles require `autonomous = true` to declare that they are time invariant;
+Batch and fed-batch runs are transient; use `simulate`. Callable flow, feed,
+temperature, saturation, or kinetic profiles require
+`SteadyStateOptions(autonomous = true)` to declare that they are time invariant;
 the declaration is the caller's responsibility.
