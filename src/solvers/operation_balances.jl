@@ -179,9 +179,14 @@ function _compose_operation_rhs(operation, problem, numerical_state, simulation_
                                 internal_rates, feed_population)
     operation_context = _operation_transport_context(operation, problem, numerical_state,
                                                      simulation_time)
+    # One concrete element type: the reactor-volume entry is a plain flow rate
+    # even when the state carries ForwardDiff partials.
+    rate_type = promote_type(eltype(internal_rates), eltype(numerical_state))
     return SVector(ntuple(Val(length(numerical_state))) do state_index
-        _operation_transported_rate(internal_rates[state_index], numerical_state,
-                                    state_index, problem, operation_context, feed_population)
+        convert(rate_type,
+                _operation_transported_rate(internal_rates[state_index], numerical_state,
+                                            state_index, problem, operation_context,
+                                            feed_population))
     end)
 end
 
