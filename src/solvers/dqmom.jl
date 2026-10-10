@@ -576,9 +576,7 @@ function _dqmom_rhs!(destination,
                                   growth_rates,
                                   nucleation_rate_value)
     internal_third_moment_rate = source[4]
-    operation_context = _dqmom_operation_transport_context(problem,
-                                                            state,
-                                                            time)
+    operation_context = _operation_transport_context(problem, state, time)
     if !isnothing(operation_context)
         _dqmom_add_operation_moment_source!(source,
                                             state,
