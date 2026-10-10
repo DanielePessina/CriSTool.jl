@@ -10,8 +10,9 @@ material = CrystallisationSystem(
 
 `molecular_volume` defaults to `nothing`; supply it when a chosen law requires it.
 Advanced laws can declare `required_properties(law)`. Validation fails before
-solving if required properties are missing. Universal constants retain their SI
-defaults on the numerical problem.
+solving if required properties are missing. The gas and Boltzmann constants are
+fixed SI module constants (`CriSTool.CRISTOOL_GAS_CONSTANT`,
+`CriSTool.CRISTOOL_BOLTZMANN_CONSTANT`), not problem settings.
 
 A callable growth law takes named parameters and a physical context:
 
@@ -25,10 +26,17 @@ crystal_model = CrystallisationModel(material;
     growth = custom_growth)
 ```
 
+Only `growth` is required: nucleation defaults to `NoNucleation()` and the
+dissolution, aggregation and breakage slots default to their `No*` laws.
+
+```julia
+```
+
 Callable laws carry their values and are bound automatically;
 `KineticModel(custom_growth)` binds one explicitly.
 
-`temperature(context)` and `solvent_state(context)` expose physical values.
+`temperature(context)` and `solvent_state(context)` expose physical values;
+`context.system` is the model's material system.
 Advanced callers may inspect `context.problem`, `context.state` and `context.time`.
 `CallableNucleation` has the same two-argument pattern. `CallableLengthGrowth`
 takes an additional length in metres and fills solver-owned buffers internally.
@@ -42,7 +50,7 @@ FromObservation(:pH),)`. Custom observables use local `observable_projections`
 during preparation. Only kinetic parameters are selectable for fitting.
 
 Additional material values can be supplied as `properties=(offset=..., viscosity=...)`
-and read through `context.system`. Declare needed names with a callable law's
+and read as `context.system.properties.offset`. Declare needed names with a callable law's
 `required=(...)` tuple. Missing properties and nonfinite scalar values fail;
 custom laws own the domain rules for their extra properties, including valid
 zero/signed values or supplied callable models. Density, shape factor and the

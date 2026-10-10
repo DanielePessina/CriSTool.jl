@@ -16,6 +16,7 @@ required_properties
 named_parameters
 simulate
 runsimulation
+kinetic_parameter_vector
 CrystallisationSolution
 AbstractPopulationTrajectory
 MeshPopulation

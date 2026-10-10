@@ -157,10 +157,31 @@ Other changes to kinetic laws:
 | Before | After |
 | --- | --- |
 | A dissolution law in the `growth` slot | Dissolution laws form their own family and go in the `dissolution` slot; `AbstractDissolutionFunction` is no longer a subtype of `AbstractGrowthFunction` |
-| `nucl_CNT_fixed`, `nucl_empirical_fixed`, `growth_empirical_fixed` | bind the ordinary law and leave its parameters out of the fit selection; switch nucleation off with `CallableNucleation((values, context) -> 0.0; parameters = (;))` |
+| `nucl_CNT_fixed`, `nucl_empirical_fixed`, `growth_empirical_fixed` | bind the ordinary law and leave its parameters out of the fit selection; switch nucleation off with `NoNucleation()` (the `CrystallisationModel` default) |
 | `law.nparams`, `law.string`, `law.symbols` | `paramaxis(law)` is the only parameter declaration |
 | custom laws without `paramaxis` (generic `θ1, θ2, ...` axis) | every law must declare `paramaxis` |
 | `paramaxis(nucl, gr, agg, br)` | `paramaxis(nucl, gr, diss, agg, br)` |
 | `ConstantSaturation`, `PolynomialSaturation`, `CallableSaturation`, `AbstractSaturationModel`, `lysozyme_saturation` | the `*Solubility` names |
 | `net_growthrate` | `net_growth_rate` |
 | `AbstractExperiment`, `AbstractObservable`, `AbstractCrystallisationProblem`, `AbstractDDNucleationFunction`, `AbstractDDGrowthFunction`, `AbstractDDScalarGrowthFunction` | removed |
+
+## Configured problems: one source per value
+
+`CrystallisationProblem` now holds the `CrystallisationModel` and the run
+state instead of copies of their fields, and its only public constructor is
+`CrystallisationProblem(model, conditions; solver, solvent_dynamics,
+solid_mass_concentration_threshold)`.
+
+| Before | After |
+| --- | --- |
+| `CrystallisationProblem(; kinetics_nucleationfunction, parameterset_nucleation, crystal_density, initial_concentration, ...)` | `CrystallisationProblem(model, RunConditions(...); solver)`; bind kinetics in the `CrystallisationModel` |
+| `problem.kinetics_growthfunction` (and the other four slots) | `problem.model.growth.law` |
+| `problem.parameterset_growth` (and the other four slots) | `kinetic_parameter_vector(problem).gr`, or `problem.model.growth.parameters` for the named values |
+| `problem.crystal_density`, `.volume_shape_factor`, `.molecular_volume`, `.saturation_model`, `.material_system` | `problem.model.system.crystal_density` (etc.); `problem.model.system` |
+| `problem.initial_concentration` | `initial_concentration(problem)` (stored once in `problem.initial_solvent_state`) |
+| `problem.initial_state` (full state vector) | `problem.initial_population` (population block, or `nothing`); reactor and solvent initial values live in the operation and `initial_solvent_state` |
+| `problem.R_gas_constant`, `problem.boltzmann_constant` | module constants `CriSTool.CRISTOOL_GAS_CONSTANT`, `CriSTool.CRISTOOL_BOLTZMANN_CONSTANT` |
+| `crystallisation_odeproblem(solver, problem, saveat)` solver method | `crystallisation_odeproblem(solver, problem, saveat, kinetic_values)`; the kinetic vector becomes the ODE parameter `p` |
+| `system.offset` for an entry of `CrystallisationSystem(properties = (offset = ...,))` | `system.properties.offset` (also `context.system.properties.offset` in callable laws) |
+| `CallableNucleation((values, context) -> 0.0; parameters = (;))` to switch nucleation off | `NoNucleation()`, the default `nucleation` of `CrystallisationModel`; built in and time invariant, so steady solves need no `autonomous = true` for it |
+| Unknown `CrystallisationProblem` keywords copied onto the problem | `ArgumentError` naming the unsupported settings |
