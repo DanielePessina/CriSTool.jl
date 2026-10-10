@@ -145,7 +145,7 @@ end
 
     # DQMOM projection for nodes (0.5, 1.5): rows k = 0..3 of
     # [(1-k) Lᵢᵏ | k Lᵢᵏ⁻¹], evaluated by hand.
-    @test CriSTool._dqmom_projection_matrix([0.5, 1.5]) ≈
+    @test CriSTool._dqmom_projection_matrix(CriSTool.SVector(0.5, 1.5)) ≈
           [1.0 1.0 0.0 0.0; 0.0 0.0 1.0 1.0; -0.25 -2.25 1.0 3.0; -0.25 -6.75 0.75 6.75]
 end
 
