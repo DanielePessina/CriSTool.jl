@@ -42,12 +42,3 @@ JuliaMono is Copyright (c) 2020-2023, cormullion, with Reserved Font Name
 JuliaMono. It is distributed under the SIL Open Font License, Version 1.1:
 
 https://github.com/cormullion/juliamono/blob/master/LICENSE
-
-## Paper Mono
-
-The plotting utilities use the bundled `PaperMono-Regular.ttf` font. Paper
-Mono is Copyright 2025 The Paper-Mono.Git Project Authors and is distributed
-under the SIL Open Font License, Version 1.1. The complete license is included
-in [PaperMono-OFL.txt](PaperMono-OFL.txt).
-
-Upstream project: https://github.com/paper-design/paper-mono
