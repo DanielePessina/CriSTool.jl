@@ -66,8 +66,9 @@ end
                                              initial_crystals = inlet_seed)
         population_range = CriSTool._population_state_range(tank_batch)
         initial_population = tank_batch.initial_state[population_range]
+        # The feed stores its checked numeric seed; the mixing oracle holds for that population.
         feed_population = initial_state_from_characteristics(feed_batch,
-                                                              inlet_seed)[population_range]
+                                                              feed.crystals)[population_range]
 
         fed_problem = _mesh_operation_problem(
             FedBatchOperation(initial_volume = 2.0, inflow = 0.5, feed = feed),
@@ -156,7 +157,7 @@ end
                                          initial_crystals = inlet_seed)
     population_range = CriSTool._population_state_range(problem)
     initial_moments = problem.initial_state[population_range]
-    feed_moments = initial_state_from_characteristics(feed_batch, inlet_seed)[population_range]
+    feed_moments = initial_state_from_characteristics(feed_batch, feed.crystals)[population_range]
     saved_times = collect(range(0.0, 4.0; length = 5))
     raw_solution, moment_solution = _solve_mesh_operation(problem, saved_times)
     expected_moments = hcat(((3.0 .* initial_moments .+

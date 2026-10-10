@@ -103,7 +103,8 @@ function _steady_state_autonomy_issues(problem::CrystallisationProblem)
     operation = problem.operation
     issues = Symbol[]
     operation.inflow isa Real || push!(issues, :inflow)
-    all(value -> value isa Real, values(operation.feed.solvent_state)) ||
+    operation.feed.concentration isa Real &&
+        all(value -> value isa Real, values(operation.feed.solvent_state)) ||
         push!(issues, :feed_profile)
     problem.temp_profile isa ConstantTemperature || push!(issues, :temperature_profile)
     if !(problem.saturation_model isa ConstantSolubility ||
@@ -179,8 +180,7 @@ function _steady_state_reference_scales(problem, ode_problem, user_scales)
             scales[state_index] = max(scales[state_index], abs(feed_population[population_index]))
         end
     end
-    feed_concentration = _operation_feed_values(problem.operation.feed,
-                                                 ode_problem.tspan[1]).concentration
+    feed_concentration = _feed_concentration(problem.operation.feed, ode_problem.tspan[1])
     concentration_index = _solvent_state_index(problem, :concentration)
     scales[concentration_index] = max(scales[concentration_index],
                                        abs(feed_concentration))
@@ -298,7 +298,6 @@ function _steady_product_diagnostics(problem, raw_state, physical_result,
                                      simulation_time)
     operation = problem.operation::MSMPROperation
     flows = operation_flows(operation, simulation_time)
-    feed_values = _operation_feed_values(operation.feed, simulation_time)
     volume = reactor_volume(problem, raw_state)
     residence_time = volume / flows.inflow
     moment3 = _steady_moment3(problem, raw_state, physical_result)
@@ -306,7 +305,7 @@ function _steady_product_diagnostics(problem, raw_state, physical_result,
     feed_moment3 = _steady_feed_moment3(problem, feed_population)
     concentration = raw_state[_solvent_state_index(problem, :concentration)]
     density = problem.crystal_density * problem.volume_shape_factor
-    inlet_dissolved_flow = flows.inflow * feed_values.concentration
+    inlet_dissolved_flow = flows.inflow * _feed_concentration(operation.feed, simulation_time)
     outlet_dissolved_flow = flows.outflow * concentration
     inlet_solid_flow = flows.inflow * density * feed_moment3
     outlet_solid_flow = flows.outflow * density * moment3

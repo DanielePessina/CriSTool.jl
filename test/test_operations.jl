@@ -25,6 +25,11 @@ end
     @test_throws ArgumentError MSMPROperation(volume = 1.0, inflow = -1.0,
         feed = CrystallisationFeed(concentration = 1.0))
     clear_feed = CrystallisationFeed(concentration = 2.0)
+    # Concentration is its own feed field; solvent_state holds only extra species.
+    @test clear_feed.concentration == 2.0
+    @test clear_feed.solvent_state == (;)
+    @test_throws ArgumentError CrystallisationFeed(concentration = 1.0,
+                                                   solvent_state = (; concentration = 1.0))
     # V0=2, Q=0.5: V(4)=4, C(4)=(2*8+2*2)/4=5.
     # A seeded population with no sources halves every density moment.
     seed_characteristics = LogNormalInitialCrystals(mass_concentration = 3.0,
@@ -71,6 +76,10 @@ end
     inlet_seed = LogNormalInitialCrystals(mass_concentration = 3.0, d43 = 10e-6,
                                          geometric_std = 1.2)
     seeded_feed = CrystallisationFeed(concentration = 2.0, crystals = inlet_seed)
+    # The feed stores the checked numeric seed, preserving the declared 3 kg/m³ and 10 µm d43.
+    @test seeded_feed.crystals isa DistributionInitialCrystals
+    @test seeded_feed.crystals.mass_concentration == 3.0
+    @test seeded_feed.crystals.d43 ≈ 10e-6 rtol = 1e-10
     for numerical_solver in (MoM(), QMOM())
         fed_problem = _operation_test_problem(
             FedBatchOperation(initial_volume = 2.0, inflow = simulation_time -> 0.25 * simulation_time,

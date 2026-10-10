@@ -42,22 +42,20 @@ function _feed_profile_value(profile, simulation_time)
     return profile_value
 end
 
-function _operation_feed_values(feed::CrystallisationFeed, simulation_time)
-    evaluated_values = map(profile -> _feed_profile_value(profile, simulation_time),
-                           feed.solvent_state)
-    feed.solvent_state.concentration isa Real ||
-        _validate_feed_concentration(evaluated_values.concentration)
-    return evaluated_values
-end
+_feed_concentration(feed::CrystallisationFeed, simulation_time) =
+    feed.concentration isa Real ? feed.concentration :
+    _validate_feed_concentration(_feed_profile_value(feed.concentration, simulation_time))
+
+"""Feed `concentration` and extra solvent species evaluated at `simulation_time`."""
+_operation_feed_values(feed::CrystallisationFeed, simulation_time) =
+    merge((; concentration = _feed_concentration(feed, simulation_time)),
+          map(profile -> _feed_profile_value(profile, simulation_time), feed.solvent_state))
 
 _validate_operation(problem::CrystallisationProblem, ::BatchOperation) = nothing
 function _validate_operation(problem::CrystallisationProblem,
                              operation::Union{MSMPROperation, FedBatchOperation})
     _validate_operation_inflow(_operation_profile_value(operation.inflow, 0.0))
-    feed_values = map(profile -> _operation_profile_value(profile, 0.0),
-                      operation.feed.solvent_state)
-    all(value -> value isa Real && isfinite(value), feed_values) ||
-        throw(ArgumentError("Feed solvent values must be finite real numbers."))
+    feed_values = _operation_feed_values(operation.feed, 0.0)
     _validate_feed_concentration(feed_values.concentration)
     solvent_names = propertynames(problem.initial_solvent_state)
     :volume in solvent_names && throw(ArgumentError("Volume is a reactor state; remove :volume from initial_solvent_state."))
@@ -144,13 +142,14 @@ function _operation_transport_context(operation::Union{MSMPROperation, FedBatchO
                                       problem, numerical_state, simulation_time)
     volume_value = _validate_operation_volume(reactor_volume(problem, numerical_state))
     flow_values = operation_flows(operation, simulation_time)
-    feed_values = _operation_feed_values(operation.feed, simulation_time)
     extra_rates = isnothing(operation.feed.transport) ? (;) :
         operation.feed.transport(problem, numerical_state, simulation_time,
-                                 feed_values, flow_values.inflow, volume_value)
+                                 _operation_feed_values(operation.feed, simulation_time),
+                                 flow_values.inflow, volume_value)
     return (; exchange_rate = flow_values.inflow / volume_value,
               volume_rate = flow_values.inflow - flow_values.outflow,
-              feed_concentration = feed_values.concentration, extra_rates)
+              feed_concentration = _feed_concentration(operation.feed, simulation_time),
+              extra_rates)
 end
 
 """
