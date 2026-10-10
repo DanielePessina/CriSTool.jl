@@ -56,7 +56,11 @@ function _qmom_wheeler_coefficients(normalized_moments::AbstractVector,
     diagonal = Vector{T}(undef, nquadrature)
     subdiagonal = Vector{T}(undef, nquadrature - 1)
 
-    recurrence_tolerance = solver.node_coalescence_tolerance
+    # Raw moments are integrated quantities, accurate only to the ODE relative
+    # tolerance.  ρᵢ of a rank-deficient measure is a cancellation of terms of
+    # size `cancellation_scale`, so it is zero only up to `reltol` times that
+    # scale; below that floor the absolute coalescence tolerance applies.
+    noise_tolerance = solver.reltol
     minimum_recurrence = zero(T)
     active_nodes = nquadrature
     was_deflated = false
@@ -78,6 +82,11 @@ function _qmom_wheeler_coefficients(normalized_moments::AbstractVector,
         isfinite(rho) ||
             throw(ArgumentError("QMOM Wheeler inversion produced a non-finite recurrence " *
                                 "coefficient at recurrence index $recurrence_index."))
+        cancellation_scale = max(abs(sigma * current_row[recurrence_index + 2]),
+                                 abs(current_row[recurrence_index + 3]),
+                                 abs(previous_row[recurrence_index + 2]))
+        recurrence_tolerance = max(solver.node_coalescence_tolerance,
+                                   noise_tolerance * cancellation_scale)
 
         minimum_recurrence = recurrence_index == 0 ? rho : min(minimum_recurrence, rho)
         if rho < -recurrence_tolerance
@@ -128,20 +137,14 @@ end
                                     reconstruction_error)
 end
 
-"""
-    invert_moments(moment_values, solver::QMOM) -> QMOMQuadrature
+"""Gaussian rule of `M₀:M₂N₋₁` on the whole real line.
 
-Invert the raw physical moments `M₀:M₂N₋₁` into an `N`-node Gaussian rule.
-The implementation first scales the coordinate by `solver.coordinate_scale`,
-computes Wheeler recurrence coefficients, and then applies Golub-Welsch to
-the resulting symmetric tridiagonal Jacobi matrix.
-
-Empty populations return a typed empty rule.  Rank-deficient populations are
-represented by a rule with fewer active nodes.  A negative or otherwise
-non-realizable moment sequence raises `ArgumentError`; no moment clipping or
-silent projection is performed.
+This is `invert_moments` without the `minimum_size` support check.  Under
+dissolution the moments of a translated point measure stay realizable on the
+real line while a node is carried through the support boundary; the node
+tracking callback needs that node position to locate the crossing.
 """
-function invert_moments(moment_values::AbstractVector, solver::QMOM)
+function _qmom_real_line_rule(moment_values::AbstractVector, solver::QMOM)
     _validate_qmom_solver(solver)
     expected_moments = moment_count(solver)
     length(moment_values) == expected_moments ||
@@ -187,14 +190,10 @@ function invert_moments(moment_values::AbstractVector, solver::QMOM)
     first_eigenvector_components = vec(eigendecomposition.vectors[1, :])
     weights = first_moment .* (first_eigenvector_components .^ 2)
 
-    support_tolerance = solver.realizability_tolerance * coordinate_scale
     weight_tolerance = solver.realizability_tolerance * max(abs(first_moment), one(first_moment))
 
     @inbounds for node in nodes
         isfinite(node) || throw(ArgumentError("QMOM inversion produced a non-finite node."))
-        node < solver.minimum_size - support_tolerance &&
-            throw(ArgumentError("QMOM moments are not realizable on the configured " *
-                                "support: node $node is below minimum_size $(solver.minimum_size)."))
     end
     @inbounds for weight in weights
         isfinite(weight) || throw(ArgumentError("QMOM inversion produced a non-finite weight."))
@@ -205,16 +204,21 @@ function invert_moments(moment_values::AbstractVector, solver::QMOM)
 
     # Check the reconstructed normalized moments independently of the
     # recurrence table.  This catches indexing and scaling mistakes while
-    # keeping the public rule in physical units.
+    # keeping the public rule in physical units.  An m-node Gauss rule
+    # reproduces r₀:r₂ₘ₋₁; the higher moments of a deflated measure were
+    # already judged consistent by the deflation criterion.
     reconstruction_error = zero(T)
-    @inbounds for moment_index in 0:(expected_moments - 1)
+    @inbounds for moment_index in 0:(2 * active_nodes - 1)
         reconstructed = zero(T)
         for node_index in eachindex(nodes, weights)
             reconstructed += (weights[node_index] / first_moment) *
                              (nodes[node_index] / coordinate_scale)^moment_index
         end
+        # Relative to rₖ: scaled moments grow like (L/coordinate_scale)ᵏ, so an
+        # absolute bound would be below roundoff for the top moments.
         reconstruction_error = max(reconstruction_error,
-                                   abs(reconstructed - scaled_moments[moment_index + 1]))
+                                   abs(reconstructed - scaled_moments[moment_index + 1]) /
+                                   max(one(T), abs(scaled_moments[moment_index + 1])))
     end
     reconstruction_error <= 100 * solver.realizability_tolerance ||
         throw(ArgumentError("QMOM inversion reconstruction error $reconstruction_error " *
@@ -224,6 +228,30 @@ function invert_moments(moment_values::AbstractVector, solver::QMOM)
     diagnostics = _qmom_rule_diagnostic(status, active_nodes, nodes, weights,
                                         minimum_recurrence, reconstruction_error)
     return QMOMQuadrature(nodes, weights, active_nodes, diagnostics)
+end
+
+"""
+    invert_moments(moment_values, solver::QMOM) -> QMOMQuadrature
+
+Invert the raw physical moments `M₀:M₂N₋₁` into an `N`-node Gaussian rule.
+The implementation first scales the coordinate by `solver.coordinate_scale`,
+computes Wheeler recurrence coefficients, and then applies Golub-Welsch to
+the resulting symmetric tridiagonal Jacobi matrix.
+
+Empty populations return a typed empty rule.  Rank-deficient populations are
+represented by a rule with fewer active nodes.  A negative or otherwise
+non-realizable moment sequence raises `ArgumentError`; no moment clipping or
+silent projection is performed.
+"""
+function invert_moments(moment_values::AbstractVector, solver::QMOM)
+    rule = _qmom_real_line_rule(moment_values, solver)
+    support_tolerance = solver.realizability_tolerance * solver.coordinate_scale
+    @inbounds for node in rule.nodes
+        node < solver.minimum_size - support_tolerance &&
+            throw(ArgumentError("QMOM moments are not realizable on the configured " *
+                                "support: node $node is below minimum_size $(solver.minimum_size)."))
+    end
+    return rule
 end
 
 """Construct a fully active QMOM rule from nodes and particle weights.
@@ -564,6 +592,98 @@ function _qmom_extinction_callback(problem::CrystallisationProblem)
                               save_positions = (false, true))
 end
 
+# Event location only needs primal values; the eigen solve of the Jacobi
+# matrix is not defined for dual numbers.
+_qmom_primal(number::AbstractFloat) = number
+_qmom_primal(number::Integer) = float(number)
+_qmom_primal(number::Real) = _qmom_primal_unwrapped(number, OrdinaryDiffEq.SciMLBase.value(number))
+_qmom_primal_unwrapped(number::T, unwrapped::T) where {T} =
+    throw(ArgumentError("QMOM node tracking cannot extract a primal value from $T."))
+_qmom_primal_unwrapped(number, unwrapped) = _qmom_primal(unwrapped)
+
+_qmom_primal_moments(state, moment_total::Int) =
+    [_qmom_primal(state[moment_index]) for moment_index in 1:moment_total]
+
+"""Scaled distance of the smallest quadrature node above `minimum_size`.
+
+An empty population has no node to cross the boundary; it reports one scaled
+unit so that the event function stays positive.
+"""
+function _qmom_smallest_node_clearance(state, solver::QMOM)
+    primal_moments = _qmom_primal_moments(state, moment_count(solver))
+    rule = _qmom_real_line_rule(primal_moments, solver)
+    isempty(rule) && return one(eltype(primal_moments))
+    return (minimum(rule.nodes) - solver.minimum_size) / solver.coordinate_scale
+end
+
+"""
+    _qmom_vanishing_node_callback(problem)
+
+Remove a quadrature node when dissolution carries it to `minimum_size`.
+
+For a size-independent signed rate `G`, the population balance
+`∂n/∂t + G ∂n/∂L = 0` on `L > minimum_size` gives
+
+    dMₖ/dt = k G Mₖ₋₁ + G Lₘᵢₙᵏ n(Lₘᵢₙ, t).
+
+The first term is what the QMOM right-hand side integrates: it translates
+every node, `dLᵢ/dt = G`, with constant weights.  For `G < 0` the boundary term
+is the outflux of crystals that have dissolved completely.  On a quadrature
+measure `n = Σ wᵢ δ(L - Lᵢ)` that outflux is the impulse `wᵢ Lₘᵢₙᵏ` at the time
+node `i` reaches `Lₘᵢₙ`; this callback applies it.  The removed volume
+`wᵢ Lₘᵢₙ³` (zero for the default `minimum_size = 0`) is released as solute, so
+`C + ρ kᵥ M₃` is unchanged by the event.  A crossing while `G ≥ 0` has no
+boundary outflux and is ignored.
+
+When the removed node is the last one, the population is set exactly to zero
+and the remaining `ρ kᵥ M₃` is released, matching the solid-mass extinction
+callback.
+"""
+function _qmom_vanishing_node_callback(problem::CrystallisationProblem)
+    _dissolution_enabled(problem) || return nothing
+    solver = problem.solver
+    n_moments = moment_count(solver)
+    names = propertynames(problem.initial_solvent_state)
+    concentration_index = _solvent_state_index(problem, :concentration)
+    state_count = n_moments + _operation_state_count(problem.operation) + length(names)
+    solid_mass_factor = problem.model.system.crystal_density * problem.model.system.volume_shape_factor
+
+    condition = (state, time, integrator) -> _qmom_smallest_node_clearance(state, solver)
+    affect! = integrator -> nothing
+    affect_neg! = integrator -> begin
+        state = integrator.u
+        # Only a dissolving rate carries crystals out through the boundary; a
+        # down-crossing while G ≥ 0 (e.g. fresh nuclei at L = 0) is roundoff.
+        boundary_rate = net_growth_rate(problem.model.growth.law, integrator.p.gr,
+                                        problem.model.dissolution.law, integrator.p.diss,
+                                        problem, state, integrator.t)
+        _qmom_primal(boundary_rate) < 0 || return nothing
+        rule = _qmom_real_line_rule(_qmom_primal_moments(state, n_moments), solver)
+        isempty(rule) && return nothing
+        vanished_index = argmin(rule.nodes)
+        vanished_weight = rule.weights[vanished_index]
+        vanished_length = rule.nodes[vanished_index]
+        last_node = rule.active_nodes == 1
+        released_mass = last_node ? solid_mass_factor * state[4] :
+                        solid_mass_factor * vanished_weight * vanished_length^3
+        integrator.u = SVector(ntuple(Val(state_count)) do state_index
+            if state_index <= n_moments
+                last_node ? zero(state[state_index]) :
+                state[state_index] - vanished_weight * vanished_length^(state_index - 1)
+            elseif state_index == concentration_index
+                state[state_index] + released_mass
+            else
+                state[state_index]
+            end
+        end)
+        nothing
+    end
+    # A removed node is a partial dissolution step, not a reset of the
+    # population: keep the saved trajectory on the requested save times.
+    return ContinuousCallback(condition, affect!, affect_neg!;
+                              save_positions = (false, false))
+end
+
 function _validate_qmom_problem(problem::CrystallisationProblem)
     _validate_qmom_solver(problem.solver)
     for rate_law in (problem.model.growth.law, problem.model.dissolution.law)
@@ -751,7 +871,8 @@ function crystallisation_odeproblem(solver::QMOM, problem::CrystallisationProble
                              initial_state,
                              (saveat[1], saveat[end]),
                              parameters;
-                             callback = _qmom_extinction_callback(problem))
+                             callback = CallbackSet(_qmom_extinction_callback(problem),
+                                                    _qmom_vanishing_node_callback(problem)))
     return ode_problem, _timestepping_algorithm(solver, Tsit5())
 end
 

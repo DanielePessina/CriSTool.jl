@@ -139,6 +139,30 @@ end
     end
 end
 
+@testset "QMOM keeps a rank-deficient population under nonlinear growth" begin
+    # Two atoms (10, 20 µm, 1e10 /m³ each) in six moments are a deflated
+    # rule. Size-independent growth G(C) translates both rigidly: weights and
+    # the 10 µm spacing are invariant and C + ρkv·µ3 = 20 + 1000·1e10·(10³ +
+    # 20³)·1e-18 = 20.09. Integration error must not make the saved moments
+    # unrealizable (G varies with C, so Tsit5 is not exact here).
+    two_atom_nodes = [10e-6, 20e-6]
+    two_atom_weights = [1e10, 1e10]
+    two_atom_model = CrystallisationModel(fixture_system;
+        growth = EmpiricalGrowth(growth_coefficient = 1e-8, growth_order = 2.0))
+    two_atom_problem = CriSTool._problem_with_initial_values(
+        CrystallisationProblem(two_atom_model, RunConditions(temperature = 293.15, concentration = 20.0); solver = QMOM()),
+        [sum(two_atom_weights .* two_atom_nodes .^ order) for order in 0:5], (; concentration = 20.0))
+    two_atom_trajectory = simulate(two_atom_problem; saveat = collect(0.0:20.0:200.0))
+    two_atom_rules = quadrature(two_atom_trajectory)
+    @test all(rule -> rule.active_nodes == 2, two_atom_rules)
+    @test all(rule -> isapprox(sort(rule.weights), two_atom_weights; rtol = 1e-6), two_atom_rules)
+    @test all(rule -> isapprox(-(extrema(rule.nodes)...), -10e-6; rtol = 1e-6), two_atom_rules)
+    @test two_atom_trajectory.concentration .+ 1000.0 .* two_atom_trajectory.population.moments[4, :] ≈
+          fill(20.09, length(two_atom_trajectory.time)) rtol = 1e-12
+    # The atoms did move: C fell, so the measure is not frozen.
+    @test two_atom_trajectory.concentration[end] < 19.99
+end
+
 @testset "Dissolution to extinction conserves solute" begin
     # C = 5 < C_sat = 10: the 0.25 kg/m³ seed dissolves completely within
     # seconds and cannot regrow (5.25 < 10), so the closed-form end state is
@@ -149,11 +173,34 @@ end
     extinction_conditions = fixture_seeded_conditions(concentration = 5.0)
     extinction_problem(solver) = CrystallisationProblem(extinction_model, extinction_conditions;
         solver, solid_mass_concentration_threshold = 5e-4)
-    moment_extinction = simulate(extinction_problem(MoM()); saveat = [0.0, 60.0])
-    @test moment_extinction.concentration[end] ≈ 5.25 rtol = 1e-10
+    moment_extinction(end_time) = simulate(extinction_problem(MoM()); saveat = [0.0, end_time])
+    moment_extinction_trajectory = moment_extinction(60.0)
+    @test moment_extinction_trajectory.concentration[end] ≈ 5.25 rtol = 1e-10
     # The moment state is reset to an exactly empty population.
-    @test all(iszero, moment_extinction.final_state[1:5])
-    @test moment_extinction.d43[end] == 0.0
+    @test all(iszero, moment_extinction_trajectory.final_state[1:5])
+    @test moment_extinction_trajectory.d43[end] == 0.0
+
+    # QMOM nodes translate with G < 0; a node reaching L = 0 carries no
+    # volume, so removing it changes only µ0 and never C + ρkv·µ3 (5 + 0.25
+    # at every saved time, roundoff only). |G| ≤ 1e-6·(1 - 5/10) = 5e-7 m/s,
+    # so at 10 s every crystal is still above 5 µm: up to then both moment
+    # solvers integrate the same exact translation and agree to ODE tolerance.
+    # Extinction happens either through the solid-mass threshold (5e-4) or,
+    # with the default 1e-12 threshold, through the last node's removal.
+    for extinction_threshold in (5e-4, 1e-12)
+        quadrature_extinction = simulate(CrystallisationProblem(extinction_model, extinction_conditions;
+            solver = QMOM(), solid_mass_concentration_threshold = extinction_threshold); saveat = [0.0, 10.0, 30.0, 60.0])
+        @test quadrature_extinction.concentration[end] ≈ 5.25 rtol = 1e-12
+        @test quadrature_extinction.concentration .+ 1000.0 .* quadrature_extinction.population.moments[4, :] ≈
+              fill(5.25, length(quadrature_extinction.time)) rtol = 1e-12
+        @test all(iszero, quadrature_extinction.final_state[1:6])
+        @test quadrature_extinction.concentration[findfirst(==(10.0), quadrature_extinction.time)] ≈
+              moment_extinction(10.0).concentration[end] rtol = 1e-7
+        # Without nucleation dissolution only removes nodes, one at a time.
+        active_node_counts = [rule.active_nodes for rule in quadrature(quadrature_extinction)]
+        @test active_node_counts[1] == 3 && active_node_counts[end] == 0
+        @test all(diff(active_node_counts) .<= 0)
+    end
 
     # KNOWN SOURCE DEFECT (reported, not fixed here): the mesh solute
     # coupling is not discretely conservative under dissolution, so

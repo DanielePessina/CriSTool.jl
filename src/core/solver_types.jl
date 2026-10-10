@@ -143,8 +143,13 @@ Fields:
 - `empty_population_tolerance::Float64`: Absolute `M₀` threshold below which
   the population is represented by an empty rule.
 - `node_coalescence_tolerance::Float64`: Threshold for rank deflation when a
-  recurrence coefficient indicates coalescing support.
-- `minimum_size::Float64`: Lower support bound in physical metres.
+  recurrence coefficient indicates coalescing support (scaled coordinates).
+  The threshold is raised to `reltol` times the magnitude of the terms that
+  cancel in the recurrence, because integrated moments are only accurate to
+  that relative error.
+- `minimum_size::Float64`: Lower support bound in physical metres. Under
+  dissolution a quadrature node that reaches it is removed (its crystals have
+  dissolved) and its remaining volume is released as solute.
 - `timestepping_algorithm`: OrdinaryDiffEq algorithm instance, or `nothing`
   (default) for `Tsit5()`.
 - `reltol::Float64`, `abstol::Float64`: ODE tolerances.
