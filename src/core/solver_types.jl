@@ -180,9 +180,10 @@ weights and physical crystal nodes rather than raw moments; the solver
 converts the public state to weighted, scaled nodes internally.
 
 The first implementation requires a nonempty seeded population with positive,
-pairwise-distinct nodes.  Empty populations and node-deactivation events are
-rejected explicitly because they require a separate birth or boundary-flux
-model.
+pairwise-distinct nodes.  Empty populations are rejected, and a solve throws a
+`DomainError` when dissolution carries a node down to `minimum_size`, because
+removing a node needs a separate boundary-flux model.  Use `QMOM`, `FiniteVol`
+or `WENO` when crystals may dissolve completely.
 
 Fields:
 - `nquadrature::Int64`: Number of direct quadrature nodes (default: 3).

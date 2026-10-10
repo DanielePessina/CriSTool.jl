@@ -228,9 +228,18 @@ end
         @test mesh_inventory ≈ fill(mesh_inventory[1], 3) rtol = 1e-11
         @test abs(mesh_extinction.concentration[end] - 5.25) <= 2e-3 * fixture_seed_mass
     end
-    # Scalar dissolution would collapse DQMOM nodes; it is rejected rather
-    # than integrated into a non-physical state.
-    @test_throws DomainError simulate(extinction_model, extinction_conditions; solver = DQMOM(), saveat = [0.0, 60.0])
+    # DQMOM cannot drop a node, so the solve stops at the first node's
+    # boundary crossing (inside the run, where the other solvers report
+    # extinction) and names the solvers that can dissolve completely.
+    dqmom_extinction_error = try
+        simulate(extinction_model, extinction_conditions; solver = DQMOM(), saveat = [0.0, 60.0])
+        nothing
+    catch caught_error
+        caught_error
+    end
+    @test dqmom_extinction_error isa DomainError
+    @test occursin("Use QMOM, FiniteVol or WENO", dqmom_extinction_error.msg)
+    @test 0.0 < dqmom_extinction_error.val < 60.0
 end
 
 @testset "Mesh nucleation and growth conserve solute" begin

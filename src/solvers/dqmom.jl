@@ -591,6 +591,32 @@ function _dqmom_rhs!(destination,
     return nothing
 end
 
+"""
+    _dqmom_boundary_callback(problem)
+
+Stop a DQMOM solve when dissolution carries a node down to `minimum_size`.
+
+The DQMOM state stores each node's weight and position, so a node cannot be
+removed mid-solve the way QMOM drops one from its moment inversion.  Instead of
+integrating past the boundary into negative crystal sizes, the solve throws at
+the crossing and points to the solvers that model complete dissolution.
+Partial dissolution that stays above the boundary is unaffected.
+"""
+function _dqmom_boundary_callback(problem::CrystallisationProblem)
+    _dissolution_enabled(problem) || return nothing
+    solver = problem.solver
+    nquadrature = solver.nquadrature
+    scaled_minimum_size = solver.minimum_size / solver.coordinate_scale
+    condition = (state, time, integrator) ->
+        minimum(node_index -> state[nquadrature + node_index] / state[node_index],
+                1:nquadrature) - scaled_minimum_size
+    affect! = integrator -> nothing
+    affect_neg! = integrator -> throw(DomainError(integrator.t,
+        "A DQMOM node dissolved down to minimum_size at this time; DQMOM cannot remove " *
+        "a node mid-solve. Use QMOM, FiniteVol or WENO for complete dissolution."))
+    return ContinuousCallback(condition, affect!, affect_neg!; save_positions = (false, false))
+end
+
 """Construct the DQMOM ODE problem and selected time-stepping algorithm."""
 function crystallisation_odeproblem(solver::DQMOM, problem::CrystallisationProblem, saveat, kinetic_values)
     _validate_dqmom_problem(problem)
@@ -627,14 +653,16 @@ function crystallisation_odeproblem(solver::DQMOM, problem::CrystallisationProbl
         ode_problem = ODEProblem{false}(model,
                                         initial_state,
                                         (saveat[1], saveat[end]),
-                                        parameters)
+                                        parameters;
+                                        callback = _dqmom_boundary_callback(problem))
     else
         DQMOM_model! = (destination, state, p, time) ->
             _dqmom_rhs!(destination, state, p, time, problem, feed_population)
         ode_problem = ODEProblem(DQMOM_model!,
                                  initial_values,
                                  (saveat[1], saveat[end]),
-                                 parameters)
+                                 parameters;
+                                 callback = _dqmom_boundary_callback(problem))
     end
     return ode_problem, _timestepping_algorithm(solver, Tsit5())
 end

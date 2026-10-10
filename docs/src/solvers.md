@@ -88,6 +88,13 @@ accepts the same validated scalar closures, plus a length-dependent growth
 law. Both moment solvers reject `ArrheniusLengthDissolution`; use FiniteVol or
 WENO for length-dependent dissolution.
 
+Complete dissolution differs between the two. QMOM removes a quadrature node
+when it dissolves down to `minimum_size` and releases its mass as solute. DQMOM
+stores each node in its state and cannot remove one mid-solve, so it throws a
+`DomainError` at the time a node reaches `minimum_size`. Partial dissolution
+that keeps every node above the boundary runs normally; use QMOM, FiniteVol or
+WENO when crystals may dissolve completely.
+
 ## DQMOM state and contract
 
 DQMOM is a subtype of `AbstractMomentSolver`, but it does not evolve the raw
