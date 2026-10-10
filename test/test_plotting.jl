@@ -3,12 +3,8 @@ using MCMCChains: Chains
 
 @testset "Prediction and posterior plots" begin
     PlotMakie = CriSTool.Makie
-    plotting_model = CrystallisationModel(CrystallisationSystem(saturation_model = ConstantSolubility(10.0),
-            crystal_density = 1000.0, volume_shape_factor = 1.0);
-        nucleation = CallableNucleation((rate_values, rate_context) -> 0.0; parameters = (;)),
-        growth = CallableGrowth((rate_values, rate_context) -> rate_values.speed * 1e-6;
-            parameters = (speed = 0.01,)))
-    plotting_seed = DistributionInitialCrystals(Uniform(10e-6, 20e-6); mass_concentration = 0.25)
+    plotting_model = fixture_translation_model()
+    plotting_seed = fixture_uniform_seed()
     plotting_experiments = [CrystallisationExperiment(exp_id = run_id,
         observables = (concentration = Observable(time = [0.0, 60.0, 120.0],
                            mean = [20.0, 19.9, 19.8], variance = [0.0, 0.01, 0.01]),
@@ -39,10 +35,8 @@ using MCMCChains: Chains
     @test !has_plot_type(single_axis, PlotMakie.Scatter)
     single_line = only(filter(axis_plot -> axis_plot isa PlotMakie.Lines, single_axis.scene.plots))
     saved_times = only(single_predictions.ensembles).time
-    reference_trajectory = simulate(plotting_model,
-        RunConditions(temperature = 293.15, concentration = 20.0, crystals = plotting_seed); saveat = saved_times)
     @test [point[1] for point in single_line[1][]] ≈ saved_times ./ 60
-    @test [point[2] for point in single_line[1][]] ≈ reference_trajectory.d43 .* 1e6 rtol = 1e-6
+    @test [point[2] for point in single_line[1][]] ≈ fixture_translation_d43.(saved_times) .* 1e6 rtol = 1e-6
     @test_throws ArgumentError plot_predictions(single_predictions; observables = (:pH,), showplot = false)
     @test_throws ArgumentError plot_predictions(single_predictions; quantiles = (0.9, 0.1), showplot = false)
 

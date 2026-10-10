@@ -1,6 +1,5 @@
 using CriSTool
-# Internal engine regression coverage is intentionally independent of the
-# recommended public model workflow.
+# Internal engine entry points used by a few regression checks.
 using CriSTool: run_ensemble, prepare_loss, LossSetup
 using Test
 using Distributions
@@ -8,49 +7,24 @@ using DataFrames
 import DifferentiationInterface as DI
 import ForwardDiff
 import FiniteDifferences
-import StaticArrays
+
+include("fixtures.jl")
+
+# `Pkg.test()` runs the core groups. Pass group names to run a subset, e.g.
+# `Pkg.test(test_args = ["simulate", "steady"])`; "all" adds the optional groups.
+const CORE_TEST_GROUPS = ["numerics", "simulate", "operations", "steady", "data", "fit_predict", "gradients"]
+const OPTIONAL_TEST_GROUPS = ["plotting", "aqua"]
+const SELECTED_TEST_GROUPS = isempty(ARGS) ? CORE_TEST_GROUPS :
+                             "all" in ARGS ? vcat(CORE_TEST_GROUPS, OPTIONAL_TEST_GROUPS) : ARGS
+for group_name in SELECTED_TEST_GROUPS
+    group_name in CORE_TEST_GROUPS || group_name in OPTIONAL_TEST_GROUPS ||
+        error("Unknown test group \"$group_name\".")
+end
 
 @testset "CriSTool.jl" begin
-    include("test_model_interface.jl")
-    if !("interface" in ARGS)
-    include("test_structs.jl")
-    include("test_initial_state.jl")
-    include("test_operations.jl")
-    include("test_mesh_operations.jl")
-    include("test_mesh_output_performance.jl")
-    include("test_fv_reconstruction.jl")
-    include("test_steady_state.jl")
-    include("test_steady_inference.jl")
-    include("test_steady_backends.jl")
-    include("test_saturation.jl")
-    include("test_kinetics.jl")
-    include("test_dissolution.jl")
-    include("test_vector_rate_performance.jl")
-    include("test_weno_signed.jl")
-    include("test_weno_reconstruction.jl")
-    include("test_weno_cfl.jl")
-    include("test_qmom.jl")
-    include("test_dqmom.jl")
-    include("test_dqmom_operations.jl")
-    include("test_aggregation_breakage.jl")
-    include("test_runsimulation.jl")
-    include("test_solvers.jl")
-    include("test_solve_configuration.jl")
-    include("test_staticarrays.jl")
-    include("test_input_validation.jl")
-    include("test_chainutilities.jl")
-    include("test_optimizer_configuration.jl")
-    include("test_generalization.jl")
-    include("test_loss_accounting.jl")
-    include("test_workflow_interfaces.jl")
-    include("test_abc_targets.jl")
-    include("test_uncertainty_quantification.jl")
-    include("test_autodiff.jl")
-    include("test_gradients.jl")
-    include("test_sensitivity.jl")
-    include("test_measurements.jl")
-    include("test_gold_fixture.jl")
-    include("test_plotting.jl")
-    include("test_aqua.jl")
+    for group_name in SELECTED_TEST_GROUPS
+        @testset "$group_name" begin
+            include("test_$(group_name).jl")
+        end
     end
 end

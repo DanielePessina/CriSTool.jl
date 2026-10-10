@@ -1,206 +1,181 @@
-# Gradient harness: cross-backend gradient agreement via DifferentiationInterface.
-# FiniteDifferences is the numerical reference and ForwardDiff is the supported
-# automatic-differentiation backend for the current release. Reverse Enzyme
-# differentiation through OrdinaryDiffEq is deferred because of upstream Julia
-# 1.12 ecosystem blockers; see AUDIT_v1.0.md.
+# Gradient harness. Every case compares ForwardDiff (through DifferentiationInterface)
+# against an independent reference: the derivative of a closed-form trajectory, an
+# exact hand value, or a five-point central finite difference of the same function.
+# Each distinct differentiation path (solver, operation, steady relaxation, loss,
+# forward sensitivity, rate kernels) appears once.
 
-import DifferentiationInterface as DI
-import ForwardDiff
-import FiniteDifferences
+# One shared ForwardDiff tag: the Dual type then depends only on the chunk size,
+# so solver code compiled for one objective is reused by the next.
+struct GradientHarnessTag end
+const gradient_forward_backend = DI.AutoForwardDiff(; tag = GradientHarnessTag())
+const gradient_difference_backend = DI.AutoFiniteDifferences(FiniteDifferences.central_fdm(5, 1))
 
-const TEST_SI_GROWTH_SCALE = 1e-9 / 60
-_si_growth_parameters(parameters) = [parameters[1] * TEST_SI_GROWTH_SCALE,
-                                     parameters[2]]
-_si_dissolution_parameters(parameters) = [parameters[1] * TEST_SI_GROWTH_SCALE,
-                                          parameters[2], parameters[3]]
-_si_full_growth_dissolution_parameters(parameters) =
-    [_si_growth_parameters(parameters[1:2]);
-     _si_dissolution_parameters(parameters[3:5])]
+# Lysozyme kinetics in O(1) coordinates so finite-difference steps are well scaled.
+gradient_lysozyme_values(scaled_values) =
+    [scaled_values[1], scaled_values[2] * 1e-3, scaled_values[3] * 1e-9 / 60, scaled_values[4]]
+const gradient_lysozyme_scaled_point = [38.0, 0.7, 1.0, 3.0]
 
-@testset "Gradient harness (DI cross-backend)" begin
-    fd_backend = DI.AutoFiniteDifferences(FiniteDifferences.central_fdm(5, 1))
-    fwd_backend = DI.AutoForwardDiff()
+@testset "Fit loss gradient equals the closed-form chain rule" begin
+    # Synthetic concentrations from the true speed 0.01; the gradient is taken
+    # away from the optimum so it is not trivially zero.
+    gradient_times = [0.0, 300.0, 1000.0]
+    gradient_observed = fixture_translation_concentration.(gradient_times)
+    gradient_experiment = fixture_experiment((time = gradient_times, concentration = gradient_observed),
+        fixture_seeded_conditions(); observables = (:concentration,))
+    gradient_prepared = prepare_fit(fixture_translation_model(), [gradient_experiment],
+        OptimisationSpec(bounds = (growth = (speed = (0.001, 0.05),),), algorithm = nothing))
+    gradient_speed = 0.015
+    # d/ds sum (C(t; s) - y)^2 / (2 var), differentiating the analytic trajectory.
+    closed_form_gradient = sum(gradient_times .|> elapsed_time ->
+        (fixture_translation_concentration(elapsed_time; speed = gradient_speed) -
+         fixture_translation_concentration(elapsed_time)) / 0.01 *
+        ForwardDiff.derivative(trial_speed -> fixture_translation_concentration(elapsed_time; speed = trial_speed),
+            gradient_speed))
+    forward_gradient = DI.gradient(trial -> loss(gradient_prepared, trial), gradient_forward_backend, [gradient_speed])
+    difference_gradient = DI.gradient(trial -> loss(gradient_prepared, trial), gradient_difference_backend, [gradient_speed])
+    @test only(forward_gradient) ≈ closed_form_gradient rtol = 1e-5
+    @test forward_gradient ≈ difference_gradient rtol = 1e-6
+end
 
-    base_params = [38.0, 0.6, 1.0, 3.0]
+# Nonlinear MoM case: nucleation and growth both depend on supersaturation, and the
+# selected parameters are not contiguous in the model's parameter vector.
+@testset "Non-contiguous selection gradient (supersaturation-dependent kinetics)" begin
+    noncontiguous_model = CrystallisationModel(fixture_system;
+        nucleation = CallableNucleation((rate_values, rate_context) -> rate_values.amplitude * 1e9;
+            parameters = (amplitude = 0.1,)),
+        growth = CallableGrowth((rate_values, rate_context) ->
+            rate_values.speed * 1e-6 * supersaturation(rate_context)^rate_values.order;
+            parameters = (speed = 0.001, order = 2.0)))
+    noncontiguous_experiment = fixture_experiment(
+        (time = [0.0, 100.0], concentration = [20.0, 19.0]), fixture_seeded_conditions();
+        observables = (:concentration,))
+    noncontiguous_prepared = prepare_fit(noncontiguous_model, [noncontiguous_experiment],
+        OptimisationSpec(bounds = (nucleation = (amplitude = (0.01, 0.5),), growth = (order = (1.0, 3.0),)),
+            algorithm = nothing))
+    noncontiguous_objective = trial -> loss(noncontiguous_prepared, trial)
+    @test DI.gradient(noncontiguous_objective, gradient_forward_backend, [0.2, 2.5]) ≈
+          DI.gradient(noncontiguous_objective, gradient_difference_backend, [0.2, 2.5]) rtol = 1e-4 atol = 1e-8
+end
 
-    function assert_gradient_agreement(name, g1, g2; rtol)
-        for i in eachindex(g1)
-            scale = max(abs(g1[i]), abs(g2[i]))
-            if scale > 1e-8
-                @test abs(g1[i] - g2[i]) <= rtol * scale
-            else
-                @test abs(g1[i] - g2[i]) <= 1e-6
-            end
-        end
-    end
+@testset "FiniteVol (30 cells) final concentration gradient" begin
+    finite_volume_problem = CrystallisationProblem(fixture_lysozyme_model, fixture_lysozyme_conditions;
+        solver = FiniteVol(meshsize = 30, lmax = 50e-6))
+    finite_volume_objective = scaled_values -> last(runsimulation(gradient_lysozyme_values(scaled_values),
+        finite_volume_problem; save_idx = [0.0, 7200.0, 14400.0])).concentration[end]
+    @test DI.gradient(finite_volume_objective, gradient_forward_backend, gradient_lysozyme_scaled_point) ≈
+          DI.gradient(finite_volume_objective, gradient_difference_backend, gradient_lysozyme_scaled_point) rtol = 1e-3 atol = 1e-8
+end
 
-@testset "Kinetics rates" begin
-        nucl = nucl_CNT()
-        gr = growth_empirical()
-        system = CrystallisationProblem(; kinetics_nucleationfunction = nucl,
-                                        kinetics_growthfunction = gr,
-                                        solver = MoM())
-        S, T = 3.2, 290.15
-        nd = [1e10, 1e11, 1e12, 1e13, 1e14]
-        state = [nd; S * saturation_concentration(system, 0.0)]
-
-        f_nucl(p) = CriSTool.nucleationrate(nucl, [p[1], p[2] * 1e-3], system, state, 0.0)
-        g_fd = DI.gradient(f_nucl, fd_backend, [38.0, 0.6])
-        g_fwd = DI.gradient(f_nucl, fwd_backend, [38.0, 0.6])
-        assert_gradient_agreement("nucleationrate (nucl_CNT)", g_fd, g_fwd; rtol = 1e-4)
-
-        f_gr(p) = CriSTool.growthrate(gr, p, system, state, 0.0)
-        f_gr_scaled(parameters) = f_gr(_si_growth_parameters(parameters))
-        g_fd_gr = DI.gradient(f_gr_scaled, fd_backend, [1.0, 3.0])
-        g_fwd_gr = DI.gradient(f_gr_scaled, fwd_backend, [1.0, 3.0])
-        assert_gradient_agreement("growthrate (growth_empirical)", g_fd_gr, g_fwd_gr;
-                                  rtol = 1e-4)
-
-    end
-
-    @testset "MoM solution observables" begin
-        nucl = nucl_CNT()
-        gr = growth_empirical()
-        save_idx = [0.0, 1800.0, 3600.0, 7200.0, 10800.0, 16200.0]
-
-        function run_mom(params)
-            _, sol = runsimulation(_si_test_parameters(params); nucl = nucl, gr = gr,
-                                   agg = noaggregation(), br = nobreakage(),
-                                   initial_concentration = 14.67,
-                                   save_idx = save_idx,
-                                   solver = MoM(),
-                                   temp_profile = CriSTool.ConstantTemperature(290.15))
-            return sol
-        end
-
-        f_conc(params) = run_mom(params).concentration[end]
-        g_fd = DI.gradient(f_conc, fd_backend, base_params)
-        g_fwd = DI.gradient(f_conc, fwd_backend, base_params)
-        assert_gradient_agreement("MoM final concentration", g_fd, g_fwd; rtol = 0.05)
-        f_d43(params) = run_mom(params).d43[end]
-        g_fd43 = DI.gradient(f_d43, fd_backend, base_params)
-        g_fwd43 = DI.gradient(f_d43, fwd_backend, base_params)
-        assert_gradient_agreement("MoM final d43", g_fd43, g_fwd43; rtol = 0.05)
-    end
-
-    @testset "Full logMLE loss (gold fixture)" begin
-        fixture = joinpath(@__DIR__, "fixtures", "real-experimental-dataset.csv")
-        ms = load_measurements(fixture)
-        problem = CrystallisationProblem(;
-            kinetics_nucleationfunction = nucl_CNT(),
-            kinetics_growthfunction = growth_empirical(),
-            kinetics_aggregationfunction = noaggregation(),
-            kinetics_breakagefunction = nobreakage(),
-            solver = MoM())
-        f_loss(params) = loss(logMLE(), problem, params, ms[1:2])
-        g_fd = DI.gradient(f_loss, fd_backend, base_params)
-        g_fwd = DI.gradient(f_loss, fwd_backend, base_params)
-        assert_gradient_agreement("logMLE loss (2 experiments)", g_fd, g_fwd; rtol = 0.1)
-    end
-
-    @testset "FiniteVol final concentration" begin
-        nucl = nucl_CNT()
-        gr = growth_empirical()
-        save_idx = collect(0.0:3600.0:14400.0)
-
-        f_fv(params) = begin
-            _, sol = runsimulation(params; nucl = nucl, gr = gr,
-                                   agg = noaggregation(), br = nobreakage(),
-                                   initial_concentration = 14.67,
-                                   save_idx = save_idx,
-                                   solver = FiniteVol(meshsize = 50, lmax = 50e-6),
-                                   temp_profile = CriSTool.ConstantTemperature(290.15))
-            return sol.concentration[end]
-        end
-
-        g_fd = DI.gradient(f_fv, fd_backend, base_params)
-        g_fwd = DI.gradient(f_fv, fwd_backend, base_params)
-        assert_gradient_agreement("FV final concentration", g_fd, g_fwd; rtol = 0.15)
+@testset "Forward sensitivity (MoM) equals finite differences" begin
+    sensitivity_problem = CrystallisationProblem(fixture_lysozyme_model,
+        RunConditions(temperature = 290.15, concentration = 14.67))
+    sensitivity_times = [0.0, 3600.0, 7200.0, 10800.0]
+    _, sensitivity_columns = CriSTool.extract_local_sensitivities(
+        CriSTool.forwardsensitivity(sensitivity_problem, sensitivity_times))
+    sensitivity_values = collect(sensitivity_problem.parameterset_nucleation)
+    sensitivity_values = vcat(sensitivity_values, collect(sensitivity_problem.parameterset_growth))
+    final_concentration_of(kinetic_values) =
+        last(runsimulation(kinetic_values, sensitivity_problem; save_idx = sensitivity_times)).concentration[end]
+    # Only the O(1) parameters (ln prefactor, growth order) are differenced directly.
+    for parameter_index in (1, 4)
+        difference_sensitivity = FiniteDifferences.central_fdm(5, 1)(trial_value ->
+            final_concentration_of(setindex!(copy(sensitivity_values), trial_value, parameter_index)),
+            sensitivity_values[parameter_index])
+        # State 6 is the concentration in the MoM layout (5 moments, then C).
+        @test sensitivity_columns[parameter_index][6, end] ≈ difference_sensitivity rtol = 1e-4
     end
 end
 
-@testset "Independent dissolution and QMOM gradient verification" begin
-    fd_backend = DI.AutoFiniteDifferences(FiniteDifferences.central_fdm(5, 1))
-    fwd_backend = DI.AutoForwardDiff()
+@testset "Fed-batch translation: d C / d speed equals the inventory closed form" begin
+    # With no outflow every seed crystal stays: C V = C0 V0 + F Cf t − V0 m0 (E[(L+Gt)^3]/E[L^3] − 1).
+    fed_batch_volume, fed_batch_inflow, fed_batch_time = 2.0, 0.002, 1000.0
+    fed_batch_problem = CrystallisationProblem(fixture_translation_model(),
+        fixture_seeded_conditions(operation = fixture_fed_batch(inflow = fed_batch_inflow));
+        solver = MoM(reltol = 1e-12, abstol = 1e-20))
+    fed_batch_closed_form(trial_speed) = (20.0 * fed_batch_volume + fed_batch_inflow * 2.0 * fed_batch_time -
+        fed_batch_volume * fixture_seed_mass * (fixture_uniform_moment(3, trial_speed * 1e-6 * fed_batch_time) /
+        fixture_uniform_moment(3) - 1)) / (fed_batch_volume + fed_batch_inflow * fed_batch_time)
+    fed_batch_concentration(trial_speed) = last(runsimulation([trial_speed], fed_batch_problem;
+        save_idx = [0.0, fed_batch_time])).concentration[end]
+    @test fed_batch_concentration(0.01) ≈ fed_batch_closed_form(0.01) rtol = 1e-9
+    @test DI.derivative(fed_batch_concentration, gradient_forward_backend, 0.01) ≈
+          ForwardDiff.derivative(fed_batch_closed_form, 0.01) rtol = 1e-7
+end
 
-    fixed_no_nucleation = CriSTool.nucl_empirical_fixed(log10_nucleation_prefactor = -Inf, nucleation_order = 1.0)
-    dissolution_model = growth_dissolution()
-    growth_model = growth_empirical()
-    shared_problem = CrystallisationProblem(;
-        kinetics_nucleationfunction = fixed_no_nucleation,
-        kinetics_growthfunction = growth_model,
-        kinetics_dissolutionfunction = dissolution_model,
-        parameterset_nucleation = Float64[],
-        parameterset_growth = [TEST_SI_GROWTH_SCALE, 2.0],
-        parameterset_dissolution = [2e-9 / 60, 0.0, 1.5],
-        saturation_model = ConstantSolubility(10.0),
-        initial_concentration = 5.0,
-        solver = MoM())
-    seeded_moments = [1.0e12, 1.0e6, 1.0, 1.0e-6, 1.0e-12]
-    qmom_seeded_moments = vcat(seeded_moments, 1.0e-18)
-    seeded_state = vcat(seeded_moments, 5.0)
+@testset "DQMOM under MSMPR flow: gradient equals the washout closed form" begin
+    # Clear feed Cf, residence time tau: C = Cf + (C0 − Cf + m0 − m0 E[(L+Gt)^3]/E[L^3]) e^{−t/tau}.
+    msmpr_time = 4.0
+    msmpr_problem = CrystallisationProblem(fixture_translation_model(),
+        fixture_seeded_conditions(operation = fixture_msmpr());
+        solver = DQMOM(nquadrature = 3, coordinate_scale = 1e-6, weight_scale = 1e12, reltol = 1e-10, abstol = 1e-12))
+    msmpr_residence = 2.0 / 0.2
+    msmpr_closed_form(trial_speed) = 2.0 + (20.0 - 2.0 - fixture_seed_mass *
+        (fixture_uniform_moment(3, trial_speed * 1e-6 * msmpr_time) / fixture_uniform_moment(3) - 1)) *
+        exp(-msmpr_time / msmpr_residence)
+    msmpr_concentration(trial_values) = last(runsimulation(trial_values, msmpr_problem;
+        save_idx = [0.0, msmpr_time])).concentration[end]
+    @test msmpr_concentration([1.0]) ≈ msmpr_closed_form(1.0) rtol = 1e-7
+    @test only(DI.gradient(msmpr_concentration, gradient_forward_backend, [1.0])) ≈
+          ForwardDiff.derivative(msmpr_closed_form, 1.0) rtol = 1e-5
+end
 
-    @testset "Independent net rate" begin
-        rate_objective(parameters) = net_growth_rate(
-            growth_model, _si_growth_parameters(parameters[1:2]),
-            dissolution_model, _si_dissolution_parameters(parameters[3:5]),
-            shared_problem, seeded_state, 0.0)
-        fd_gradient = DI.gradient(rate_objective, fd_backend,
-                                  [1.0, 2.0, 2.0, 0.0, 1.5])
-        fwd_gradient = DI.gradient(rate_objective, fwd_backend,
-                                   [1.0, 2.0, 2.0, 0.0, 1.5])
-        @test fwd_gradient ≈ fd_gradient rtol = 1e-4 atol = 1e-10
+@testset "WENO (30 cells) seeded transport gradient" begin
+    weno_problem = CrystallisationProblem(fixture_translation_model(), fixture_seeded_conditions();
+        solver = WENO(meshsize = 30, lmax = 40e-6, reltol = 1e-6, abstol = 1e-10))
+    weno_time = 20.0
+    weno_concentration(trial_values) = last(runsimulation(trial_values, weno_problem;
+        save_idx = [0.0, weno_time])).concentration[end]
+    weno_forward = DI.gradient(weno_concentration, gradient_forward_backend, [0.1])
+    @test weno_forward ≈ DI.gradient(weno_concentration, gradient_difference_backend, [0.1]) rtol = 2e-5
+    # The 30-cell discretisation only approximates the moving seed, so the
+    # analytic derivative is a loose physical check.
+    @test only(weno_forward) ≈ ForwardDiff.derivative(trial_speed ->
+        fixture_translation_concentration(weno_time; speed = trial_speed), 0.1) rtol = 0.05
+end
+
+@testset "Steady MSMPR: d d43 / dG = 4 tau exactly" begin
+    # Constant B and G give n(L) = B/G exp(−L/(G tau)), so d43 = 4 G tau and the
+    # logMLE gradient on one d43 datum is (4 G tau − y)/var · 4 tau · 1e-6 per unit speed.
+    steady_model = fixture_translation_model(speed = 0.2, nucleation = fixture_constant_nucleation(birth_rate = 3e5))
+    steady_residence = 10.0
+    steady_observed_d43, steady_variance = 7e-6, 1e-12
+    steady_experiment = CrystallisationExperiment(observables = (d43 = Observable(time = [0.0],
+            mean = [steady_observed_d43], variance = [steady_variance]),),
+        conditions = RunConditions(temperature = 298.15, concentration = 1.0,
+            operation = fixture_msmpr(feed = fixture_clear_feed(concentration = 1.0))), exp_id = 1)
+    steady_prepared = prepare_fit(steady_model, [steady_experiment],
+        OptimisationSpec(bounds = (growth = (speed = (0.01, 1.0),),), algorithm = nothing);
+        solver = MoM(reltol = 1e-10, abstol = 1e-24), mode = :steady,
+        steady_options = SteadyStateOptions(autonomous = true, relaxation_horizon = 1000.0))
+    steady_speed = 0.2
+    steady_d43 = 4 * steady_speed * 1e-6 * steady_residence
+    steady_gradient = DI.gradient(trial -> loss(steady_prepared, trial), gradient_forward_backend, [steady_speed])
+    @test only(steady_gradient) ≈ (steady_d43 - steady_observed_d43) / steady_variance * 4e-6 * steady_residence rtol = 2e-4
+    @test steady_gradient ≈ DI.gradient(trial -> loss(steady_prepared, trial),
+        DI.AutoFiniteDifferences(FiniteDifferences.central_fdm(5, 1; max_range = 1e-3)), [steady_speed]) rtol = 2e-4
+end
+
+@testset "Rate-kernel gradients (length growth, binary moment sources)" begin
+    kernel_mesh = [0.5e-6, 1.0e-6, 2.0e-6]
+    kernel_problem = CrystallisationProblem(kinetics_growthfunction = growth_empirical_length(Lref = 1e-6),
+        saturation_model = ConstantSolubility(10.0), initial_concentration = 10.0,
+        solver = FiniteVol(meshsize = length(kernel_mesh), lmax = 3e-6))
+    kernel_state = [zeros(length(kernel_mesh)); 15.0]
+    function length_growth_objective(growth_values)
+        growth_destination = similar(kernel_mesh, eltype(growth_values))
+        CriSTool.growthrate!(growth_destination, growth_empirical_length(Lref = 1e-6), growth_values,
+            kernel_problem, kernel_state, 0.0, kernel_mesh)
+        return sum([1.0, 2.0, 4.0] .* growth_destination) * 1e8
     end
+    length_growth_point = [3e-8, 1.4, 0.45, 1.3]
+    @test DI.gradient(length_growth_objective, gradient_forward_backend, length_growth_point) ≈
+          DI.gradient(length_growth_objective, gradient_difference_backend, length_growth_point) rtol = 2e-4 atol = 2e-5
 
-    @testset "MoM independent dissolution simulation" begin
-        simulation_objective(parameters) = begin
-            _, solution = runsimulation(_si_full_growth_dissolution_parameters(parameters);
-                nucl = fixed_no_nucleation,
-                gr = growth_model,
-                diss = dissolution_model,
-                agg = noaggregation(),
-                br = nobreakage(),
-                solver = MoM(),
-                initial_concentration = 5.0,
-                initial_state = seeded_state,
-                saturation_model = ConstantSolubility(10.0),
-                save_idx = [0.0, 6.0])
-            solution.concentration[end]
-        end
-        fd_gradient = DI.gradient(simulation_objective, fd_backend,
-                                  [1.0, 2.0, 2.0, 0.0, 1.5])
-        fwd_gradient = DI.gradient(simulation_objective, fwd_backend,
-                                   [1.0, 2.0, 2.0, 0.0, 1.5])
-        @test fwd_gradient ≈ fd_gradient rtol = 0.15 atol = 1e-9
-    end
-
-    @testset "QMOM simulation and binary source gradients" begin
-        qmom_objective(parameters) = begin
-            _, solution = runsimulation(_si_growth_parameters(parameters);
-                nucl = fixed_no_nucleation,
-                gr = growth_model,
-                diss = nodissolution(),
-                agg = noaggregation(),
-                br = nobreakage(),
-                solver = QMOM(nquadrature = 3),
-                initial_concentration = 20.0,
-                initial_state = [1.0e12, 1.0e6, 1.0, 1.0e-6, 1.0e-12, 1.0e-18, 20.0],
-                saturation_model = ConstantSolubility(10.0),
-                save_idx = [0.0, 6.0])
-            solution.d43[end]
-        end
-        qmom_fd = DI.gradient(qmom_objective, fd_backend, [1.0, 2.0])
-        qmom_fwd = DI.gradient(qmom_objective, fwd_backend, [1.0, 2.0])
-        @test qmom_fwd ≈ qmom_fd rtol = 0.2 atol = 1e-9
-
-        rule = QMOMQuadrature([0.5e-6, 1.5e-6], [2.0, 3.0])
-        aggregation_objective(parameters) = aggregation_moment_source(
-            aggr_scalar(), parameters, rule, 3)[1]
-        breakage_objective(parameters) = breakage_moment_source(
-            breakage_empirical(), parameters, rule, 3)[1]
-        @test DI.gradient(aggregation_objective, fwd_backend, [0.0]) ≈
-              DI.gradient(aggregation_objective, fd_backend, [0.0]) rtol = 1e-4
-        @test DI.gradient(breakage_objective, fwd_backend, [0.0, 1.0]) ≈
-              DI.gradient(breakage_objective, fd_backend, [0.0, 1.0]) rtol = 1e-4
-    end
+    kernel_rule = QMOMQuadrature([0.5e-6, 1.5e-6], [2.0, 3.0])
+    aggregation_objective(kernel_values) = aggregation_moment_source(aggr_scalar(), kernel_values, kernel_rule, 3)[1]
+    breakage_objective(kernel_values) = breakage_moment_source(breakage_empirical(), kernel_values, kernel_rule, 3)[1]
+    @test DI.gradient(aggregation_objective, gradient_forward_backend, [0.0]) ≈
+          DI.gradient(aggregation_objective, gradient_difference_backend, [0.0]) rtol = 1e-4
+    @test DI.gradient(breakage_objective, gradient_forward_backend, [0.0, 1.0]) ≈
+          DI.gradient(breakage_objective, gradient_difference_backend, [0.0, 1.0]) rtol = 1e-4
 end

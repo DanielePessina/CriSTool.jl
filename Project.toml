@@ -52,7 +52,6 @@ Distributions = "0.25.88 - 0.25.126"
 FiniteDifferences = "0.12"
 FlexiChains = "0.3.3, 0.4, 0.5, 0.6"
 ForwardDiff = "1"
-JLD2 = "0.6"
 JSON = "1"
 LinearAlgebra = "^1.10.0"
 MCMCChains = "^6.0.0, 7"
@@ -79,7 +78,6 @@ julia = "^1.10"
 
 [extras]
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
-JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
 DifferentiationInterface = "a0c0ee7d-e4b9-4e03-894e-1c5f64a51d63"
 FiniteDifferences = "26cc04aa-876d-5657-8c51-4c34ba976000"
 ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
@@ -87,4 +85,4 @@ OptimizationOptimJL = "36348300-93cb-4f02-beb5-3c3902f8871e"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Aqua", "DifferentiationInterface", "FiniteDifferences", "ForwardDiff", "JLD2", "OptimizationOptimJL", "Test"]
+test = ["Aqua", "DifferentiationInterface", "FiniteDifferences", "ForwardDiff", "OptimizationOptimJL", "Test"]
