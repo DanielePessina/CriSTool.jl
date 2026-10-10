@@ -64,7 +64,7 @@ to reconstruct the active rule at saved time index `i`.
 QMOM accepts scalar growth or dissolution kinetics and the supported
 volume-additive aggregation and uniform-in-volume breakage closures. DQMOM
 accepts the same validated scalar closures, plus a length-dependent growth
-law. Both moment solvers reject `growth_dissolution_length`; use FiniteVol or
+law. Both moment solvers reject `ArrheniusLengthDissolution`; use FiniteVol or
 WENO for length-dependent dissolution.
 
 ## DQMOM state and contract
@@ -109,9 +109,8 @@ using CriSTool
 
 growth_only_model = CrystallisationModel(
     LysozymeSystem(saturation_model = ConstantSolubility(10.0));
-    nucleation = nucl_empirical_fixed(log10_nucleation_prefactor = -Inf,
-                                      nucleation_order = 1.0),
-    growth = growth_empirical(growth_coefficient = 3e-9, growth_order = 1.2))
+    nucleation = CallableNucleation((rate_values, rate_context) -> 0.0; parameters = (;)),
+    growth = EmpiricalGrowth(growth_coefficient = 3e-9, growth_order = 1.2))
 
 seeded_run = RunConditions(temperature = 293.15, concentration = 20.0,
     crystals = LogNormalInitialCrystals(
@@ -131,8 +130,8 @@ solution.d43[end]
 using CriSTool
 
 crystal_model = CrystallisationModel(LysozymeSystem();
-    nucleation = nucl_CNT(ln_nucleation_prefactor = 38.0, surface_energy = 0.0007),
-    growth = growth_empirical(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
+    nucleation = CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 0.0007),
+    growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
 batch_run = RunConditions(temperature = 293.15, concentration = 18.0)
 
 solution = simulate(crystal_model, batch_run;

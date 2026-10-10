@@ -119,8 +119,8 @@ end
     breakage_selection = 0.01
     event_model = CrystallisationModel(fixture_system; nucleation = fixture_no_nucleation,
         growth = fixture_constant_growth(speed = 0.0),
-        aggregation = aggr_scalar(log10_aggregation_coefficient = log10(aggregation_kernel)),
-        breakage = breakage_empirical(breakage_coefficient = breakage_selection, breakage_size_exponent = 0.0))
+        aggregation = ConstantAggregation(log10_aggregation_coefficient = log10(aggregation_kernel)),
+        breakage = EmpiricalBreakage(breakage_coefficient = breakage_selection, breakage_size_exponent = 0.0))
     logistic_number(initial_number, elapsed_time) = initial_number * exp(breakage_selection * elapsed_time) /
         (1 + aggregation_kernel * initial_number / (2 * breakage_selection) * expm1(breakage_selection * elapsed_time))
     # Quadrature closures are exact for constant kernels (ODE tolerance only;
@@ -143,8 +143,8 @@ end
     # seconds and cannot regrow (5.25 < 10), so the closed-form end state is
     # an empty population at C = 5 + 0.25.
     extinction_model = CrystallisationModel(fixture_system; nucleation = fixture_no_nucleation,
-        growth = growth_empirical(growth_coefficient = 1e-8, growth_order = 1.0),
-        dissolution = growth_dissolution(dissolution_coefficient = 1e-6, activation_energy = 0.0, dissolution_order = 1.0))
+        growth = EmpiricalGrowth(growth_coefficient = 1e-8, growth_order = 1.0),
+        dissolution = ArrheniusDissolution(dissolution_coefficient = 1e-6, activation_energy = 0.0, dissolution_order = 1.0))
     extinction_conditions = fixture_seeded_conditions(concentration = 5.0)
     extinction_problem(solver) = CrystallisationProblem(extinction_model, extinction_conditions;
         solver, solid_mass_concentration_threshold = 5e-4)
@@ -193,10 +193,7 @@ end
 CriSTool.saturation_concentration(solubility::SimulateLinearSolubility, temperature_profile, elapsed_time) =
     solubility.slope_per_kelvin * (CriSTool.temperature(temperature_profile, elapsed_time) - 273.15) + solubility.intercept
 
-struct SimulateLinearGrowth <: AbstractFPScalarGrowthFunction
-    nparams::Int
-end
-SimulateLinearGrowth() = SimulateLinearGrowth(1)
+struct SimulateLinearGrowth <: AbstractScalarGrowthFunction end
 CriSTool.paramaxis(::SimulateLinearGrowth) = CriSTool.ComponentArrays.Axis(linear_growth_coefficient = 1)
 CriSTool.growthrate(::SimulateLinearGrowth, kinetic_parameters, configured_run::CrystallisationProblem, ode_state, elapsed_time) =
     kinetic_parameters[1] * (supersaturation(configured_run, ode_state, elapsed_time) - 1)
@@ -295,13 +292,13 @@ end
 
 @testset "Input contracts that guard user mistakes" begin
     # Keyword binding must name every parameter, and only real ones.
-    @test_throws ArgumentError growth_empirical(growth_order = 2.0)
-    @test_throws ArgumentError growth_empirical(wrong = 1.0, growth_order = 2.0)
+    @test_throws ArgumentError EmpiricalGrowth(growth_order = 2.0)
+    @test_throws ArgumentError EmpiricalGrowth(wrong = 1.0, growth_order = 2.0)
     # An unbound law with parameters cannot enter a model.
-    @test_throws ArgumentError CrystallisationModel(fixture_system; nucleation = nucl_CNT(), growth = fixture_constant_growth())
+    @test_throws ArgumentError CrystallisationModel(fixture_system; nucleation = CNTNucleation(), growth = fixture_constant_growth())
     # CNT needs a molecular volume the fixture system does not define.
     @test_throws ArgumentError CrystallisationProblem(CrystallisationModel(fixture_system;
-        nucleation = nucl_CNT(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4), growth = fixture_constant_growth()),
+        nucleation = CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4), growth = fixture_constant_growth()),
         fixture_seeded_conditions())
     # Missing concentration is an unresolved observation placeholder.
     @test_throws ArgumentError CrystallisationProblem(fixture_translation_model(), RunConditions(temperature = 293.15))

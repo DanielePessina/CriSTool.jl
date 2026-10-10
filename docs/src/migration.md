@@ -50,7 +50,7 @@ moved study settings into the specifications.
 | Before | After |
 | --- | --- |
 | `CrystallisationModel(system = s, nucleation = ..., growth = ...)` | `CrystallisationModel(s; nucleation = ..., growth = ...)` |
-| `KineticModel(nucl_CNT(); parameters = (ln_nucleation_prefactor = 38.0, surface_energy = 6e-4))` | `nucl_CNT(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4)` (the long form still works) |
+| `KineticModel(nucl_CNT(); parameters = (ln_nucleation_prefactor = 38.0, surface_energy = 6e-4))` | `CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4)` (the long form still works) |
 | `CrystallisationProblem(model; initial_conditions = (concentration = 18.0,), temperature = ConstantTemperature(293.15), initial_crystals = seed, operation = op, solver)` | `CrystallisationProblem(model, RunConditions(temperature = 293.15, concentration = 18.0, crystals = seed, operation = op); solver)` |
 | `simulate(problem; saveat)` | `simulate(model, conditions; solver, saveat)`; `simulate(problem; saveat)` still works |
 | `CrystallisationExperiment(...; temperature, initial_from = (concentration = :concentration,), seed_shape, operation, relaxation_initial)` | `CrystallisationExperiment(; observables, exp_id, conditions = RunConditions(...), metadata)` |
@@ -115,3 +115,52 @@ receive exact cell integrals of its density whichever entry point built the
 state (model conditions, experiments, `initial_state_from_characteristics` or
 feeds). Previously experiment seeds were point-sampled on the cell centres and
 rescaled to the target mass.
+
+## Kinetic laws: names, dissolution slot and parameter schema
+
+Kinetic laws and losses now use CamelCase type names. There are no aliases;
+replace each old name.
+
+| Before | After |
+| --- | --- |
+| `nucl_CNT` | `CNTNucleation` |
+| `nucl_CNTnoS` | `CNTNucleationNoSupersaturation` |
+| `nucl_empirical` | `EmpiricalNucleation` |
+| `nucl_empirical_energy` | `ArrheniusNucleation` |
+| `nucl_secondary` | `SecondaryNucleation` |
+| `nucl_prim_plus_second`, `nucl_CNT_plus_second` | `CombinedNucleation(primary, secondary)` for any two nucleation laws; parameters nest under `primary` and `secondary` |
+| `growth_empirical` | `EmpiricalGrowth` |
+| `growth_empirical_length` | `EmpiricalLengthGrowth` |
+| `growth_energy`, `growth_energy_est` | `ArrheniusGrowth`, with `activation_energy` a parameter between `log10_growth_coefficient` and `growth_order` |
+| `growth_BCF` | `BCFGrowth` |
+| `growth_BpS` | `BirthSpreadGrowth` |
+| `growth_dissolution` | `ArrheniusDissolution`, in the `dissolution` slot |
+| `growth_dissolution_length` | `ArrheniusLengthDissolution`, in the `dissolution` slot |
+| `growth_energy_dissolution` | `growth = ArrheniusGrowth(...)` with `activation_energy = 53e3`, plus `dissolution = ArrheniusDissolution(...)` |
+| `nodissolution`, `nondissolution` | `NoDissolution` |
+| `noaggregation` | `NoAggregation` |
+| `aggr_scalar` | `ConstantAggregation` |
+| `aggr_linear` | `SizeSumAggregation` |
+| `aggr_linearvol` | `VolumeSumAggregation` |
+| `aggr_avg` | `AverageAggregation` |
+| `nobreakage` | `NoBreakage` |
+| `breakage_empirical` | `EmpiricalBreakage` |
+| `breakage_uniform` | `UniformBreakage` |
+| `logMLE` | `GaussianNLL` |
+| `mae` | `MeanAbsoluteError` |
+| `AbstractFPScalarGrowthFunction`, `AbstractFPLengthGrowthFunction` | `AbstractScalarGrowthFunction`, `AbstractLengthGrowthFunction` |
+| `AbstractFPScalarDissolutionFunction`, `AbstractFPLengthDissolutionFunction` | `AbstractScalarDissolutionFunction`, `AbstractLengthDissolutionFunction` |
+| `AbstractFPNucleationFunction`, `AbstractFPGrowthFunction` | `AbstractNucleationFunction`, `AbstractGrowthFunction` |
+
+Other changes to kinetic laws:
+
+| Before | After |
+| --- | --- |
+| A dissolution law in the `growth` slot | Dissolution laws form their own family and go in the `dissolution` slot; `AbstractDissolutionFunction` is no longer a subtype of `AbstractGrowthFunction` |
+| `nucl_CNT_fixed`, `nucl_empirical_fixed`, `growth_empirical_fixed` | bind the ordinary law and leave its parameters out of the fit selection; switch nucleation off with `CallableNucleation((values, context) -> 0.0; parameters = (;))` |
+| `law.nparams`, `law.string`, `law.symbols` | `paramaxis(law)` is the only parameter declaration |
+| custom laws without `paramaxis` (generic `θ1, θ2, ...` axis) | every law must declare `paramaxis` |
+| `paramaxis(nucl, gr, agg, br)` | `paramaxis(nucl, gr, diss, agg, br)` |
+| `ConstantSaturation`, `PolynomialSaturation`, `CallableSaturation`, `AbstractSaturationModel`, `lysozyme_saturation` | the `*Solubility` names |
+| `net_growthrate` | `net_growth_rate` |
+| `AbstractExperiment`, `AbstractObservable`, `AbstractCrystallisationProblem`, `AbstractDDNucleationFunction`, `AbstractDDGrowthFunction`, `AbstractDDScalarGrowthFunction` | removed |

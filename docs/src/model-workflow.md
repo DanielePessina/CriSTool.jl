@@ -3,7 +3,7 @@
 A `CrystallisationSystem` describes material properties and solubility.
 `LysozymeSystem()` is an ordinary instance with explicit lysozyme defaults.
 `KineticModel` binds one law to named values. Calling a built-in law with all
-of its parameter names, such as `growth_empirical(growth_coefficient = 1e-9,
+of its parameter names, such as `EmpiricalGrowth(growth_coefficient = 1e-9,
 growth_order = 2.0)`, returns a bound `KineticModel`. `CrystallisationModel(system; nucleation,
 growth, dissolution, aggregation, breakage)` collects the five slots; omitted
 optional slots use no-op laws.

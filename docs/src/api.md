@@ -18,7 +18,7 @@ changing or composing.
 ## Named kinetic parameters
 
 Calling a law with all of its parameter names, e.g.
-`growth_empirical(growth_coefficient = 1e-9, growth_order = 2.0)`, returns a
+`EmpiricalGrowth(growth_coefficient = 1e-9, growth_order = 2.0)`, returns a
 bound `KineticModel`; `KineticModel(law; parameters=(...))` is the long form.
 `OptimisationSpec.bounds`, `BayesianSpec.priors` and `ABCSpec.priors` select
 kinetic parameters using nested names such as `growth.growth_coefficient`.
@@ -48,6 +48,6 @@ those vectors. Generated SciML and dispatch-based extension interfaces remain
 available for advanced users.
 
 Custom nucleation families may subtype
-`CriSTool.AbstractFPNucleationFunction` by qualification/import; that base is
+`CriSTool.AbstractNucleationFunction` by qualification/import; that base is
 not currently exported. The standard custom-rate signature is
 `(fn, parameters, problem, state, t)`.

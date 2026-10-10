@@ -23,8 +23,8 @@ using CriSTool
 using CairoMakie
 
 function main()
-    # Fixed laws take no parameters, so the model binds them as they are.
-    no_nucleation = nucl_empirical_fixed(log10_nucleation_prefactor = -Inf, nucleation_order = 1.0)
+    # A callable law returning zero switches nucleation off.
+    no_nucleation = CallableNucleation((rate_values, rate_context) -> 0.0; parameters = (;))
     unit_solubility = LysozymeSystem(saturation_model = ConstantSolubility(1.0))
     qmom_solver = QMOM(nquadrature = 3, reltol = 1e-10, abstol = 1e-12)
     operation = FedBatchOperation(initial_volume = 2.0, inflow = 0.5,
@@ -40,7 +40,7 @@ function main()
 
     # ---- Part A: pure mixing (zero growth) ----
     mixing_model = CrystallisationModel(unit_solubility; nucleation = no_nucleation,
-        growth = growth_empirical_fixed(growth_coefficient = 0.0, growth_order = 1.0))
+        growth = EmpiricalGrowth(growth_coefficient = 0.0, growth_order = 1.0))
     mixing = simulate(mixing_model, fed_batch_run; solver = qmom_solver, saveat = save_grid)
 
     volume = observable_values(mixing, :volume)
@@ -56,7 +56,7 @@ function main()
 
     # ---- Part B: seeded growth (constant G = 2e-9 m/s) ----
     growing_model = CrystallisationModel(unit_solubility; nucleation = no_nucleation,
-        growth = growth_empirical_fixed(growth_coefficient = 2e-9, growth_order = 0.0))
+        growth = EmpiricalGrowth(growth_coefficient = 2e-9, growth_order = 0.0))
     growing = simulate(growing_model, fed_batch_run; solver = qmom_solver, saveat = save_grid)
 
     growth_rate = 2e-9

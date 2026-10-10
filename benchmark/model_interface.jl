@@ -2,18 +2,14 @@
 using CriSTool, BenchmarkTools, ComponentArrays, Test
 
 function benchmark_model_interface()
-    benchmark_model = CrystallisationModel(system = LysozymeSystem(),
-        nucleation = KineticModel(nucl_CNT(); parameters = (
-            ln_nucleation_prefactor = 38., surface_energy = .0006)),
-        growth = KineticModel(growth_empirical(); parameters = (
-            growth_coefficient = 1e-9 / 60, growth_order = 3.)))
-    benchmark_run = CrystallisationProblem(benchmark_model;
-        initial_conditions = (concentration = 18.,), temperature = ConstantTemperature(293.15))
+    benchmark_model = CrystallisationModel(LysozymeSystem();
+        nucleation = CNTNucleation(ln_nucleation_prefactor = 38., surface_energy = .0006),
+        growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 3.))
+    benchmark_run = CrystallisationProblem(benchmark_model,
+        RunConditions(temperature = 293.15, concentration = 18.); solver = MoM())
     benchmark_times = collect(0.:3600.:14400.)
     native_parameters = [38., .0006, 1e-9 / 60, 3.]
-    _, native_trajectory = runsimulation(native_parameters; nucl = nucl_CNT(), gr = growth_empirical(),
-        solver = MoM(), initial_concentration = 18., save_idx = benchmark_times,
-        temp_profile = ConstantTemperature(293.15))
+    _, native_trajectory = runsimulation(native_parameters, benchmark_run; save_idx = benchmark_times)
     named_trajectory = simulate(benchmark_run; saveat = benchmark_times)
     @test named_trajectory.concentration ≈ native_trajectory.concentration rtol = 1e-12
     benchmark_experiment = CrystallisationExperiment(observables = (
@@ -22,7 +18,7 @@ function benchmark_model_interface()
     selected_preparation = prepare_fit(benchmark_model, [benchmark_experiment],
         OptimisationSpec(bounds = (growth = (growth_order = (1., 4.),),)))
     full_preparation = selected_preparation.setup
-    @test loss(selected_preparation, [3.]) ≈ loss(logMLE(), full_preparation, native_parameters) atol = 1e-10
+    @test loss(selected_preparation, [3.]) ≈ loss(GaussianNLL(), full_preparation, native_parameters) atol = 1e-10
 
     named_growth_values = benchmark_run.parameterset_growth
     rate_state = CriSTool._get_initial_state(benchmark_run)
@@ -39,7 +35,7 @@ function benchmark_model_interface()
         "callable rate" => @benchmark(growthrate($callable_growth_law, $named_growth_values, $benchmark_run, $rate_state, 0.); seconds = 1),
         "configured solve" => @benchmark(last(runsimulation($benchmark_run; save_idx = $benchmark_times)); seconds = 1),
         "model simulate" => @benchmark(simulate($benchmark_run; saveat = $benchmark_times); seconds = 1),
-        "full loss" => @benchmark(loss(logMLE(), $full_preparation, $native_parameters); seconds = 1),
+        "full loss" => @benchmark(loss(GaussianNLL(), $full_preparation, $native_parameters); seconds = 1),
         "selected loss" => @benchmark(loss($selected_preparation, [3.]); seconds = 1)]
     println("Julia ", VERSION, "; threads=", Threads.nthreads(), "; CPU=", Sys.CPU_NAME)
     for (measurement_name, trial_result) in measurements

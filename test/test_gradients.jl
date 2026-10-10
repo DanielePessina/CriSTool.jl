@@ -135,7 +135,7 @@ end
 
 @testset "Steady MSMPR: d d43 / dG = 4 tau exactly" begin
     # Constant B and G give n(L) = B/G exp(−L/(G tau)), so d43 = 4 G tau and the
-    # logMLE gradient on one d43 datum is (4 G tau − y)/var · 4 tau · 1e-6 per unit speed.
+    # GaussianNLL gradient on one d43 datum is (4 G tau − y)/var · 4 tau · 1e-6 per unit speed.
     steady_model = fixture_translation_model(speed = 0.2, nucleation = fixture_constant_nucleation(birth_rate = 3e5))
     steady_residence = 10.0
     steady_observed_d43, steady_variance = 7e-6, 1e-12
@@ -156,13 +156,13 @@ end
 
 @testset "Rate-kernel gradients (length growth, binary moment sources)" begin
     kernel_mesh = [0.5e-6, 1.0e-6, 2.0e-6]
-    kernel_problem = CrystallisationProblem(kinetics_growthfunction = growth_empirical_length(Lref = 1e-6),
+    kernel_problem = CrystallisationProblem(kinetics_growthfunction = EmpiricalLengthGrowth(Lref = 1e-6),
         saturation_model = ConstantSolubility(10.0), initial_concentration = 10.0,
         solver = FiniteVol(meshsize = length(kernel_mesh), lmax = 3e-6))
     kernel_state = [zeros(length(kernel_mesh)); 15.0]
     function length_growth_objective(growth_values)
         growth_destination = similar(kernel_mesh, eltype(growth_values))
-        CriSTool.growthrate!(growth_destination, growth_empirical_length(Lref = 1e-6), growth_values,
+        CriSTool.growthrate!(growth_destination, EmpiricalLengthGrowth(Lref = 1e-6), growth_values,
             kernel_problem, kernel_state, 0.0, kernel_mesh)
         return sum([1.0, 2.0, 4.0] .* growth_destination) * 1e8
     end
@@ -171,8 +171,8 @@ end
           DI.gradient(length_growth_objective, gradient_difference_backend, length_growth_point) rtol = 2e-4 atol = 2e-5
 
     kernel_rule = QMOMQuadrature([0.5e-6, 1.5e-6], [2.0, 3.0])
-    aggregation_objective(kernel_values) = aggregation_moment_source(aggr_scalar(), kernel_values, kernel_rule, 3)[1]
-    breakage_objective(kernel_values) = breakage_moment_source(breakage_empirical(), kernel_values, kernel_rule, 3)[1]
+    aggregation_objective(kernel_values) = aggregation_moment_source(ConstantAggregation(), kernel_values, kernel_rule, 3)[1]
+    breakage_objective(kernel_values) = breakage_moment_source(EmpiricalBreakage(), kernel_values, kernel_rule, 3)[1]
     @test DI.gradient(aggregation_objective, gradient_forward_backend, [0.0]) ≈
           DI.gradient(aggregation_objective, gradient_difference_backend, [0.0]) rtol = 1e-4
     @test DI.gradient(breakage_objective, gradient_forward_backend, [0.0, 1.0]) ≈

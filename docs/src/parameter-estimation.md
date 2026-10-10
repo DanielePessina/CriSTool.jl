@@ -9,7 +9,7 @@ experiments = load_measurements("measurements.csv")
 fit_specification = OptimisationSpec(bounds = (
     growth = (growth_coefficient = (1e-12, 1e-9), growth_order = (1.0, 4.0)),),
     algorithm = DE(N = 32, options = Options(iterations = 100, seed = 42)),
-    loss = logMLE())
+    loss = GaussianNLL())
 prepared_fit = prepare_fit(crystal_model, experiments, fit_specification;
     solver = MoM(), solve_options = (reltol = 1e-7,))
 fitted_result = fit(prepared_fit; threaded = true)
@@ -41,8 +41,8 @@ targets, not initial conditions. Callable kinetic laws require
 an explicit declaration that their rate does not depend on time. The package
 cannot infer that property from arbitrary user code.
 
-Gaussian `logMLE()` requires supplied positive variances for scored measurements.
-No noise is fitted and no missing variance is filled automatically. `mae()` does
+Gaussian `GaussianNLL()` requires supplied positive variances for scored measurements.
+No noise is fitted and no missing variance is filled automatically. `MeanAbsoluteError()` does
 not require variances. Named weights associate factors with observables across
 heterogeneous experiments; they are resolved and checked once by `prepare_fit`. Custom observables can use `observable_projections`
 at preparation without adding global methods.

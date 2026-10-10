@@ -8,7 +8,7 @@ acceptance threshold for the chosen discrepancy:
 using CriSTool, Distributions
 abc_specification = ABCSpec(
     priors = (growth = (growth_coefficient = Uniform(1e-12, 1e-9),),),
-    loss = mae(), target = 0.1, sampler = ABCDESampler(),
+    loss = MeanAbsoluteError(), target = 0.1, sampler = ABCDESampler(),
     n_particles = 128, n_generations = 100)
 abc_prepared = prepare_fit(crystal_model, experiments, abc_specification; solver = MoM())
 abc_posterior = fit(abc_prepared; threaded = true)

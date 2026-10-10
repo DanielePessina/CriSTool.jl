@@ -162,11 +162,11 @@ end
 @testset "Gold fixture: frozen loss and trajectories on the real CSV" begin
     # Frozen after the SI migration; change only with a deliberate model change.
     gold_model = CrystallisationModel(LysozymeSystem();
-        nucleation = nucl_CNT(ln_nucleation_prefactor = 38.0, surface_energy = 0.0006),
-        growth = growth_empirical(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
+        nucleation = CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 0.0006),
+        growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
     gold_bounds = (nucleation = (ln_nucleation_prefactor = (30.0, 45.0),),)
     gold_likelihood = prepare_fit(gold_model, data_fixture_runs, OptimisationSpec(bounds = gold_bounds, algorithm = nothing))
-    gold_error = prepare_fit(gold_model, data_fixture_runs, OptimisationSpec(bounds = gold_bounds, algorithm = nothing, loss = mae()))
+    gold_error = prepare_fit(gold_model, data_fixture_runs, OptimisationSpec(bounds = gold_bounds, algorithm = nothing, loss = MeanAbsoluteError()))
     @test loss(gold_likelihood, [38.0]) ≈ 3822.2905404364087 rtol = 1e-10
     @test loss(gold_error, [38.0]) ≈ 3.120095106302579 rtol = 1e-10
 

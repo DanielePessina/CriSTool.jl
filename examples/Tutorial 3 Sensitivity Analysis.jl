@@ -20,8 +20,8 @@ function main()
     # the composite paramaxis order [ln prefactor, surface energy, kg, g].
     base_p     = [38.0, 0.0007, 1e-9 / 60, 3.0]
     baseline_model = CrystallisationModel(LysozymeSystem();
-        nucleation = nucl_CNT(ln_nucleation_prefactor = base_p[1], surface_energy = base_p[2]),
-        growth = growth_empirical(growth_coefficient = base_p[3], growth_order = base_p[4]))
+        nucleation = CNTNucleation(ln_nucleation_prefactor = base_p[1], surface_energy = base_p[2]),
+        growth = EmpiricalGrowth(growth_coefficient = base_p[3], growth_order = base_p[4]))
     problem    = CrystallisationProblem(baseline_model,
         RunConditions(temperature = 293.15, concentration = 18.0); solver = MoM())
     save_grid  = 0.0:360.0:21600.0    # seconds

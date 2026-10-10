@@ -57,16 +57,10 @@ end
 function forwardsensitivity(solver::FiniteVol, CryProblem::CrystallisationProblem, saveat)
     CryProblem.operation isa BatchOperation ||
         throw(ArgumentError("forwardsensitivity currently supports batch operations; differentiate runsimulation for flow operations."))
-    CryProblem.kinetics_aggregationfunction isa noaggregation ||
-        throw(ArgumentError("FiniteVol forwardsensitivity currently supports noaggregation() only."))
-    CryProblem.kinetics_breakagefunction isa nobreakage ||
-        throw(ArgumentError("FiniteVol forwardsensitivity currently supports nobreakage() only."))
-    CryProblem.kinetics_growthfunction isa AbstractFPLengthGrowthFunction &&
-        throw(ArgumentError("FiniteVol forwardsensitivity does not support length-dependent growth."))
-    CryProblem.kinetics_growthfunction isa AbstractFPLengthDissolutionFunction &&
-        throw(ArgumentError("FiniteVol forwardsensitivity does not support length-dependent growth."))
-    CryProblem.kinetics_dissolutionfunction isa AbstractFPLengthDissolutionFunction &&
-        throw(ArgumentError("FiniteVol forwardsensitivity does not support length-dependent dissolution."))
+    _has_binary_sources(CryProblem) &&
+        throw(ArgumentError("FiniteVol forwardsensitivity does not support aggregation or breakage."))
+    _uses_length_rates(CryProblem) &&
+        throw(ArgumentError("FiniteVol forwardsensitivity does not support length-dependent growth or dissolution."))
 
     function HRFV_FLWmodel(dstdt, st, p, t)
 

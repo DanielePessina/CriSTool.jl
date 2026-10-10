@@ -5,8 +5,8 @@ using CriSTool, Distributions, Turing, Random
 
 function main()
     crystal_model = CrystallisationModel(LysozymeSystem();
-        nucleation = nucl_CNT(ln_nucleation_prefactor = 38.0, surface_energy = 0.0006),
-        growth = growth_empirical(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
+        nucleation = CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 0.0006),
+        growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
     measured_runs = load_measurements(joinpath(@__DIR__, "fake-experimental-dataset.csv"))
     selected_priors = (growth = (growth_order = Uniform(1.0, 4.0),),)
 

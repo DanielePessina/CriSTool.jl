@@ -82,11 +82,4 @@ Solubility at time `t = 0` under the temperature profile.
 saturation_concentration(sm::AbstractSolubilityModel, temp_profile) =
     saturation_concentration(sm, temp_profile, 0.0)
 
-# Aliases retained for callers that use the historical saturation vocabulary.
-# The canonical public vocabulary is now Solubility because these models return
-# c*(T), not S.
-const AbstractSaturationModel = AbstractSolubilityModel
-const ConstantSaturation = ConstantSolubility
-const PolynomialSaturation = PolynomialSolubility
-const CallableSaturation = CallableSolubility
-const lysozyme_saturation = lysozyme_solubility
+_is_time_invariant(::Union{ConstantSolubility, PolynomialSolubility}) = true

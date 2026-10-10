@@ -32,7 +32,7 @@ struct RelativeVariance{T <: Real} <: AbstractVarianceModel
 end
 
 """
-    logMLE(; weighting = (;), variance_model = MeasuredVariance(), relative_variance_floor = 1e-12)
+    GaussianNLL(; weighting = (;), variance_model = MeasuredVariance(), relative_variance_floor = 1e-12)
 
 Gaussian negative log likelihood summed over every scored measurement.
 
@@ -44,20 +44,20 @@ Fields:
 - `relative_variance_floor::Float64`: dimensionless minimum variance fraction
   relative to the squared observable magnitude
 """
-Base.@kwdef @concrete struct logMLE <: AbstractPELossFunction
+Base.@kwdef @concrete struct GaussianNLL <: AbstractPELossFunction
     weighting = (;)
     variance_model::AbstractVarianceModel = MeasuredVariance()
     relative_variance_floor::Float64 = 1e-12
 end
 
 """
-    mae(; weighting = (;))
+    MeanAbsoluteError(; weighting = (;))
 
 Mean absolute error, pooled over every scored measurement of each observable.
 
 Fields:
-- `weighting`: factor per observable, with the same forms as for `logMLE`.
+- `weighting`: factor per observable, with the same forms as for `GaussianNLL`.
 """
-Base.@kwdef @concrete struct mae <: AbstractPELossFunction
+Base.@kwdef @concrete struct MeanAbsoluteError <: AbstractPELossFunction
     weighting = (;)
 end

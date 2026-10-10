@@ -4,7 +4,6 @@
 Observable
 ObservableColumns
 CrystallisationExperiment
-AbstractExperiment
 initial_concentration
 experiments_from_table
 load_measurements
@@ -17,7 +16,7 @@ AbstractPELossFunction
 AbstractVarianceModel
 MeasuredVariance
 RelativeVariance
-logMLE
-mae
+GaussianNLL
+MeanAbsoluteError
 loss
 ```

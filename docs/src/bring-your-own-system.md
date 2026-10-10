@@ -21,7 +21,7 @@ custom_growth = CallableGrowth(
         max(supersaturation(context) - 1, 0)^parameters.order;
     parameters = (coefficient = 1e-9, order = 2.0))
 crystal_model = CrystallisationModel(material;
-    nucleation = nucl_empirical(log10_nucleation_prefactor = 8.0, nucleation_order = 2.0),
+    nucleation = EmpiricalNucleation(log10_nucleation_prefactor = 8.0, nucleation_order = 2.0),
     growth = custom_growth)
 ```
 

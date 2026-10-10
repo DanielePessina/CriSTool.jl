@@ -64,41 +64,13 @@ end
 function _validate_dqmom_problem(problem::CrystallisationProblem)
     _validate_dqmom_public_state(problem)
 
-    growthfunction = problem.kinetics_growthfunction
-    supported_growth = growthfunction isa AbstractFPScalarGrowthFunction ||
-                       growthfunction isa AbstractFPScalarDissolutionFunction ||
-                       growthfunction isa AbstractFPLengthGrowthFunction
-    supported_growth ||
-        throw(ArgumentError("DQMOM requires a scalar or length-dependent first-principles " *
-                            "growth function."))
-    growthfunction isa AbstractFPLengthDissolutionFunction &&
+    _is_length_law(problem.kinetics_dissolutionfunction) &&
         throw(ArgumentError("Length-dependent dissolution is not supported by DQMOM; " *
                             "use FiniteVol or WENO."))
-
-    dissolutionfunction = problem.kinetics_dissolutionfunction
-    dissolutionfunction isa AbstractFPLengthDissolutionFunction &&
-        throw(ArgumentError("Length-dependent dissolution is not supported by DQMOM; " *
-                            "use FiniteVol or WENO."))
-    dissolutionfunction isa AbstractFPScalarDissolutionFunction ||
-        throw(ArgumentError("DQMOM requires a scalar dissolution function or nodissolution()."))
-
-    aggregationfunction = problem.kinetics_aggregationfunction
-    supported_aggregation = aggregationfunction isa noaggregation ||
-                            aggregationfunction isa aggr_scalar ||
-                            aggregationfunction isa aggr_linear ||
-                            aggregationfunction isa aggr_linearvol ||
-                            aggregationfunction isa aggr_avg
-    supported_aggregation ||
-        throw(ArgumentError("Aggregation function $(typeof(aggregationfunction)) " *
-                            "has no validated DQMOM moment closure."))
-
-    breakagefunction = problem.kinetics_breakagefunction
-    supported_breakage = breakagefunction isa nobreakage ||
-                        breakagefunction isa breakage_empirical ||
-                        breakagefunction isa breakage_uniform
-    supported_breakage ||
-        throw(ArgumentError("Breakage function $(typeof(breakagefunction)) " *
-                            "has no validated DQMOM moment closure."))
+    for binary_law in (problem.kinetics_aggregationfunction, problem.kinetics_breakagefunction)
+        _has_moment_closure(binary_law) ||
+            throw(ArgumentError("$(typeof(binary_law)) has no validated DQMOM moment closure."))
+    end
     return problem
 end
 
@@ -367,7 +339,7 @@ function _dqmom_rhs_no_binary_n3!(destination,
                                      problem.volume_shape_factor *
                                      physical_volume_rate
     else
-        growth_context = problem.kinetics_growthfunction isa AbstractFPLengthGrowthFunction ?
+        growth_context = _is_length_law(problem.kinetics_growthfunction) ?
                          growth_rates :
                          net_growth_rate(problem.kinetics_growthfunction,
                                          parameters.gr,
@@ -528,8 +500,7 @@ function _dqmom_rhs!(destination,
 
     if problem.operation isa BatchOperation &&
        nquadrature == 3 &&
-       problem.kinetics_aggregationfunction isa noaggregation &&
-       problem.kinetics_breakagefunction isa nobreakage
+       !_has_binary_sources(problem)
         return _dqmom_rhs_no_binary_n3!(destination, state, parameters, time, problem)
     end
 
@@ -596,7 +567,7 @@ function _dqmom_rhs!(destination,
     physical_volume_rate = solver.weight_scale * solver.coordinate_scale^3 *
                             internal_third_moment_rate
 
-    growth_context = if problem.kinetics_growthfunction isa AbstractFPLengthGrowthFunction
+    growth_context = if _is_length_law(problem.kinetics_growthfunction)
         growth_rates
     else
         net_growth_rate(problem.kinetics_growthfunction,
@@ -643,8 +614,7 @@ function crystallisation_odeproblem(solver::DQMOM, problem::CrystallisationProbl
 
     n_solvent = length(propertynames(problem.initial_solvent_state))
     feed_population = _operation_feed_population(problem)
-    no_binary_sources = problem.kinetics_aggregationfunction isa noaggregation &&
-                        problem.kinetics_breakagefunction isa nobreakage
+    no_binary_sources = !_has_binary_sources(problem)
     # Static three-node path: SVector state + out-of-place RHS (like the QMOM
     # fast path), so Tsit5 runs fully unrolled static stages instead of
     # heap-backed Vector stages.  Restricted to the default concentration-only

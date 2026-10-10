@@ -3,18 +3,18 @@ import Turing: predict
 
 """Declare whether a custom loss represents a supplied-noise negative log likelihood."""
 is_likelihood(::AbstractPELossFunction) = false
-is_likelihood(::logMLE) = true
+is_likelihood(::GaussianNLL) = true
 
 """Named objective accounting. Custom losses default to a total and may extend this seam."""
 loss_terms(loss_function::AbstractPELossFunction, prepared_setup::LossSetup, parameter_values) =
     (; total = loss(loss_function, prepared_setup, parameter_values))
-function loss_terms(loss_function::Union{logMLE, mae}, prepared_setup::LossSetup, parameter_values)
+function loss_terms(loss_function::Union{GaussianNLL, MeanAbsoluteError}, prepared_setup::LossSetup, parameter_values)
     return NamedTuple{Tuple(prepared_setup.observable_names)}(
         Tuple(_loss_objectives(loss_function, prepared_setup, parameter_values)))
 end
 
 """
-    OptimisationSpec(; bounds, algorithm, loss=logMLE(), adtype=AutoForwardDiff(), searchoptions=(;))
+    OptimisationSpec(; bounds, algorithm, loss=GaussianNLL(), adtype=AutoForwardDiff(), searchoptions=(;))
 
 Select kinetic parameters by named `(lower, upper)` bounds and choose how they
 are optimised. `algorithm` is a Metaheuristics algorithm or an Optimization.jl
@@ -23,13 +23,13 @@ solver; `adtype` and `searchoptions` apply to Optimization.jl solvers only.
 Base.@kwdef struct OptimisationSpec{Bounds <: NamedTuple, Algorithm, Loss, AD, SearchOptions <: NamedTuple}
     bounds::Bounds
     algorithm::Algorithm
-    loss::Loss = logMLE()
+    loss::Loss = GaussianNLL()
     adtype::AD = AutoForwardDiff()
     searchoptions::SearchOptions = (;)
 end
 
 """
-    BayesianSpec(; priors, sampler=NUTS(), n_samples=1000, n_chains=1, loss=logMLE())
+    BayesianSpec(; priors, sampler=NUTS(), n_samples=1000, n_chains=1, loss=GaussianNLL())
 
 Select kinetic parameters by named univariate priors and sample their posterior
 with a Turing sampler. The likelihood uses supplied measurement variances; noise
@@ -40,12 +40,12 @@ Base.@kwdef struct BayesianSpec{Priors <: NamedTuple, Sampler, Loss}
     sampler::Sampler = Turing.NUTS()
     n_samples::Int = 1000
     n_chains::Int = 1
-    loss::Loss = logMLE()
+    loss::Loss = GaussianNLL()
 end
 
 """
     ABCSpec(; priors, target, sampler=ABCDESampler(), n_particles=1024,
-            n_generations=128, early_stop=false, loss=mae())
+            n_generations=128, early_stop=false, loss=MeanAbsoluteError())
 
 Select kinetic parameters by named priors and sample them by approximate
 Bayesian computation under an explicit finite discrepancy threshold `target`.
@@ -57,7 +57,7 @@ Base.@kwdef struct ABCSpec{Priors <: NamedTuple, Target <: Real, Sampler, Loss}
     n_particles::Int = 1024
     n_generations::Int = 128
     early_stop::Bool = false
-    loss::Loss = mae()
+    loss::Loss = MeanAbsoluteError()
 end
 
 _selected_tree(fit_specification::OptimisationSpec) = fit_specification.bounds
@@ -186,7 +186,7 @@ _model_experiment_problem(crystal_model, experiment_run, selected_solver, simula
 
 """Likelihood studies need supplied positive variances for every scored, weighted measurement."""
 _validate_likelihood_noise(::AbstractPELossFunction, prepared_setup::LossSetup) = nothing
-function _validate_likelihood_noise(likelihood::logMLE, prepared_setup::LossSetup)
+function _validate_likelihood_noise(likelihood::GaussianNLL, prepared_setup::LossSetup)
     likelihood.variance_model isa MeasuredVariance ||
         throw(ArgumentError("Likelihood studies require supplied measured variances; relative noise is not inferred."))
     for (experiment_index, experiment_run) in enumerate(prepared_setup.experiments)
