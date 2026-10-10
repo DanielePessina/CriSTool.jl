@@ -815,18 +815,8 @@ function crystallisation_odeproblem(problem::CrystallisationProblem{NuclF, GrF, 
     return ode_problem, time_step_solver
 end
 
-function _wrap_solution(problem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
-                                                          QMOM, NuP, GrP, BrP,
-                                                          AggP, TP},
-                        solution) where {NuclF <: AbstractNucleationFunction,
-                                         GrF <: AbstractGrowthFunction,
-                                         BrF <: AbstractBreakageFunction,
-                                         AggF <: AbstractAggregationFunction,
-                                         NuP <: AbstractVector{<:Real},
-                                         GrP <: AbstractVector{<:Real},
-                                         BrP <: AbstractVector{<:Real},
-                                         AggP <: AbstractVector{<:Real},
-                                         TP <: AbstractTemperature}
+function _wrap_solution(problem::CrystallisationProblem{<:Any, <:Any, <:Any, <:Any, QMOM},
+                        solution)
     n_moments = moment_count(problem.solver)
     n_solvent = length(propertynames(problem.initial_solvent_state))
     moment_matrix = Array(solution[1:n_moments, :])
@@ -882,27 +872,6 @@ function _wrap_solution(problem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
                                        diagnostics)
 end
 
-function _simulatecrystallisation(problem::CrystallisationProblem{NuclF, GrF, BrF,
-                                                                   AggF, QMOM,
-                                                                   NuP, GrP, BrP,
-                                                                   AggP, TP},
-                                  saveat; algorithm = nothing, solve_options::NamedTuple = (;),
-                                  callback_factory = nothing)::CrystallisationQMOMSolution where {
-                                      NuclF <: AbstractNucleationFunction,
-                                      GrF <: AbstractGrowthFunction,
-                                      BrF <: AbstractBreakageFunction,
-                                      AggF <: AbstractAggregationFunction,
-                                      NuP <: AbstractVector{<:Real},
-                                      GrP <: AbstractVector{<:Real},
-                                      BrP <: AbstractVector{<:Real},
-                                      AggP <: AbstractVector{<:Real},
-                                      TP <: AbstractTemperature}
-    ode_problem, time_step_solver = crystallisation_odeproblem(problem, saveat)
-    ode_solution = _solve_crystallisation_ode(problem, ode_problem,
-                                          algorithm === nothing ? time_step_solver : algorithm,
-                                          saveat; solve_options, callback_factory)
-    return _wrap_solution(problem, ode_solution)
-end
 
 """Reconstruct a saved QMOM rule at one trajectory index."""
 function quadrature(solution::CrystallisationQMOMSolution, time_index::Integer)

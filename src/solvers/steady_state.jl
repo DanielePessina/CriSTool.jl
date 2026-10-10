@@ -1,31 +1,115 @@
-"""Result of relaxing an autonomous MSMPR to a numerically checked steady state.
+"""
+    SteadyStateOptions(; relaxation_horizon=nothing, minimum_relaxation=0.0,
+                        residual_reltol=1e-10, residual_abstol=1e-12,
+                        residual_scales=nothing, autonomous=false,
+                        balance_reltol=1e-5)
 
-`physical_result` is the solver-specific result wrapper at the final saved
-state. Thus `observable_values`, `state_vars`, and `size_metrics` retain the
-same names as a transient solution while each trajectory contains one value.
-`final_state` uses the public physical solver coordinates; the native ODE state
-is retained in diagnostics. `residual` is the native ODE right-hand side;
-`scaled_residual` multiplies each component by the residence time and divides
-by its characteristic state scale.
-For discretized solvers, `diagnostics.population_density_diagnostics` records
-the raw density minimum, peak scale, negative-cell count, and machine-roundoff
-tolerance. Accepted undershoots remain in the raw state and are labeled in
-`diagnostics.physical_state_status`.
+Settings for an MSMPR steady-state relaxation, validated on construction.
+
+- `relaxation_horizon` (s): longest relaxation time; `nothing` uses 100
+  residence times in `solve_steadystate` and the template ODE span in prepared
+  inference.
+- `minimum_relaxation` (s): earliest time at which the residual stop may fire.
+- `residual_reltol`, `residual_abstol`: the run is converged when every scaled
+  RHS component is at most their sum.
+- `residual_scales`: optional positive per-state residual scales.
+- `autonomous`: declare that opaque profiles and user kinetics are time
+  invariant.
+- `balance_reltol`: accepted relative total-API flow-balance error.
+"""
+struct SteadyStateOptions
+    relaxation_horizon::Union{Nothing, Float64}
+    minimum_relaxation::Float64
+    residual_reltol::Float64
+    residual_abstol::Float64
+    residual_scales::Union{Nothing, Vector{Float64}}
+    autonomous::Bool
+    balance_reltol::Float64
+    function SteadyStateOptions(relaxation_horizon, minimum_relaxation,
+                                residual_reltol, residual_abstol,
+                                residual_scales, autonomous, balance_reltol)
+        isnothing(relaxation_horizon) ||
+            (relaxation_horizon isa Real && isfinite(relaxation_horizon) &&
+             relaxation_horizon > 0.0) ||
+            throw(ArgumentError("relaxation_horizon must be finite and strictly positive."))
+        minimum_relaxation isa Real && isfinite(minimum_relaxation) &&
+            minimum_relaxation >= 0.0 ||
+            throw(ArgumentError("minimum_relaxation must be finite and nonnegative."))
+        isnothing(relaxation_horizon) || minimum_relaxation <= relaxation_horizon ||
+            throw(ArgumentError("minimum_relaxation must not exceed relaxation_horizon."))
+        all(tolerance -> tolerance isa Real && isfinite(tolerance) && tolerance >= 0.0,
+            (residual_reltol, residual_abstol)) ||
+            throw(ArgumentError("Residual tolerances must be finite and nonnegative."))
+        residual_reltol + residual_abstol > 0.0 ||
+            throw(ArgumentError("At least one residual tolerance must be strictly positive."))
+        isnothing(residual_scales) ||
+            all(scale -> scale isa Real && isfinite(scale) && scale > 0.0, residual_scales) ||
+            throw(ArgumentError("residual_scales must contain finite positive state scales."))
+        autonomous isa Bool || throw(ArgumentError("autonomous must be Bool."))
+        balance_reltol isa Real && isfinite(balance_reltol) && balance_reltol > 0.0 ||
+            throw(ArgumentError("balance_reltol must be finite and strictly positive."))
+        return new(relaxation_horizon, minimum_relaxation, residual_reltol,
+                   residual_abstol,
+                   isnothing(residual_scales) ? nothing : collect(Float64, residual_scales),
+                   autonomous, balance_reltol)
+    end
+end
+
+function SteadyStateOptions(; relaxation_horizon = nothing, minimum_relaxation = 0.0,
+                            residual_reltol = 1e-10, residual_abstol = 1e-12,
+                            residual_scales = nothing, autonomous = false,
+                            balance_reltol = 1e-5)
+    return SteadyStateOptions(relaxation_horizon, minimum_relaxation, residual_reltol,
+                              residual_abstol, residual_scales, autonomous,
+                              balance_reltol)
+end
+
+# Compatibility for prepared inference, which still stores steady options as a
+# NamedTuple (`prepare_loss(...; steady_options)`). Remove both methods below
+# once `prepare_loss` / `PreparedExperiment` hold a `SteadyStateOptions`.
+_steady_state_options(options::SteadyStateOptions) = options
+function _steady_state_options(options::NamedTuple)
+    all(option -> option in fieldnames(SteadyStateOptions), keys(options)) ||
+        throw(ArgumentError("steady_options contains an unsupported option."))
+    return SteadyStateOptions(; options...)
+end
+_steady_option(options, name::Symbol, default) =
+    something(getfield(_steady_state_options(options), name), Some(default))
+
+"""
+Result of relaxing an autonomous MSMPR to a numerically checked steady state.
+
+Property access returns equilibrium values: `steady.concentration`,
+`steady.d43`, `steady.d32` and `steady.time` are scalars, `steady.moments` and
+`steady.numberdensity` are vectors, and named tuples such as
+`steady.solvent_state` hold scalars. The underlying one-sample physical solver
+result is `steady.solution`; `observable_values`, `state_vars` and
+`size_metrics` return its one-sample trajectories, so a steady result can be
+used wherever a transient result is expected.
+
+Own fields:
+- `solution`: one-sample solver result at the equilibrium time.
+- `residual`, `scaled_residual`: native ODE right-hand side and its components
+  multiplied by the residence time and divided by their state scale.
+- `hydraulics`: `(; volume, inflow, outflow, residence_time)`.
+- `product`: `(; dissolved_solute_flow, solid_mass_flow)` outlet flows (kg/s).
+- `diagnostics`: convergence (`converged`, residual norms and limit), physical
+  state, total-API balance and integration details. For discretised solvers,
+  `population_density_diagnostics` records the raw density minimum, peak scale,
+  negative-cell count and machine-roundoff tolerance; accepted undershoots stay
+  in the raw state and are labeled in `physical_state_status`.
+- `ode_stats`, `retcode`: from the relaxation solve.
+- `success`: solver, residual, physical and balance checks all passed.
 """
 @concrete struct CrystallisationSteadyStateSolution <: AbstractSolution
-    physical_result
-    final_state
+    solution
     residual
     scaled_residual
-    residual_norm
-    scaled_residual_norm
     hydraulics::NamedTuple
-    product_dissolved_solute_flow
-    product_solid_mass_flow
+    product::NamedTuple
     diagnostics::NamedTuple
     ode_stats
     retcode
-    converged::Bool
     success::Bool
 end
 
@@ -37,73 +121,48 @@ end
 function Base.showerror(io::IO, error::SteadyStateConvergenceError)
     result = error.solution
     print(io, "MSMPR steady-state solve failed: retcode=$(result.retcode), ",
-          "converged=$(result.converged), scaled residual=", result.scaled_residual_norm,
+          "converged=$(result.diagnostics.converged), scaled residual=",
+          result.diagnostics.scaled_residual_norm,
           ", physical status=", result.diagnostics.physical_state_status,
           ", flow balance valid=", result.diagnostics.balance_valid, ".")
 end
 
-function Base.getproperty(solution::CrystallisationSteadyStateSolution,
-                          name::Symbol)
-    if name in fieldnames(typeof(solution))
-        return getfield(solution, name)
-    end
-    return getproperty(getfield(solution, :physical_result), name)
+# A steady result has one saved sample: trajectories collapse to that value
+# and population-by-time matrices to their single column.
+_steady_point_value(value::AbstractVector) = length(value) == 1 ? only(value) : value
+_steady_point_value(value::AbstractMatrix) = size(value, 2) == 1 ? vec(value) : value
+_steady_point_value(value::NamedTuple) = map(_steady_point_value, value)
+_steady_point_value(value) = value
+
+function Base.getproperty(steady::CrystallisationSteadyStateSolution, name::Symbol)
+    name in fieldnames(CrystallisationSteadyStateSolution) && return getfield(steady, name)
+    return _steady_point_value(getproperty(getfield(steady, :solution), name))
 end
 
-function Base.propertynames(solution::CrystallisationSteadyStateSolution,
-                            private::Bool = false)
-    own_names = fieldnames(typeof(solution))
-    result_names = propertynames(getfield(solution, :physical_result), private)
-    return Tuple(unique((own_names..., result_names...)))
-end
+Base.propertynames(steady::CrystallisationSteadyStateSolution, private::Bool = false) =
+    Tuple(unique((fieldnames(CrystallisationSteadyStateSolution)...,
+                  propertynames(getfield(steady, :solution), private)...)))
 
-"""Named state trajectories carried by a one-point steady result."""
-function state_vars(solution::CrystallisationSteadyStateSolution)
-    result = solution.physical_result
-    named_state = hasmethod(state_vars, Tuple{typeof(result)}) ?
-                  state_vars(result) :
-                  merge(result.solvent_state, reactor_vars(result))
-    named_state = merge(named_state, reactor_vars(solution))
-    return named_state
-end
-
-reactor_vars(solution::CrystallisationSteadyStateSolution) =
-    (; volume = fill(solution.hydraulics.volume,
-                     length(solution.physical_result.time)))
-
-"""Particle-size metrics exposed by the solver-specific one-point result."""
-function size_metrics(solution::CrystallisationSteadyStateSolution)
-    result = solution.physical_result
-    if hasmethod(size_metrics, Tuple{typeof(result)})
-        return size_metrics(result)
-    end
-    return (; d10 = result.d10,
-            d32 = result.d32,
-            d43 = result.d43,
-            moment2 = result.moment2)
-end
+time(steady::CrystallisationSteadyStateSolution) = time(steady.solution)
+state_vars(steady::CrystallisationSteadyStateSolution) = state_vars(steady.solution)
+reactor_vars(steady::CrystallisationSteadyStateSolution) = reactor_vars(steady.solution)
+size_metrics(steady::CrystallisationSteadyStateSolution) = size_metrics(steady.solution)
 
 """
-    observable_values(solution::CrystallisationSteadyStateSolution, name::Symbol)
+    observable_values(steady::CrystallisationSteadyStateSolution, name::Symbol)
 
-Return a one-element trajectory for scalar state or size observables. Resolved
-population fields retain their population-by-time matrix representation.
+One-sample trajectory of a state or size observable at the equilibrium.
+Resolved population fields keep their population-by-time matrix shape.
 """
-function observable_values(solution::CrystallisationSteadyStateSolution,
-                           name::Symbol)
-    named_values = merge(state_vars(solution), reactor_vars(solution),
-                         size_metrics(solution))
-    hasproperty(named_values, name) ||
-        throw(ArgumentError("No simulated observable named :$name for $(typeof(solution))."))
-    value = getproperty(named_values, name)
-    return value isa AbstractArray ? value : [value]
-end
+observable_values(steady::CrystallisationSteadyStateSolution, name::Symbol) =
+    observable_values(steady.solution, name)
 
 function _steady_state_autonomy_issues(problem::CrystallisationProblem)
     operation = problem.operation
     issues = Symbol[]
     operation.inflow isa Real || push!(issues, :inflow)
-    all(value -> value isa Real, values(operation.feed.solvent_state)) ||
+    operation.feed.concentration isa Real &&
+        all(value -> value isa Real, values(operation.feed.solvent_state)) ||
         push!(issues, :feed_profile)
     problem.temp_profile isa ConstantTemperature || push!(issues, :temperature_profile)
     if !(problem.saturation_model isa ConstantSolubility ||
@@ -179,8 +238,7 @@ function _steady_state_reference_scales(problem, ode_problem, user_scales)
             scales[state_index] = max(scales[state_index], abs(feed_population[population_index]))
         end
     end
-    feed_concentration = _operation_feed_values(problem.operation.feed,
-                                                 ode_problem.tspan[1]).concentration
+    feed_concentration = _feed_concentration(problem.operation.feed, ode_problem.tspan[1])
     concentration_index = _solvent_state_index(problem, :concentration)
     scales[concentration_index] = max(scales[concentration_index],
                                        abs(feed_concentration))
@@ -298,7 +356,6 @@ function _steady_product_diagnostics(problem, raw_state, physical_result,
                                      simulation_time)
     operation = problem.operation::MSMPROperation
     flows = operation_flows(operation, simulation_time)
-    feed_values = _operation_feed_values(operation.feed, simulation_time)
     volume = reactor_volume(problem, raw_state)
     residence_time = volume / flows.inflow
     moment3 = _steady_moment3(problem, raw_state, physical_result)
@@ -306,7 +363,7 @@ function _steady_product_diagnostics(problem, raw_state, physical_result,
     feed_moment3 = _steady_feed_moment3(problem, feed_population)
     concentration = raw_state[_solvent_state_index(problem, :concentration)]
     density = problem.crystal_density * problem.volume_shape_factor
-    inlet_dissolved_flow = flows.inflow * feed_values.concentration
+    inlet_dissolved_flow = flows.inflow * _feed_concentration(operation.feed, simulation_time)
     outlet_dissolved_flow = flows.outflow * concentration
     inlet_solid_flow = flows.inflow * density * feed_moment3
     outlet_solid_flow = flows.outflow * density * moment3
@@ -323,8 +380,8 @@ function _steady_product_diagnostics(problem, raw_state, physical_result,
     relative_balance_error = abs(balance_residual) / balance_scale
     hydraulics = (; volume, inflow = flows.inflow, outflow = flows.outflow,
                     residence_time)
-    product = (; dissolved_solute = outlet_dissolved_flow,
-                 solid_mass = outlet_solid_flow)
+    product = (; dissolved_solute_flow = outlet_dissolved_flow,
+                 solid_mass_flow = outlet_solid_flow)
     balance = (; inlet_dissolved_solute = inlet_dissolved_flow,
                  inlet_solid_mass = inlet_solid_flow,
                  outlet_dissolved_solute = outlet_dissolved_flow,
@@ -338,73 +395,48 @@ function _steady_product_diagnostics(problem, raw_state, physical_result,
     return hydraulics, product, balance
 end
 
-function _steady_option(options::NamedTuple, name::Symbol, default)
-    return hasproperty(options, name) ? getproperty(options, name) : default
-end
-
 _default_steady_relaxation_horizon(problem) =
     100.0 * (problem.operation.volume / operation_flows(problem.operation, 0.0).inflow)
 
 """
     _solve_steadystate_ode(problem, ode_problem, algorithm;
-                           steady_options=(;), solve_options=(;),
+                           steady_options=SteadyStateOptions(), solve_options=(;),
                            callback_factory=nothing)
 
 Internal prepared-loss entry point. `ode_problem` is authoritative: in
 particular, its `p` may be a candidate-specific `ComponentArray` with Dual
-values. The returned result records failure in `success`, `converged`, and
-`diagnostics` instead of discarding the solver retcode.
+values. Without an explicit `relaxation_horizon` the ODE span is the horizon.
+The returned result records failure in `success` and `diagnostics` instead of
+discarding the solver retcode.
 """
 function _solve_steadystate_ode(problem::CrystallisationProblem, ode_problem,
                                 algorithm;
-                                steady_options::NamedTuple = (;),
+                                steady_options = SteadyStateOptions(),
                                 solve_options::NamedTuple = (;),
                                 callback_factory = nothing,
                                 reconstruction_failure_handler = nothing)
-    allowed_options = (:relaxation_horizon, :minimum_relaxation,
-                       :residual_reltol, :residual_abstol, :residual_scales,
-                       :autonomous, :balance_reltol)
-    all(option -> option in allowed_options, keys(steady_options)) ||
-        throw(ArgumentError("steady_options contains an unsupported option."))
-
-    explicitly_autonomous = _steady_option(steady_options, :autonomous, false)
-    explicitly_autonomous isa Bool ||
-        throw(ArgumentError("steady_options.autonomous must be Bool."))
-    _validate_steadystate_problem(problem; autonomous = explicitly_autonomous)
+    options = _steady_state_options(steady_options)
+    _validate_steadystate_problem(problem; autonomous = options.autonomous)
 
     start_time, original_end_time = ode_problem.tspan
-    default_horizon = original_end_time - start_time
-    horizon = _steady_option(steady_options, :relaxation_horizon, default_horizon)
-    horizon isa Real && isfinite(horizon) && horizon > 0.0 ||
-        throw(ArgumentError("relaxation_horizon must be finite and strictly positive."))
+    horizon = something(options.relaxation_horizon, original_end_time - start_time)
+    options.minimum_relaxation <= horizon ||
+        throw(ArgumentError("minimum_relaxation must lie between zero and relaxation_horizon."))
     end_time = start_time + horizon
     active_ode_problem = end_time == original_end_time ? ode_problem :
                          remake(ode_problem; tspan = (start_time, end_time))
 
-    minimum_relaxation = _steady_option(steady_options, :minimum_relaxation, 0.0)
-    minimum_relaxation isa Real && isfinite(minimum_relaxation) &&
-        minimum_relaxation >= 0.0 && minimum_relaxation <= horizon ||
-        throw(ArgumentError("minimum_relaxation must lie between zero and relaxation_horizon."))
-    residual_reltol = _steady_option(steady_options, :residual_reltol, 1e-10)
-    residual_abstol = _steady_option(steady_options, :residual_abstol, 1e-12)
-    all(tolerance -> tolerance isa Real && isfinite(tolerance) && tolerance >= 0.0,
-        (residual_reltol, residual_abstol)) ||
-        throw(ArgumentError("Residual tolerances must be finite and nonnegative."))
-    residual_reltol + residual_abstol > 0.0 ||
-        throw(ArgumentError("At least one residual tolerance must be strictly positive."))
-    balance_reltol = _steady_option(steady_options, :balance_reltol, 1e-5)
-    balance_reltol isa Real && isfinite(balance_reltol) && balance_reltol > 0.0 ||
-        throw(ArgumentError("balance_reltol must be finite and strictly positive."))
-
+    residual_limit = options.residual_reltol + options.residual_abstol
     flow = operation_flows(problem.operation, start_time).inflow
-    volume = problem.operation.volume
-    residence_time = volume / flow
-    supplied_residual_scales = _steady_option(steady_options, :residual_scales, nothing)
-    reference_scales = _steady_state_reference_scales(problem, active_ode_problem, supplied_residual_scales)
-    shared_population_scale = problem.solver isa AbstractDiscretisedSolver && supplied_residual_scales === nothing
+    residence_time = problem.operation.volume / flow
+    reference_scales = _steady_state_reference_scales(problem, active_ode_problem,
+                                                      options.residual_scales)
+    shared_population_scale = problem.solver isa AbstractDiscretisedSolver &&
+                              isnothing(options.residual_scales)
     convergence_callback = _steady_autostop_callback(
         problem, active_ode_problem, reference_scales, residence_time,
-        minimum_relaxation, residual_reltol, residual_abstol; shared_population_scale)
+        options.minimum_relaxation, options.residual_reltol, options.residual_abstol;
+        shared_population_scale)
 
     combined_callback_factory = ode_problem_for_solve -> begin
         custom_callback = callback_factory === nothing ? nothing :
@@ -416,7 +448,7 @@ function _solve_steadystate_ode(problem::CrystallisationProblem, ode_problem,
     # and a hydraulic step bound; explicit caller solve options still win.
     steady_solve_options = merge((;
         reltol = min(problem.solver.reltol,
-            (residual_reltol + residual_abstol) / (100 * sqrt(length(ode_problem.u0)))),
+            residual_limit / (100 * sqrt(length(ode_problem.u0)))),
         dtmax = residence_time / 4), solve_options)
     raw_solution = _solve_crystallisation_ode(
         problem, active_ode_problem, algorithm, [end_time]; solve_options = steady_solve_options,
@@ -425,19 +457,14 @@ function _solve_steadystate_ode(problem::CrystallisationProblem, ode_problem,
     final_ode_state = raw_solution.u[end]
     raw_state = collect(final_ode_state)
     final_time = raw_solution.t[end]
-    actual_parameters = raw_solution.prob.p
     residual, scaled_residual = _steady_scaled_residual(
-        problem, active_ode_problem, final_ode_state, actual_parameters, final_time,
+        problem, active_ode_problem, final_ode_state, raw_solution.prob.p, final_time,
         residence_time, reference_scales; shared_population_scale)
-    residual_norm = norm(residual, Inf)
     scaled_residual_norm = maximum(scaled_residual)
     solver_success = OrdinaryDiffEq.SciMLBase.successful_retcode(raw_solution.retcode)
-    residual_limit = residual_reltol + residual_abstol
     converged = solver_success && all(isfinite, scaled_residual) &&
                 scaled_residual_norm <= residual_limit
 
-    applicable(_wrap_solution, problem, raw_solution) ||
-        throw(ArgumentError("No physical result wrapper is available for $(typeof(problem.solver)) with the selected kinetics."))
     final_sample_index = lastindex(raw_solution.u)
     equilibrium_sample = OrdinaryDiffEq.SciMLBase.solution_slice(raw_solution,
         final_sample_index:final_sample_index)
@@ -448,45 +475,36 @@ function _solve_steadystate_ode(problem::CrystallisationProblem, ode_problem,
         problem, raw_state, physical_result)
     hydraulics, product, balance = _steady_product_diagnostics(
         problem, raw_state, physical_result, final_time)
-    balance_valid = balance.relative_error <= balance_reltol
-    successful = solver_success && converged && physical_valid && balance_valid
-    population_density_diagnostics = _steady_population_density_diagnostics(problem,
-                                                                             raw_state)
-    diagnostics = (; converged, residual_norm, scaled_residual_norm, residual_limit,
+    balance_valid = balance.relative_error <= options.balance_reltol
+    diagnostics = (; converged,
+                    residual_norm = norm(residual, Inf),
+                    scaled_residual_norm, residual_limit,
                     residual_scales = reference_scales,
                     population_scaling = shared_population_scale ? :density_peak : :per_component,
                     physical_state_valid = physical_valid,
                     physical_state_status = physical_status,
-                    population_density_diagnostics,
+                    population_density_diagnostics =
+                        _steady_population_density_diagnostics(problem, raw_state),
                     total_api_balance = balance,
-                    balance_reltol,
+                    balance_reltol = options.balance_reltol,
                     balance_valid,
                     equilibrium_time = final_time,
                     ode_final_state = raw_state,
                     integration_options = steady_solve_options,
                     solver_success)
 
-    return CrystallisationSteadyStateSolution(physical_result, physical_result.final_state,
-                                               residual, scaled_residual,
-                                               residual_norm,
-                                               scaled_residual_norm,
-                                               hydraulics,
-                                               product.dissolved_solute,
-                                               product.solid_mass,
-                                               diagnostics,
-                                               raw_solution.stats,
-                                               raw_solution.retcode,
-                                               converged,
-                                               successful)
+    return CrystallisationSteadyStateSolution(physical_result, residual, scaled_residual,
+                                               hydraulics, product, diagnostics,
+                                               raw_solution.stats, raw_solution.retcode,
+                                               solver_success && converged &&
+                                                   physical_valid && balance_valid)
 end
 
 """
     solve_steadystate(problem::CrystallisationProblem;
-                      initial_guess=nothing, relaxation_horizon=nothing,
-                      minimum_relaxation=0.0, residual_reltol=1e-10,
-                      residual_abstol=1e-12, residual_scales=nothing,
-                      solve_options=(;), algorithm=nothing,
-                      callback_factory=nothing, autonomous=false)
+                      options=SteadyStateOptions(), initial_guess=nothing,
+                      algorithm=nothing, solve_options=(;),
+                      callback_factory=nothing)
 
 Relax a constant, autonomous fixed-volume MSMPR to a stable steady state.
 The solver integrates the generated ODE and stops early only when the scaled
@@ -494,31 +512,23 @@ full-state RHS residual is within tolerance. It returns a distinct
 `CrystallisationSteadyStateSolution`; `success` is false if the relaxation
 horizon, residual, physical constraints, or total-API flow balance fails.
 If those checks fail, the direct call throws `SteadyStateConvergenceError`,
-which carries the unsuccessful result and its diagnostics. All built-in state
-and size observables contain one value on the result.
+which carries the unsuccessful result and its diagnostics. Property access on
+the result gives equilibrium values (`steady.concentration`, `steady.d43`).
 
-Opaque time profiles and user-defined kinetics require `autonomous=true` as an
-explicit declaration that their behavior is time invariant. Batch and
-fed-batch problems remain transient `runsimulation` workflows.
+Opaque time profiles and user-defined kinetics require
+`SteadyStateOptions(autonomous = true)` as an explicit declaration that their
+behavior is time invariant. Batch and fed-batch problems remain transient
+`runsimulation` workflows.
 """
 function solve_steadystate(problem::CrystallisationProblem;
+                           options::SteadyStateOptions = SteadyStateOptions(),
                            initial_guess::Union{Nothing, AbstractVector} = nothing,
-                           relaxation_horizon = nothing,
-                           minimum_relaxation::Real = 0.0,
-                           residual_reltol::Real = 1e-10,
-                           residual_abstol::Real = 1e-12,
-                           residual_scales = nothing,
-                           solve_options::NamedTuple = (;),
                            algorithm = nothing,
-                           callback_factory = nothing,
-                           autonomous::Bool = false,
-                           balance_reltol::Real = 1e-5)
-    _validate_steadystate_problem(problem; autonomous)
-    horizon = isnothing(relaxation_horizon) ? _default_steady_relaxation_horizon(problem) :
-              relaxation_horizon
-    horizon isa Real && isfinite(horizon) && horizon > 0.0 ||
-        throw(ArgumentError("relaxation_horizon must be finite and strictly positive."))
-    minimum_relaxation <= horizon ||
+                           solve_options::NamedTuple = (;),
+                           callback_factory = nothing)
+    _validate_steadystate_problem(problem; autonomous = options.autonomous)
+    horizon = something(options.relaxation_horizon, _default_steady_relaxation_horizon(problem))
+    options.minimum_relaxation <= horizon ||
         throw(ArgumentError("minimum_relaxation must not exceed relaxation_horizon."))
 
     solve_problem = if isnothing(initial_guess)
@@ -531,17 +541,9 @@ function solve_steadystate(problem::CrystallisationProblem;
     end
     ode_problem, default_algorithm = crystallisation_odeproblem(
         solve_problem, (0.0, horizon))
-    steady_options = (; relaxation_horizon = horizon,
-                       minimum_relaxation,
-                       residual_reltol,
-                       residual_abstol,
-                       residual_scales,
-                       autonomous,
-                       balance_reltol)
-    solution = _solve_steadystate_ode(
-        solve_problem, ode_problem,
-        algorithm === nothing ? default_algorithm : algorithm;
-        steady_options, solve_options, callback_factory)
-    solution.success || throw(SteadyStateConvergenceError(solution))
-    return solution
+    steady = _solve_steadystate_ode(
+        solve_problem, ode_problem, something(algorithm, default_algorithm);
+        steady_options = options, solve_options, callback_factory)
+    steady.success || throw(SteadyStateConvergenceError(steady))
+    return steady
 end

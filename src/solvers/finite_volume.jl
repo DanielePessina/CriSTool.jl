@@ -68,8 +68,6 @@
     return flux
 end
 
-@inline _mesh_reactor_volume(problem, state) = reactor_volume(problem, state)
-
 """Boundary solid-mass flow samples using the exact FV face fluxes.
 
 The signed lower and upper flows are positive out of the size domain and use
@@ -117,7 +115,7 @@ function _mesh_boundary_flow_state(solver::FiniteVol, problem, ode_solution)
                                            nucleation_rate_value)
         end
 
-        reactor_volume_value = _mesh_reactor_volume(problem, numerical_state)
+        reactor_volume_value = reactor_volume(problem, numerical_state)
         lower_mass_flow[time_index] = -flux_cache[1] * lower_length^3 *
                                       mass_scale * reactor_volume_value
         upper_mass_flow[time_index] = flux_cache[end] * upper_length^3 *
@@ -128,23 +126,41 @@ function _mesh_boundary_flow_state(solver::FiniteVol, problem, ode_solution)
               size_boundary_upper_solid_mass_flow = upper_mass_flow)
 end
 
-"""
-    _simulatecrystallisation(CryProblem::CrystallisationProblem{..., FiniteVol, ...}, saveat) -> CrystallisationFVSolution
+"""Physical mesh solution shared by the `FiniteVol` and `WENO` solvers."""
+function _wrap_solution(problem::CrystallisationProblem{<:Any, <:Any, <:Any, <:Any,
+                                                        <:Union{FiniteVol, WENO}},
+                        ode_solution; boundary_flow_state = nothing)
+    cell_centre = problem.solver.cell_centre
+    nd_matrix = ode_solution[_population_state_range(problem), :]
+    vol_weighted_dens = volumeweighteddensity(cell_centre, nd_matrix,
+                                              problem.volume_shape_factor)
+    moments = _momentsizes(cell_centre, nd_matrix)
+    solvent_solution_state = _solvent_solution_state(problem, ode_solution)
+    reactor_state = merge(_reactor_solution_state(problem, ode_solution),
+                          something(boundary_flow_state,
+                                    _mesh_boundary_flow_state(problem.solver, problem,
+                                                              ode_solution)))
+    return CrystallisationFVSolution(ode_solution.t,
+                                     solvent_solution_state.concentration,
+                                     nd_matrix,
+                                     vol_weighted_dens,
+                                     quantilecalculator(cell_centre, vol_weighted_dens, 0.1),
+                                     quantilecalculator(cell_centre, vol_weighted_dens, 0.5),
+                                     quantilecalculator(cell_centre, vol_weighted_dens, 0.9),
+                                     moments.d10,
+                                     moments.d32,
+                                     moments.d43,
+                                     moments.moment2,
+                                     solvent_solution_state,
+                                     vec(ode_solution[:, end]),
+                                     ode_solution.stats,
+                                     OrdinaryDiffEq.SciMLBase.successful_retcode(ode_solution.retcode),
+                                     reactor_state)
+end
 
-Simulate crystallisation using Finite Volume solver with scalar growth.
+"""Build the high-resolution FV ODE for scalar growth."""
 
-Internal function that solves the population balance equation using high-resolution
-finite volume method with flux limiters.
-
-# Arguments
-- `CryProblem`: Crystallisation problem with FiniteVol solver and scalar growth function
-- `saveat`: Time points at which to save solution
-
-# Returns
-- `CrystallisationFVSolution` containing time, concentration, number density, and size quantiles
-"""
-
-    function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
+function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
                                                                       FiniteVol, NuP, GrP,
            BrP, AggP, TP, SM, SS, SD, DissF, DissP},
                                    saveat) where {NuclF <:
@@ -323,110 +339,9 @@ finite volume method with flux limiters.
                                         step_limiter = CFLcallback);
     return (ODEprob, tstep_solver)
 end
-function _wrap_solution(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
-                                                                       FiniteVol, NuP, GrP,
-                                                                       BrP, AggP, TP},
-                                    sol; boundary_flow_state = nothing) where {NuclF <:
-                                                                              AbstractNucleationFunction,
-                                                                              GrF <:
-                                                                              Union{AbstractFPScalarGrowthFunction,
-                                                                                    AbstractFPScalarDissolutionFunction},
-                                                                              BrF <:
-                                                                              AbstractBreakageFunction,
-                                                                              AggF <:
-                                                                              AbstractAggregationFunction,
-                                                                              NuP <:
-                                                                              AbstractVector{<:Real},
-                                                                              GrP <:
-                                                                              AbstractVector{<:Real},
-                                                                              BrP <:
-                                                                              AbstractVector{<:Real},
-                                                                              AggP <:
-                                                                              AbstractVector{<:Real},
-                                                                              TP <:
-                                                                              AbstractTemperature}
 
-    nd_matrix = sol[_population_state_range(CryProblem), :]
-    vol_weighted_dens = volumeweighteddensity(CryProblem.solver.cell_centre,
-                                              nd_matrix,
-                                              CryProblem.volume_shape_factor)
-    moments = _momentsizes(CryProblem.solver.cell_centre, nd_matrix)
-    solvent_solution_state = _solvent_solution_state(CryProblem, sol)
-    reactor_state = merge(_reactor_solution_state(CryProblem, sol),
-                          boundary_flow_state === nothing ?
-                              _mesh_boundary_flow_state(CryProblem.solver, CryProblem, sol) :
-                              boundary_flow_state)
-
-    return CrystallisationFVSolution(sol.t,
-                                     solvent_solution_state.concentration,
-                                     nd_matrix,
-                                     vol_weighted_dens,
-                                     quantilecalculator(CryProblem.solver.cell_centre,
-                                                        vol_weighted_dens,
-                                                        0.1),
-                                     quantilecalculator(CryProblem.solver.cell_centre,
-                                                        vol_weighted_dens,
-                                                        0.5),
-                                     quantilecalculator(CryProblem.solver.cell_centre,
-                                                        vol_weighted_dens,
-                                                        0.9),
-                                     moments.d10,
-                                     moments.d32,
-                                     moments.d43,
-                                     moments.moment2,
-                                     solvent_solution_state,
-                                     vec(sol[:, end]),
-                                     sol.stats,
-                                     OrdinaryDiffEq.SciMLBase.successful_retcode(sol.retcode),
-                                     reactor_state)
-end
-function _simulatecrystallisation(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
-                                                                      FiniteVol, NuP, GrP,
-                                                                      BrP, AggP, TP},
-                                   saveat; algorithm = nothing, solve_options::NamedTuple = (;),
-                                  callback_factory = nothing)::CrystallisationFVSolution where {NuclF <:
-                                                                             AbstractNucleationFunction,
-                                                                             GrF <:
-                                                                             Union{AbstractFPScalarGrowthFunction,
-                                                                                   AbstractFPScalarDissolutionFunction},
-                                                                             BrF <:
-                                                                             AbstractBreakageFunction,
-                                                                             AggF <:
-                                                                             AbstractAggregationFunction,
-                                                                             NuP <:
-                                                                             AbstractVector{<:Real},
-                                                                             GrP <:
-                                                                             AbstractVector{<:Real},
-                                                                             BrP <:
-                                                                             AbstractVector{<:Real},
-                                                                             AggP <:
-                                                                             AbstractVector{<:Real},
-                                                                             TP <:
-                                                                             AbstractTemperature}
-
-    ODEprob, tstep_solver = crystallisation_odeproblem(CryProblem, saveat)
-    ODEsol = _solve_crystallisation_ode(CryProblem, ODEprob,
-                                          algorithm === nothing ? tstep_solver : algorithm,
-                                          saveat; solve_options, callback_factory)
-    return _wrap_solution(CryProblem, ODEsol)
-end
-
-"""
-    _simulatecrystallisation(CryProblem::CrystallisationProblem{..., FiniteVol, ...}, saveat) -> CrystallisationFVSolution
-
-Simulate crystallisation using Finite Volume solver with length-dependent growth.
-
-Internal function that solves the population balance equation using high-resolution
-finite volume method with size-dependent growth rates.
-
-# Arguments
-- `CryProblem`: Crystallisation problem with FiniteVol solver and length-based growth function
-- `saveat`: Time points at which to save solution
-
-# Returns
-- `CrystallisationFVSolution` containing time, concentration, number density, and size quantiles
-"""
-    function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
+"""Build the FV ODE for length-dependent (mesh-aligned) growth."""
+function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
                                                                       FiniteVol, NuP, GrP,
                                                                       BrP, AggP, TP},
                                    saveat) where {NuclF <:
@@ -557,93 +472,4 @@ finite volume method with size-dependent growth rates.
     tstep_solver = _resolve_timestepping_algorithm(CryProblem.solver, :ssprk43;
                                         step_limiter = CFLcallback);
     return (ODEprob, tstep_solver)
-end
-function _wrap_solution(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
-                                                                      FiniteVol, NuP, GrP,
-                                                                      BrP, AggP, TP},
-                                   sol; boundary_flow_state = nothing) where {NuclF <:
-                                                                             AbstractNucleationFunction,
-                                                                             GrF <:
-                                                                             Union{AbstractFPLengthGrowthFunction,
-                                                                                   AbstractFPLengthDissolutionFunction},
-                                                                             BrF <:
-                                                                             AbstractBreakageFunction,
-                                                                             AggF <:
-                                                                             AbstractAggregationFunction,
-                                                                             NuP <:
-                                                                             AbstractVector{<:Real},
-                                                                             GrP <:
-                                                                             AbstractVector{<:Real},
-                                                                             BrP <:
-                                                                             AbstractVector{<:Real},
-                                                                             AggP <:
-                                                                             AbstractVector{<:Real},
-                                                                             TP <:
-                                                                             AbstractTemperature}
-
-    nd_matrix = sol[_population_state_range(CryProblem), :]
-    vol_weighted_dens = volumeweighteddensity(CryProblem.solver.cell_centre,
-                                              nd_matrix,
-                                              CryProblem.volume_shape_factor)
-    moments = _momentsizes(CryProblem.solver.cell_centre, nd_matrix)
-    solvent_solution_state = _solvent_solution_state(CryProblem, sol)
-    reactor_state = merge(_reactor_solution_state(CryProblem, sol),
-                          boundary_flow_state === nothing ?
-                              _mesh_boundary_flow_state(CryProblem.solver, CryProblem, sol) :
-                              boundary_flow_state)
-
-    return CrystallisationFVSolution(sol.t,
-                                     solvent_solution_state.concentration,
-                                     nd_matrix,
-                                     vol_weighted_dens,
-                                     quantilecalculator(CryProblem.solver.cell_centre,
-                                                        vol_weighted_dens,
-                                                        0.1),
-                                     quantilecalculator(CryProblem.solver.cell_centre,
-                                                        vol_weighted_dens,
-                                                        0.5),
-                                     quantilecalculator(CryProblem.solver.cell_centre,
-                                                        vol_weighted_dens,
-                                                        0.9),
-                                     moments.d10,
-                                     moments.d32,
-                                     moments.d43,
-                                     moments.moment2,
-                                     solvent_solution_state,
-                                     vec(sol[:, end]),
-                                     sol.stats,
-                                     OrdinaryDiffEq.SciMLBase.successful_retcode(sol.retcode),
-                                     reactor_state)
-end
-function _simulatecrystallisation(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
-                                                                      FiniteVol, NuP, GrP,
-                                                                      BrP, AggP, TP},
-                                   saveat; algorithm = nothing, solve_options::NamedTuple = (;),
-                                  callback_factory = nothing)::CrystallisationFVSolution where {NuclF <:
-                                                                             AbstractNucleationFunction,
-                                                                             GrF <:
-                                                                             Union{AbstractFPLengthGrowthFunction,
-                                                                                   AbstractFPLengthDissolutionFunction},
-                                                                             BrF <:
-                                                                             AbstractBreakageFunction,
-                                                                             AggF <:
-                                                                             AbstractAggregationFunction,
-                                                                             NuP <:
-                                                                             AbstractVector{<:Real},
-                                                                             GrP <:
-                                                                             AbstractVector{<:Real},
-                                                                             BrP <:
-                                                                             AbstractVector{<:Real},
-                                                                             AggP <:
-                                                                             AbstractVector{<:Real},
-                                                                             TP <:
-                                                                             AbstractTemperature}
-    # Pre-allocate flux cache using DiffCache for ForwardDiff compatibility
-    _flux_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 1))
-
-    ODEprob, tstep_solver = crystallisation_odeproblem(CryProblem, saveat)
-    ODEsol = _solve_crystallisation_ode(CryProblem, ODEprob,
-                                          algorithm === nothing ? tstep_solver : algorithm,
-                                          saveat; solve_options, callback_factory)
-    return _wrap_solution(CryProblem, ODEsol)
 end

@@ -518,20 +518,6 @@ function _dqmom_rhs!(destination,
                      state,
                      parameters,
                      time,
-                     problem::CrystallisationProblem)
-    feed_population = _operation_feed_population(problem)
-    return _dqmom_rhs!(destination,
-                       state,
-                       parameters,
-                       time,
-                       problem,
-                       feed_population)
-end
-
-function _dqmom_rhs!(destination,
-                     state,
-                     parameters,
-                     time,
                      problem::CrystallisationProblem,
                      feed_population)
     solver = problem.solver
@@ -590,9 +576,7 @@ function _dqmom_rhs!(destination,
                                   growth_rates,
                                   nucleation_rate_value)
     internal_third_moment_rate = source[4]
-    operation_context = _dqmom_operation_transport_context(problem,
-                                                            state,
-                                                            time)
+    operation_context = _operation_transport_context(problem, state, time)
     if !isnothing(operation_context)
         _dqmom_add_operation_moment_source!(source,
                                             state,
@@ -710,18 +694,8 @@ function crystallisation_odeproblem(problem::CrystallisationProblem{NuclF, GrF, 
     return ode_problem, time_step_solver
 end
 
-function _wrap_solution(problem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
-                                                          DQMOM, NuP, GrP, BrP,
-                                                          AggP, TP},
-                        solution) where {NuclF <: AbstractNucleationFunction,
-                                         GrF <: AbstractGrowthFunction,
-                                         BrF <: AbstractBreakageFunction,
-                                         AggF <: AbstractAggregationFunction,
-                                         NuP <: AbstractVector{<:Real},
-                                         GrP <: AbstractVector{<:Real},
-                                         BrP <: AbstractVector{<:Real},
-                                         AggP <: AbstractVector{<:Real},
-                                         TP <: AbstractTemperature}
+function _wrap_solution(problem::CrystallisationProblem{<:Any, <:Any, <:Any, <:Any, DQMOM},
+                        solution)
     solver = problem.solver
     nquadrature = solver.nquadrature
     n_solvent = length(propertynames(problem.initial_solvent_state))
@@ -853,27 +827,6 @@ function _wrap_solution(problem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
                                         projection_diagnostics)
 end
 
-function _simulatecrystallisation(problem::CrystallisationProblem{NuclF, GrF, BrF,
-                                                                   AggF, DQMOM,
-                                                                   NuP, GrP, BrP,
-                                                                   AggP, TP},
-                                  saveat; algorithm = nothing, solve_options::NamedTuple = (;),
-                                  callback_factory = nothing)::CrystallisationDQMOMSolution where {
-                                      NuclF <: AbstractNucleationFunction,
-                                      GrF <: AbstractGrowthFunction,
-                                      BrF <: AbstractBreakageFunction,
-                                      AggF <: AbstractAggregationFunction,
-                                      NuP <: AbstractVector{<:Real},
-                                      GrP <: AbstractVector{<:Real},
-                                      BrP <: AbstractVector{<:Real},
-                                      AggP <: AbstractVector{<:Real},
-                                      TP <: AbstractTemperature}
-    ode_problem, time_step_solver = crystallisation_odeproblem(problem, saveat)
-    ode_solution = _solve_crystallisation_ode(problem, ode_problem,
-                                          algorithm === nothing ? time_step_solver : algorithm,
-                                          saveat; solve_options, callback_factory)
-    return _wrap_solution(problem, ode_solution)
-end
 
 """Reconstruct a physical quadrature rule at one DQMOM output index."""
 function quadrature(solution::CrystallisationDQMOMSolution, time_index::Integer)

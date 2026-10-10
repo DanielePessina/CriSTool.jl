@@ -19,28 +19,35 @@ end
     CrystallisationFeed(; concentration, crystals=nothing,
                          solvent_state=(;), transport=nothing)
 
-One well-mixed slurry inlet. Concentration (kg/m³) may be constant or a callable
-of time in seconds. `crystals` describes the fixed inlet population per m³ of
-feed, independently of the initial reactor seed. Extra solvent variables require
-an explicit `transport(problem, state, time, feed_values, inflow, volume)` hook
-returning their named transport rates. Concentration transport is always built in;
-the hook must not return a concentration rate. This avoids treating pH as a
-linearly mixed concentration. Solvent dynamics describes internal rates only.
+One well-mixed slurry inlet. `concentration` (kg/m³) may be constant or a
+callable of time in seconds. `solvent_state` holds only the extra solvent
+species (each constant or a callable of time). `crystals` describes the fixed
+inlet population per m³ of feed, independently of the initial reactor seed; it
+must be fully numeric and is stored in its checked solver-ready form
+(`_checked_seed_description`), so downstream code never re-checks it. Extra
+solvent variables require an explicit
+`transport(problem, state, time, feed_values, inflow, volume)` hook returning
+their named transport rates; `feed_values` carries `concentration` and the extra
+species. Concentration transport is always built in; the hook must not return a
+concentration rate. This avoids treating pH as a linearly mixed concentration.
+Solvent dynamics describes internal rates only.
 """
-struct CrystallisationFeed{TS <: NamedTuple, TC, TH}
+struct CrystallisationFeed{TC, TS <: NamedTuple, TP, TH}
+    concentration::TC
     solvent_state::TS
-    crystals::TC
+    crystals::TP
     transport::TH
-end
-function CrystallisationFeed(; concentration,
-                              crystals::Union{Nothing, AbstractInitialCrystals} = nothing,
-                              solvent_state::NamedTuple = (;), transport = nothing)
-    hasproperty(solvent_state, :concentration) &&
-        throw(ArgumentError("Supply feed concentration once, using concentration=."))
-    feed_values = merge((; concentration), solvent_state)
-    concentration isa Real && _validate_feed_concentration(concentration)
-    isnothing(crystals) || _validate_initial_crystals(crystals)
-    return CrystallisationFeed(feed_values, crystals, transport)
+    function CrystallisationFeed(; concentration,
+                                  crystals::Union{Nothing, AbstractInitialCrystals} = nothing,
+                                  solvent_state::NamedTuple = (;), transport = nothing)
+        hasproperty(solvent_state, :concentration) &&
+            throw(ArgumentError("Supply feed concentration once, using concentration=."))
+        concentration isa Real && _validate_feed_concentration(concentration)
+        checked_crystals = isnothing(crystals) ? nothing :
+            _checked_seed_description(_validate_initial_crystals(crystals))
+        new{typeof(concentration), typeof(solvent_state), typeof(checked_crystals),
+            typeof(transport)}(concentration, solvent_state, checked_crystals, transport)
+    end
 end
 
 """

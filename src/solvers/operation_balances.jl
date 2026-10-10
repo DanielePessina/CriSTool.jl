@@ -21,30 +21,44 @@ operation_flows(problem::CrystallisationProblem, simulation_time) =
 operation_flows(operation::BatchOperation, simulation_time) =
     (; inflow = zero(operation.volume), outflow = zero(operation.volume))
 function operation_flows(operation::MSMPROperation, simulation_time)
-    evaluated_flow = _validate_operation_inflow(_operation_profile_value(operation.inflow, simulation_time))
+    evaluated_flow = _operation_inflow_value(operation.inflow, simulation_time)
     return (; inflow = evaluated_flow, outflow = evaluated_flow)
 end
 function operation_flows(operation::FedBatchOperation, simulation_time)
-    evaluated_flow = _validate_operation_inflow(_operation_profile_value(operation.inflow, simulation_time))
+    evaluated_flow = _operation_inflow_value(operation.inflow, simulation_time)
     return (; inflow = evaluated_flow, outflow = zero(evaluated_flow))
 end
 
-function _operation_feed_values(feed::CrystallisationFeed, simulation_time)
-    feed_names = propertynames(feed.solvent_state)
-    evaluated_values = map(profile -> _operation_profile_value(profile, simulation_time),
-                           values(feed.solvent_state))
-    named_values = NamedTuple{feed_names}(evaluated_values)
-    _validate_feed_concentration(named_values.concentration)
-    all(value -> value isa Real && isfinite(value), evaluated_values) ||
+# Constant profiles are validated once by the operation constructors and
+# `_validate_operation`; only time-varying profiles are re-checked per call.
+_operation_inflow_value(inflow::Real, simulation_time) = inflow
+_operation_inflow_value(inflow, simulation_time) =
+    _validate_operation_inflow(inflow(simulation_time))
+_feed_profile_value(profile::Real, simulation_time) = profile
+function _feed_profile_value(profile, simulation_time)
+    profile_value = profile(simulation_time)
+    profile_value isa Real && isfinite(profile_value) ||
         throw(ArgumentError("Feed solvent values must be finite real numbers."))
-    return named_values
+    return profile_value
 end
+
+_feed_concentration(feed::CrystallisationFeed, simulation_time) =
+    feed.concentration isa Real ? feed.concentration :
+    _validate_feed_concentration(_feed_profile_value(feed.concentration, simulation_time))
+
+"""Feed `concentration` and extra solvent species evaluated at `simulation_time`."""
+_operation_feed_values(feed::CrystallisationFeed, simulation_time) =
+    merge((; concentration = _feed_concentration(feed, simulation_time)),
+          map(profile -> _feed_profile_value(profile, simulation_time), feed.solvent_state))
 
 _validate_operation(problem::CrystallisationProblem, ::BatchOperation) = nothing
 function _validate_operation(problem::CrystallisationProblem,
                              operation::Union{MSMPROperation, FedBatchOperation})
-    operation_flows(operation, 0.0)
+    _validate_operation_inflow(_operation_profile_value(operation.inflow, 0.0))
     feed_values = _operation_feed_values(operation.feed, 0.0)
+    all(value -> value isa Real && isfinite(value), feed_values) ||
+        throw(ArgumentError("Feed solvent values must be finite real numbers."))
+    _validate_feed_concentration(feed_values.concentration)
     solvent_names = propertynames(problem.initial_solvent_state)
     :volume in solvent_names && throw(ArgumentError("Volume is a reactor state; remove :volume from initial_solvent_state."))
     all(feed_name -> feed_name in solvent_names, propertynames(feed_values)) ||
@@ -59,9 +73,44 @@ function _validate_operation(problem::CrystallisationProblem,
     return nothing
 end
 
+"""
+    _validate_feed_transport_hook(problem, operation)
+
+Check once, at ODE construction, that the feed transport hook returns exactly
+the named non-concentration solvent rates. The RHS then trusts its schema.
+"""
+_validate_feed_transport_hook(problem, ::BatchOperation) = nothing
+function _validate_feed_transport_hook(problem, operation::Union{MSMPROperation, FedBatchOperation})
+    isnothing(operation.feed.transport) && return nothing
+    initial_state = _get_initial_state(problem)
+    extra_rates = operation.feed.transport(problem, initial_state, 0.0,
+                                           _operation_feed_values(operation.feed, 0.0),
+                                           operation_flows(operation, 0.0).inflow,
+                                           reactor_volume(problem, initial_state))
+    extra_rates isa NamedTuple ||
+        throw(ArgumentError("Feed transport hook must return named extra solvent rates."))
+    hasproperty(extra_rates, :concentration) &&
+        throw(ArgumentError("Feed transport hook must not replace built-in concentration transport."))
+    solvent_names = propertynames(problem.initial_solvent_state)
+    all(rate_name -> rate_name in solvent_names, propertynames(extra_rates)) ||
+        throw(ArgumentError("Unknown solvent variable returned by feed transport hook."))
+    for solvent_name in solvent_names
+        solvent_name === :concentration || hasproperty(extra_rates, solvent_name) ||
+            throw(ArgumentError("Missing transport rate for solvent variable :$solvent_name."))
+    end
+    return nothing
+end
+
+"""
+    _operation_feed_population(problem)
+
+Validate the operation once for ODE construction and return the inlet
+population in the solver's population coordinates (`nothing` for batch).
+"""
 function _operation_feed_population(problem::CrystallisationProblem)
     operation = problem.operation
     _validate_operation(problem, operation)
+    _validate_feed_transport_hook(problem, operation)
     operation isa BatchOperation && return nothing
     population_count = _population_state_count(problem.solver)
     feed_crystals = operation.feed.crystals
@@ -80,109 +129,98 @@ function _operation_feed_population(problem::CrystallisationProblem)
     end
 end
 
-function _operation_transport_context(problem, numerical_state, simulation_time)
-    operation = problem.operation
+"""
+    _operation_transport_context(problem, numerical_state, simulation_time)
+
+Exchange rate (1/s), volume rate (m³/s), feed concentration and hook rates at
+one RHS evaluation, or `nothing` for a closed batch. Schema checks happen once
+in `_operation_feed_population`; only the state volume and time profiles are
+checked here.
+"""
+_operation_transport_context(problem, numerical_state, simulation_time) =
+    _operation_transport_context(problem.operation, problem, numerical_state, simulation_time)
+_operation_transport_context(::BatchOperation, problem, numerical_state, simulation_time) = nothing
+function _operation_transport_context(operation::Union{MSMPROperation, FedBatchOperation},
+                                      problem, numerical_state, simulation_time)
     volume_value = _validate_operation_volume(reactor_volume(problem, numerical_state))
     flow_values = operation_flows(operation, simulation_time)
-    feed_values = _operation_feed_values(operation.feed, simulation_time)
-    extra_rates = if isnothing(operation.feed.transport)
-        (;)
-    else
+    extra_rates = isnothing(operation.feed.transport) ? (;) :
         operation.feed.transport(problem, numerical_state, simulation_time,
-                                 feed_values, flow_values.inflow, volume_value)
-    end
-    extra_rates isa NamedTuple ||
-        throw(ArgumentError("Feed transport hook must return named extra solvent rates."))
-    hasproperty(extra_rates, :concentration) &&
-        throw(ArgumentError("Feed transport hook must not replace built-in concentration transport."))
-    solvent_names = propertynames(problem.initial_solvent_state)
-    all(rate_name -> rate_name in solvent_names, propertynames(extra_rates)) ||
-        throw(ArgumentError("Unknown solvent variable returned by feed transport hook."))
-    for solvent_name in solvent_names
-        solvent_name === :concentration || hasproperty(extra_rates, solvent_name) ||
-            throw(ArgumentError("Missing transport rate for solvent variable :$solvent_name."))
-    end
+                                 _operation_feed_values(operation.feed, simulation_time),
+                                 flow_values.inflow, volume_value)
     return (; exchange_rate = flow_values.inflow / volume_value,
               volume_rate = flow_values.inflow - flow_values.outflow,
-              feed_values, extra_rates)
+              feed_concentration = _feed_concentration(operation.feed, simulation_time),
+              extra_rates)
 end
 
-_compose_operation_rhs(problem, numerical_state, simulation_time, internal_rates,
-                       feed_population, ::BatchOperation) = internal_rates
-function _compose_operation_rhs(problem, numerical_state, simulation_time, internal_rates,
-                                 feed_population, operation::AbstractCrystallisationOperation)
-    operation_context = _operation_transport_context(problem, numerical_state, simulation_time)
+"""
+    _operation_transported_rate(internal_rate, numerical_state, state_index,
+                                problem, operation_context, feed_population)
+
+Derivative of one numerical state entry after adding open-reactor transport to
+its internal (crystallisation) rate. Population entries gain
+`exchange_rate * (feed - state)`, the reactor-volume entry is the volume rate
+(it has no internal rate), concentration gains its built-in exchange term and
+any other solvent variable gains its hook rate. This is the single transport
+kernel used by every solver family.
+"""
+@inline function _operation_transported_rate(internal_rate, numerical_state, state_index,
+                                             problem, operation_context, feed_population)
     population_count = _population_state_count(problem.solver)
-    reactor_count = _operation_state_count(operation)
-    solvent_names = propertynames(problem.initial_solvent_state)
+    if state_index <= population_count
+        return internal_rate + operation_context.exchange_rate *
+               (feed_population[state_index] - numerical_state[state_index])
+    end
+    reactor_count = _operation_state_count(problem.operation)
+    state_index <= population_count + reactor_count && return operation_context.volume_rate
+    solvent_name = propertynames(problem.initial_solvent_state)[
+        state_index - population_count - reactor_count]
+    solvent_name === :concentration &&
+        return internal_rate + operation_context.exchange_rate *
+               (operation_context.feed_concentration - numerical_state[state_index])
+    return internal_rate + getproperty(operation_context.extra_rates, solvent_name)
+end
+
+"""Out-of-place (static-state) RHS with operation transport; batch is unchanged."""
+_compose_operation_rhs(problem, numerical_state, simulation_time, internal_rates,
+                       feed_population) =
+    _compose_operation_rhs(problem.operation, problem, numerical_state, simulation_time,
+                           internal_rates, feed_population)
+_compose_operation_rhs(::BatchOperation, problem, numerical_state, simulation_time,
+                       internal_rates, feed_population) = internal_rates
+function _compose_operation_rhs(operation, problem, numerical_state, simulation_time,
+                                internal_rates, feed_population)
+    operation_context = _operation_transport_context(operation, problem, numerical_state,
+                                                     simulation_time)
     return SVector(ntuple(Val(length(numerical_state))) do state_index
-        if state_index <= population_count
-            internal_rates[state_index] + operation_context.exchange_rate *
-                (feed_population[state_index] - numerical_state[state_index])
-        elseif state_index <= population_count + reactor_count
-            operation_context.volume_rate
-        else
-            solvent_name = solvent_names[state_index - population_count - reactor_count]
-            transport_rate = solvent_name === :concentration ?
-                operation_context.exchange_rate *
-                    (operation_context.feed_values.concentration - numerical_state[state_index]) :
-                getproperty(operation_context.extra_rates, solvent_name)
-            internal_rates[state_index] + transport_rate
-        end
+        _operation_transported_rate(internal_rates[state_index], numerical_state,
+                                    state_index, problem, operation_context, feed_population)
     end)
 end
-_compose_operation_rhs(problem, numerical_state, simulation_time, internal_rates, feed_population) =
-    _compose_operation_rhs(problem, numerical_state, simulation_time, internal_rates,
-                           feed_population, problem.operation)
 
 """Add inlet, outlet and reactor-volume terms to an in-place mesh RHS.
 
-The mesh solvers compute their established crystallisation terms first, then
-call this helper to add the independent operation transport.  The batch
-specialisation is an empty inline method, so its RHS keeps the existing
+The batch specialisation is an empty inline method, so its RHS keeps the
 allocation-free path.
 """
 @inline _add_operation_transport!(derivative, numerical_state, problem,
-                                  simulation_time, feed_population,
-                                  ::BatchOperation) = nothing
-
-function _add_operation_transport!(derivative, numerical_state, problem,
-                                  simulation_time, feed_population,
-                                  operation::Union{MSMPROperation, FedBatchOperation})
-    operation_context = _operation_transport_context(problem, numerical_state,
+                                  simulation_time, feed_population) =
+    _add_operation_transport!(problem.operation, derivative, numerical_state, problem,
+                              simulation_time, feed_population)
+@inline _add_operation_transport!(::BatchOperation, derivative, numerical_state, problem,
+                                  simulation_time, feed_population) = nothing
+function _add_operation_transport!(operation, derivative, numerical_state, problem,
+                                   simulation_time, feed_population)
+    operation_context = _operation_transport_context(operation, problem, numerical_state,
                                                      simulation_time)
-    population_range = _population_state_range(problem)
-    @inbounds for population_position in eachindex(feed_population)
-        state_index = population_range[population_position]
-        derivative[state_index] += operation_context.exchange_rate *
-                                   (feed_population[population_position] -
-                                    numerical_state[state_index])
-    end
-
-    if operation isa FedBatchOperation
-        derivative[first(_reactor_state_range(problem))] =
-            operation_context.volume_rate
-    end
-
-    solvent_names = propertynames(problem.initial_solvent_state)
-    first_solvent = first(_solvent_state_range(problem))
-    @inbounds for solvent_position in eachindex(solvent_names)
-        solvent_name = solvent_names[solvent_position]
-        state_index = first_solvent + solvent_position - 1
-        transport_rate = solvent_name === :concentration ?
-            operation_context.exchange_rate *
-                (operation_context.feed_values.concentration -
-                 numerical_state[state_index]) :
-            getproperty(operation_context.extra_rates, solvent_name)
-        derivative[state_index] += transport_rate
+    @inbounds for state_index in eachindex(derivative)
+        derivative[state_index] = _operation_transported_rate(
+            derivative[state_index], numerical_state, state_index, problem,
+            operation_context, feed_population)
     end
     return nothing
 end
-
-@inline _add_operation_transport!(derivative, numerical_state, problem,
-                                  simulation_time, feed_population) =
-    _add_operation_transport!(derivative, numerical_state, problem,
-                              simulation_time, feed_population, problem.operation)
 
 """Reactor and mesh-boundary trajectories, separate from solvent variables.
 

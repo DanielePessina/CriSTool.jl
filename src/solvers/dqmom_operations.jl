@@ -20,11 +20,6 @@ function _dqmom_physical_moments(numerical_state, dqmom_solver::DQMOM)
     return physical_moments
 end
 
-"""Return operation transport inputs for DQMOM; batch keeps its direct fast path."""
-_dqmom_operation_transport_context(dqmom_problem, numerical_state, simulation_time) =
-    dqmom_problem.operation isa BatchOperation ? nothing :
-    _operation_transport_context(dqmom_problem, numerical_state, simulation_time)
-
 """Convert physical feed exchange into DQMOM's scaled moment coordinates."""
 function _dqmom_add_operation_moment_source!(scaled_source,
                                              numerical_state,
@@ -53,22 +48,12 @@ function _dqmom_add_operation_state_rates!(native_rates,
                                            dqmom_problem::CrystallisationProblem,
                                            operation_context)
     isnothing(operation_context) && return nothing
-
-    reactor_range = _reactor_state_range(dqmom_problem)
-    @inbounds for reactor_index in 1:_operation_state_count(dqmom_problem.operation)
-        native_rates[first(reactor_range) + reactor_index - 1] =
-            operation_context.volume_rate
-    end
-
-    concentration_index = _solvent_state_index(dqmom_problem, :concentration)
-    native_rates[concentration_index] += operation_context.exchange_rate *
-        (operation_context.feed_values.concentration - numerical_state[concentration_index])
-
-    for solvent_name in propertynames(dqmom_problem.initial_solvent_state)
-        solvent_name === :concentration && continue
-        solvent_index = _solvent_state_index(dqmom_problem, solvent_name)
-        native_rates[solvent_index] += getproperty(operation_context.extra_rates,
-                                                   solvent_name)
+    # Population transport enters through the projected moment source.
+    first_non_population = _population_state_count(dqmom_problem.solver) + 1
+    @inbounds for state_index in first_non_population:length(native_rates)
+        native_rates[state_index] = _operation_transported_rate(
+            native_rates[state_index], numerical_state, state_index, dqmom_problem,
+            operation_context, nothing)
     end
     return nothing
 end
