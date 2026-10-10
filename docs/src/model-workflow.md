@@ -27,7 +27,8 @@ excluded from scoring. Every other observable retains its own time grid.
 Their nested names select kinetic parameters; unlisted values remain fixed.
 No initial condition, material property or noise parameter can be selected.
 `prepare_fit(model, experiments, spec; solver, mode, problem_options)` resolves
-names and constructs solve templates once; `loss(prepared, values)` exposes the
+names and constructs solve templates once (`mode` is `TransientMode()` or
+`SteadyMode(SteadyStateOptions(...))`); `loss(prepared, values)` exposes the
 selected-vector objective for advanced users and autodiff. `fit(prepared;
 threaded=false)` runs the study.
 

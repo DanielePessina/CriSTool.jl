@@ -32,36 +32,32 @@ struct RelativeVariance{T <: Real} <: AbstractVarianceModel
 end
 
 """
-    logMLE <: AbstractPELossFunction
+    logMLE(; weighting = (;), variance_model = MeasuredVariance(), relative_variance_floor = 1e-12)
 
-Log Maximum Likelihood Estimation loss function.
+Gaussian negative log likelihood summed over every scored measurement.
 
 Fields:
-- `weighting`: NamedTuple, dictionary or vector of weighting factors by observable (default: concentration and size both 1.0)
-- `variance_model::AbstractVarianceModel`: Variance policy (default: measured variance)
-- `relative_variance_floor::Float64`: Dimensionless minimum variance fraction
+- `weighting`: factor per observable, as a `NamedTuple` or dictionary keyed by
+  observable name, or a vector in the prepared observable order. Unnamed
+  observables get 1. Weights are resolved once when the loss is prepared.
+- `variance_model::AbstractVarianceModel`: variance policy (default: measured variance)
+- `relative_variance_floor::Float64`: dimensionless minimum variance fraction
   relative to the squared observable magnitude
-- `string::String`: String identifier
-- `symbols::Vector{Symbol}`: Parameter symbols [:logMLE]
 """
 Base.@kwdef @concrete struct logMLE <: AbstractPELossFunction
-    weighting = [1.0, 1.0]
+    weighting = (;)
     variance_model::AbstractVarianceModel = MeasuredVariance()
     relative_variance_floor::Float64 = 1e-12
-    string::String = weighting == [1.0, 1.0] ? "Log MLE" : "Log MLE wgted $(weighting)"
-    symbols::Vector{Symbol} = [:logMLE]
 end
 
 """
-    mae <: AbstractPELossFunction
+    mae(; weighting = (;))
 
-Mean Absolute Error loss function.
+Mean absolute error, pooled over every scored measurement of each observable.
 
 Fields:
-- `weighting`: NamedTuple, dictionary or vector of weighting factors by observable (default: concentration and size both 1.0)
-- `string::String`: String identifier
+- `weighting`: factor per observable, with the same forms as for `logMLE`.
 """
 Base.@kwdef @concrete struct mae <: AbstractPELossFunction
-    weighting = [1.0, 1.0]
-    string::String = weighting == [1.0, 1.0] ? "MAE" : "MAE wgted $(weighting)"
+    weighting = (;)
 end

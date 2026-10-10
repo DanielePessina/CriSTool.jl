@@ -13,6 +13,9 @@ loss_terms
 InferenceResult
 ParameterSamples
 parameter_samples
+AbstractSimulationMode
+TransientMode
+SteadyMode
 predict
 PredictionResult
 measurement_samples

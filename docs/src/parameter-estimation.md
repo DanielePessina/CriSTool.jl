@@ -32,17 +32,19 @@ Transient experiments read their initial values from time-zero observations
 through `FromObservation` placeholders in their `RunConditions`; by default only
 the concentration. Initialising samples are excluded from scoring. Preparation
 does not fit initial conditions or silently move the start to a later
-measurement. In steady mode (`mode = :steady`), each experiment's conditions must
-be numeric (no placeholders) and use an autonomous MSMPR operation; the run relaxes
-from those values, and steady observations are targets, not initial conditions.
-Callable kinetic laws require `steady_options = SteadyStateOptions(autonomous = true)`, an explicit
-declaration that their rate does not depend on time. The package cannot infer
-that property from arbitrary user code.
+measurement. The default `mode = TransientMode()` integrates each run over its
+observation times. With `mode = SteadyMode(SteadyStateOptions(...))`, each
+experiment's conditions must be numeric (no placeholders) and use an autonomous
+MSMPR operation; the run relaxes from those values, and steady observations are
+targets, not initial conditions. Callable kinetic laws require
+`SteadyMode(SteadyStateOptions(autonomous = true))` (or `SteadyMode(autonomous = true)`),
+an explicit declaration that their rate does not depend on time. The package
+cannot infer that property from arbitrary user code.
 
 Gaussian `logMLE()` requires supplied positive variances for scored measurements.
 No noise is fitted and no missing variance is filled automatically. `mae()` does
 not require variances. Named weights associate factors with observables across
-heterogeneous experiments. Custom observables can use `observable_projections`
+heterogeneous experiments; they are resolved and checked once by `prepare_fit`. Custom observables can use `observable_projections`
 at preparation without adding global methods.
 
 ## Bayesian inference
@@ -68,8 +70,10 @@ likelihood-free sampling and [Uncertainty](uq-ensembles.md) for predictions.
 
 Advanced users may subtype `AbstractPELossFunction` and implement
 `loss(custom_loss, setup, parameters)`, where `setup` is the internal
-`CriSTool.LossSetup` built by `prepare_fit`.
-`loss_terms` defaults to the total objective; extend it to expose named terms or
-multiobjective accounting. A custom negative log likelihood must explicitly
+`CriSTool.LossSetup` built by `prepare_fit` and `parameters` is the full kinetic
+vector. `loss(prepared_fit, values)` and `loss_terms(prepared_fit, values)` call
+these methods with the selected values expanded. `loss_terms` defaults to the
+total objective; extend `loss_terms(custom_loss, setup, parameters)` to expose
+named terms or multiobjective accounting. A custom negative log likelihood must explicitly
 implement `is_likelihood(custom_loss)=true` before use with `BayesianSpec`, and
 owns validation of its supplied, fixed noise assumptions.

@@ -179,10 +179,10 @@ end
         observables = (:concentration, :d43))
     for (gold_run, gold_ensemble) in zip(data_fixture_runs, gold_predictions.ensembles)
         final_concentration, final_d43 = gold_final_values[gold_run.exp_id]
-        gold_concentration = vec(gold_ensemble.concentration)
+        gold_concentration = vec(observable_values(gold_ensemble, :concentration))
         @test gold_ensemble.time == gold_run.observables.concentration.time
         @test gold_concentration[end] ≈ final_concentration rtol = 1e-10
-        @test gold_ensemble.d43[1, end] ≈ final_d43 rtol = 1e-10
+        @test observable_values(gold_ensemble, :d43)[1, end] ≈ final_d43 rtol = 1e-10
         # Unseeded batch: starts at the measured C0 and only consumes solute.
         @test gold_concentration[1] == initial_concentration(gold_run)
         @test all(diff(gold_concentration) .<= 1e-12)

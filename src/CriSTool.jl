@@ -118,6 +118,7 @@ export CrystallisationSystem, LysozymeSystem, KineticModel, CrystallisationModel
        CallableGrowth, CallableNucleation, CallableLengthGrowth, KineticContext,
        required_properties, named_parameters, simulate, OptimisationSpec, BayesianSpec, ABCSpec,
        PreparedFit, prepare_fit, fit, FitResult, InferenceResult, is_likelihood, loss_terms,
+       AbstractSimulationMode, TransientMode, SteadyMode,
        ParameterSamples, parameter_samples, predict, PredictionResult, measurement_samples,
        DistributionInitialCrystals, number_weighted, seed_domain_diagnostics
 

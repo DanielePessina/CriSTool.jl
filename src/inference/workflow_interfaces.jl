@@ -48,39 +48,20 @@ function crystallisation_solution(problem::CrystallisationProblem, ode_solution)
     return _wrap_solution(problem, ode_solution)
 end
 
-function _setup_parameter_count(setup::LossSetup)
-    configured_problem = setup.problem
-    return _total_nparams(configured_problem.kinetics_nucleationfunction,
-        configured_problem.kinetics_growthfunction,
-        configured_problem.kinetics_aggregationfunction,
-        configured_problem.kinetics_breakagefunction;
-        diss = configured_problem.kinetics_dissolutionfunction)
-end
-
 """
     PredictionEnsemble
 
-Named sample predictions from a prepared physical system. `predictions` contains
-matrices with samples in rows and saved times in columns. `success` and
-`diagnostics` retain every candidate, including unsuccessful simulations.
-Named predictions are also available as properties, e.g. `ensemble.d43`.
+Named sample predictions for one prepared run. `predictions` holds matrices
+with samples in rows and saved times in columns; read one with
+`observable_values(ensemble, name)`. `success` and `diagnostics` retain every
+candidate, including unsuccessful simulations.
 """
-struct PredictionEnsemble{TP <: NamedTuple, TD} <: AbstractSolution
+struct PredictionEnsemble{TP <: NamedTuple, TD <: AbstractVector}
     time::Vector{Float64}
     predictions::TP
     success::Vector{Bool}
     diagnostics::TD
 end
-
-function Base.getproperty(prediction_ensemble::PredictionEnsemble, field_name::Symbol)
-    field_name in fieldnames(typeof(prediction_ensemble)) &&
-        return getfield(prediction_ensemble, field_name)
-    return getproperty(getfield(prediction_ensemble, :predictions), field_name)
-end
-
-Base.propertynames(prediction_ensemble::PredictionEnsemble) =
-    (fieldnames(typeof(prediction_ensemble))...,
-     propertynames(getfield(prediction_ensemble, :predictions))...)
 
 observable_values(prediction_ensemble::PredictionEnsemble, observable_name::Symbol) =
     getproperty(prediction_ensemble.predictions, observable_name)
@@ -113,102 +94,84 @@ function prediction_summary(prediction_ensemble::PredictionEnsemble,
         failed_count = count(!, successful_samples))
 end
 
-"""
-    run_ensemble(samples, setup::LossSetup; observables=nothing, ...)
+"""Solver diagnostics kept per ensemble sample; solution types without them report `nothing`."""
+_sample_diagnostics(::AbstractSolution) = (; retcode = nothing, convergence = nothing, reason = nothing)
+_sample_diagnostics(failed_solution::FailedPreparedSimulation) =
+    (; retcode = nothing, convergence = nothing, reason = failed_solution.reason)
+_sample_diagnostics(steady_result::CrystallisationSteadyStateSolution) =
+    (; retcode = steady_result.retcode, convergence = steady_result.diagnostics, reason = nothing)
 
-Predict each prepared system for parameter samples in columns. By default,
-observable names are selected separately for each system and its experiment.
-An explicit `observables` selection applies to every system. Physical
-configuration and solve settings are preserved; named solvent/reactor values
-are retained alongside the established concentration and size predictions.
+# A transient sample must span the requested times; a steady value holds at any time.
+_covers_save_times(::SteadyMode, sample_solution, saved_times) = true
+_covers_save_times(::TransientMode, sample_solution, saved_times) =
+    first(sample_solution.time) <= first(saved_times) && last(sample_solution.time) >= last(saved_times)
+
+# Every built-in trajectory, configured solvent value and, for a flowing reactor, the volume.
+function _default_prediction_names(prepared_run::PreparedRun, reference_solution)
+    named_physical_values = merge(state_vars(reference_solution), reactor_vars(reference_solution),
+        size_metrics(reference_solution))
+    builtin_names = Tuple(observable_name for observable_name in propertynames(named_physical_values)
+        if getproperty(named_physical_values, observable_name) isa AbstractVector &&
+           length(getproperty(named_physical_values, observable_name)) == length(reference_solution.time))
+    return Tuple(unique((builtin_names..., propertynames(prepared_run.problem.initial_solvent_state)...,
+        _operation_prediction_names(prepared_run.problem.operation)...)))
+end
+_operation_prediction_names(::BatchOperation) = ()
+_operation_prediction_names(::AbstractCrystallisationOperation) = (:volume,)
+
 """
-function run_ensemble(parameter_samples::AbstractMatrix, setup::LossSetup;
-                      observables = nothing, HPC::Bool = false, verbosity::Int = 1)
-    size(parameter_samples, 1) == _setup_parameter_count(setup) ||
+    run_ensemble(parameter_samples, prepared_solves; observables=nothing) -> Vector{PredictionEnsemble}
+
+Predict each prepared run for the full kinetic parameter vectors in the columns
+of `parameter_samples`. Without `observables`, every built-in trajectory and
+configured solvent value is predicted. Samples are solved in parallel, each
+task on its own copy of the prepared templates.
+"""
+function run_ensemble(parameter_samples::AbstractMatrix, prepared_solves::PreparedSolves;
+                      observables = nothing)
+    size(parameter_samples, 1) == _kinetic_parameter_count(prepared_solves) ||
         throw(ArgumentError("Ensemble sample rows must match the kinetic parameter axis."))
     sample_count = size(parameter_samples, 2)
     sample_count > 0 || throw(ArgumentError("An ensemble requires at least one parameter sample."))
-    prepared_predictions = PredictionEnsemble[]
-    for (experiment_index, prepared_experiment) in enumerate(setup.prepared)
-        sample_solutions = Vector{AbstractSolution}(undef, sample_count)
-        Threads.@threads for sample_index in 1:sample_count
-            private_preparation = deepcopy(prepared_experiment)
-            sample_solutions[sample_index] = _solve_prepared(private_preparation,
-                collect(view(parameter_samples, :, sample_index)))
-        end
-        successful_reference_index = findfirst(sample_solution -> sample_solution.success, sample_solutions)
-        reference_solution = successful_reference_index === nothing ? first(sample_solutions) :
-            sample_solutions[successful_reference_index]
-        named_physical_values = merge(state_vars(reference_solution), reactor_vars(reference_solution),
-            size_metrics(reference_solution))
-        builtin_names = Tuple(observable_name for observable_name in propertynames(named_physical_values)
-            if getproperty(named_physical_values, observable_name) isa AbstractVector &&
-               length(getproperty(named_physical_values, observable_name)) == length(reference_solution.time))
-        prediction_names = observables === nothing ?
-            Tuple(unique((builtin_names...,
-                propertynames(prepared_experiment.problem.initial_solvent_state)...,
-                propertynames(setup.experiments[experiment_index].observables)...,
-                propertynames(setup.observable_projections)...,
-                (prepared_experiment.problem.operation isa BatchOperation ? () : (:volume,))...))) :
-            Tuple(Symbol.(observables))
-        saved_times = collect(Float64, prepared_experiment.saveat)
-        covers_prediction_times(sample_solution) = sample_solution.success &&
-            first(sample_solution.time) <= first(saved_times) &&
-            last(sample_solution.time) >= last(saved_times)
-        prediction_matrices = map(prediction_names) do observable_name
-            prediction_matrix = fill(NaN, sample_count, length(saved_times))
-            for sample_index in 1:sample_count
-                sample_solution = sample_solutions[sample_index]
-                if sample_solution.success &&
-                   (prepared_experiment.mode === :steady || covers_prediction_times(sample_solution))
-                    sample_values = prepared_experiment.mode === :steady ?
-                        fill(only(_setup_observable_values(setup, sample_solution, observable_name)), length(saved_times)) :
-                        _simulated_at(setup, sample_solution, observable_name, saved_times)
-                    length(sample_values) == length(saved_times) ||
-                        throw(ArgumentError("Observable :$observable_name does not match saved times."))
-                    prediction_matrix[sample_index, :] .= sample_values
-                end
-            end
-            prediction_matrix
-        end
-        named_predictions = NamedTuple{prediction_names}(Tuple(prediction_matrices))
-        sample_success = [sample_solution.success &&
-            (prepared_experiment.mode === :steady || covers_prediction_times(sample_solution))
-            for sample_solution in sample_solutions]
-        sample_diagnostics = [(; success = sample_success[sample_index],
-            ode_stats = sample_solutions[sample_index].ode_stats,
-            initial_conditions = solvent_state(prepared_experiment.problem,
-                _get_initial_state(prepared_experiment.problem)),
-            retcode = hasproperty(sample_solutions[sample_index], :retcode) ?
-                sample_solutions[sample_index].retcode : nothing,
-            convergence = hasproperty(sample_solutions[sample_index], :diagnostics) ?
-                sample_solutions[sample_index].diagnostics : nothing,
-            reason = hasproperty(sample_solutions[sample_index], :reason) ?
-                sample_solutions[sample_index].reason : nothing)
-            for sample_index in 1:sample_count]
-        push!(prepared_predictions, PredictionEnsemble(saved_times, named_predictions,
-            sample_success, sample_diagnostics))
+    run_count = length(prepared_solves.runs)
+    private_solves = _cristool_once_per_task(typeof(prepared_solves)) do
+        deepcopy(prepared_solves)
     end
-    return prepared_predictions
+    sample_solutions = Matrix{AbstractSolution}(undef, run_count, sample_count)
+    Threads.@threads for flat_index in 1:(run_count * sample_count)
+        run_index, sample_index = Tuple(CartesianIndices(sample_solutions)[flat_index])
+        task_solves = private_solves()
+        sample_solutions[run_index, sample_index] = _solve_prepared(task_solves,
+            task_solves.runs[run_index], collect(view(parameter_samples, :, sample_index)))
+    end
+    return map(enumerate(prepared_solves.runs)) do (run_index, prepared_run)
+        _prediction_ensemble(prepared_solves.mode, prepared_run, view(sample_solutions, run_index, :), observables)
+    end
 end
 
-"""
-    run_ensemble(distribution, setup::LossSetup; n_samples=2048, rng, ...)
-
-Draw kinetic parameter samples and predict the exact prepared systems.
-Univariate distributions require a one-parameter setup; multivariate draws
-must have one row per kinetic parameter.
-"""
-function run_ensemble(parameter_distribution::Distributions.Distribution,
-                      setup::LossSetup; n_samples::Int = 2048,
-                      rng = Random.default_rng(), kwargs...)
-    n_samples > 0 || throw(ArgumentError("n_samples must be positive."))
-    if parameter_distribution isa Distributions.UnivariateDistribution
-        _setup_parameter_count(setup) == 1 ||
-            throw(ArgumentError("A univariate distribution requires exactly one kinetic parameter."))
-        parameter_samples = reshape(rand(rng, parameter_distribution, n_samples), 1, n_samples)
-    else
-        parameter_samples = rand(rng, parameter_distribution, n_samples)
+function _prediction_ensemble(simulation_mode::AbstractSimulationMode, prepared_run::PreparedRun,
+                              run_solutions::AbstractVector, observables)
+    saved_times = prepared_run.saveat
+    sample_success = [sample_solution.success && _covers_save_times(simulation_mode, sample_solution, saved_times)
+                      for sample_solution in run_solutions]
+    successful_reference_index = findfirst(sample_success)
+    reference_solution = run_solutions[something(successful_reference_index, firstindex(run_solutions))]
+    prediction_names = observables === nothing ? _default_prediction_names(prepared_run, reference_solution) :
+        Tuple(Symbol.(observables))
+    prediction_matrices = map(prediction_names) do observable_name
+        prediction_matrix = fill(NaN, length(run_solutions), length(saved_times))
+        for (sample_index, sample_solution) in enumerate(run_solutions)
+            sample_success[sample_index] || continue
+            prediction_matrix[sample_index, :] .= _predicted_series(simulation_mode, (;),
+                sample_solution, observable_name, saved_times)
+        end
+        prediction_matrix
     end
-    return run_ensemble(parameter_samples, setup; kwargs...)
+    initial_conditions = solvent_state(prepared_run.problem, _get_initial_state(prepared_run.problem))
+    sample_diagnostics = [merge((; success = sample_success[sample_index],
+            ode_stats = run_solutions[sample_index].ode_stats, initial_conditions),
+            _sample_diagnostics(run_solutions[sample_index]))
+        for sample_index in eachindex(run_solutions)]
+    return PredictionEnsemble(copy(saved_times), NamedTuple{prediction_names}(Tuple(prediction_matrices)),
+        sample_success, sample_diagnostics)
 end

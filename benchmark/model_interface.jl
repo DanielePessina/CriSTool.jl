@@ -21,7 +21,7 @@ function benchmark_model_interface()
             variance = fill(.01, length(benchmark_times))),), exp_id = 1, conditions = RunConditions(temperature = 293.15))
     selected_preparation = prepare_fit(benchmark_model, [benchmark_experiment],
         OptimisationSpec(bounds = (growth = (growth_order = (1., 4.),),)))
-    full_preparation = prepare_loss(benchmark_run, [benchmark_experiment])
+    full_preparation = selected_preparation.setup
     @test loss(selected_preparation, [3.]) ≈ loss(logMLE(), full_preparation, native_parameters) atol = 1e-10
 
     named_growth_values = benchmark_run.parameterset_growth

@@ -171,26 +171,27 @@ function _set_named_parameter_path(named_values::NamedTuple, path_parts, paramet
     return merge(named_values, NamedTuple{(root_name,)}((replacement_value,)))
 end
 
-function _model_experiment_problem(crystal_model, experiment_run, selected_solver; mode = :transient, problem_options...)
-    run_conditions = if mode === :steady
-        unresolved_sources = observation_sources(experiment_run.conditions)
-        isempty(unresolved_sources) || throw(ArgumentError("Steady fits relax from explicit numeric conditions; " *
-            "experiment $(experiment_run.exp_id) reads $(Tuple(unresolved_sources)) from observations."))
-        experiment_run.conditions
-    else
-        _experiment_conditions(experiment_run)
-    end
-    return CrystallisationProblem(crystal_model, run_conditions; solver = selected_solver, problem_options...)
+# Transient runs read time-zero observations as initial values; steady runs relax from numeric conditions.
+_run_conditions(::TransientMode, experiment_run::CrystallisationExperiment) = _experiment_conditions(experiment_run)
+function _run_conditions(::SteadyMode, experiment_run::CrystallisationExperiment)
+    unresolved_sources = observation_sources(experiment_run.conditions)
+    isempty(unresolved_sources) || throw(ArgumentError("Steady fits relax from explicit numeric conditions; " *
+        "experiment $(experiment_run.exp_id) reads $(Tuple(unresolved_sources)) from observations."))
+    return experiment_run.conditions
 end
 
-function _strict_likelihood_variances(loss_function, prepared_setup)
-    loss_function isa logMLE || return
-    _validate_loss_weights(loss_function, prepared_setup)
-    loss_function.variance_model isa MeasuredVariance ||
+_model_experiment_problem(crystal_model, experiment_run, selected_solver, simulation_mode; problem_options...) =
+    CrystallisationProblem(crystal_model, _run_conditions(simulation_mode, experiment_run);
+        solver = selected_solver, problem_options...)
+
+"""Likelihood studies need supplied positive variances for every scored, weighted measurement."""
+_validate_likelihood_noise(::AbstractPELossFunction, prepared_setup::LossSetup) = nothing
+function _validate_likelihood_noise(likelihood::logMLE, prepared_setup::LossSetup)
+    likelihood.variance_model isa MeasuredVariance ||
         throw(ArgumentError("Likelihood studies require supplied measured variances; relative noise is not inferred."))
     for (experiment_index, experiment_run) in enumerate(prepared_setup.experiments)
         for (objective_index, observable_name) in enumerate(prepared_setup.observable_names)
-            iszero(_observable_weight(loss_function, objective_index, observable_name)) && continue
+            iszero(prepared_setup.observable_weights[objective_index]) && continue
             hasproperty(experiment_run.observables, observable_name) || continue
             target_indices = prepared_setup.included_observations[experiment_index][observable_name]
             isempty(target_indices) && continue
@@ -202,56 +203,49 @@ function _strict_likelihood_variances(loss_function, prepared_setup)
 end
 
 """Prepared experiment solves, the resolved parameter selection, and how they were configured."""
-struct PreparedFit{Model, Specification, Selection, Solver <: AbstractSolver, ProblemOptions <: NamedTuple}
+struct PreparedFit{Model, Specification, Selection, Setup <: LossSetup, Solver <: AbstractSolver,
+                   ProblemOptions <: NamedTuple}
     model::Model
     specification::Specification
     selection::Selection
-    setup::LossSetup
-    experiments::Vector{CrystallisationExperiment}
+    setup::Setup
     solver::Solver
-    mode::Symbol
     problem_options::ProblemOptions
-    solve_settings::NamedTuple
 end
 
 """
-    prepare_fit(model, experiments, specification; solver=MoM(), mode=:transient,
-                problem_options=(;), kwargs...)
+    prepare_fit(model, experiments, specification; solver=MoM(), mode=TransientMode(),
+                problem_options=(;), observable_order=nothing, observable_projections=(;),
+                algorithm=nothing, solve_options=(;), callback_factory=nothing)
 
 Resolve each experiment's conditions, validate noise, bounds or priors, and build
 reusable solve templates. Time-zero observations consumed by `FromObservation`
-conditions are not scored. Steady mode needs numeric conditions to relax from.
+conditions are not scored. `mode = SteadyMode(...)` relaxes each run to its
+MSMPR steady state and needs numeric conditions to relax from. `algorithm`,
+`solve_options` and `callback_factory` configure the ODE solves.
 """
 function prepare_fit(crystal_model::CrystallisationModel, measured_runs::AbstractVector{<:CrystallisationExperiment},
         fit_specification::Union{OptimisationSpec, BayesianSpec, ABCSpec};
-        solver::AbstractSolver = MoM(), mode::Symbol = :transient,
-        problem_options::NamedTuple = (;), kwargs...)
-    mode in (:transient, :steady) || throw(ArgumentError("mode must be :transient or :steady."))
-    isempty(intersect(keys(kwargs), (:initial_time, :exclude_initial_concentration))) ||
-        throw(ArgumentError("Model fitting owns the time-zero initial-observation and scoring policy."))
+        solver::AbstractSolver = MoM(), mode::AbstractSimulationMode = TransientMode(),
+        problem_options::NamedTuple = (;), observable_order = nothing, observable_projections::NamedTuple = (;),
+        algorithm = nothing, solve_options::NamedTuple = (;), callback_factory = nothing)
     isempty(measured_runs) && throw(ArgumentError("Supply at least one experiment."))
     kinetic_selection = _kinetic_selection(crystal_model, _selected_tree(fit_specification))
     _validate_specification(fit_specification)
-    physical_runs = [_model_experiment_problem(crystal_model, experiment_run, solver; mode, problem_options...)
+    physical_runs = [_model_experiment_problem(crystal_model, experiment_run, solver, mode; problem_options...)
         for experiment_run in measured_runs]
-    prepared_setup = prepare_loss(physical_runs, collect(measured_runs); mode,
-        exclude_initial_concentration = false, kwargs...)
-    if mode === :transient
-        for (experiment_index, experiment_run) in enumerate(measured_runs)
-            for initial_name in observation_sources(experiment_run.conditions)
-                initial_series = getproperty(experiment_run.observables, initial_name)
-                filter!(sample_index -> !iszero(initial_series.time[sample_index]),
-                    prepared_setup.included_observations[experiment_index][initial_name])
-            end
-        end
-    end
-    _strict_likelihood_variances(fit_specification.loss, prepared_setup)
-    return PreparedFit(crystal_model, fit_specification, kinetic_selection, prepared_setup,
-        collect(CrystallisationExperiment, measured_runs), solver, mode, problem_options, values(kwargs))
+    prepared_setup = prepare_loss(physical_runs, measured_runs; mode, loss_function = fit_specification.loss,
+        observable_order, observable_projections, algorithm, solve_options, callback_factory)
+    _validate_likelihood_noise(fit_specification.loss, prepared_setup)
+    return PreparedFit(crystal_model, fit_specification, kinetic_selection, prepared_setup, solver, problem_options)
 end
 
 """Evaluate the selected-parameter objective; AD scalar types are preserved."""
 loss(prepared_fit::PreparedFit, selected_values::AbstractVector) = loss(prepared_fit.specification.loss,
+    prepared_fit.setup, _expanded_parameters(prepared_fit.selection, selected_values))
+
+"""Named objectives of the specification's loss at selected parameter values."""
+loss_terms(prepared_fit::PreparedFit, selected_values::AbstractVector) = loss_terms(prepared_fit.specification.loss,
     prepared_fit.setup, _expanded_parameters(prepared_fit.selection, selected_values))
 
 """A fitted model, named selected values, observable objectives, and native optimizer diagnostics."""
@@ -269,77 +263,115 @@ end
 Optimise the selected kinetic parameters with the specification's algorithm.
 A scalar objective returns a `FitResult`; NSGA2 returns one `FitResult` per
 Pareto candidate. `threaded` evaluates Metaheuristics populations in parallel,
-each candidate on a private copy of the solve templates.
+each task on a private copy of the solve templates.
 """
 function fit(prepared_fit::PreparedFit{<:Any, <:OptimisationSpec}; threaded::Bool = false)
-    fit_specification = prepared_fit.specification
-    bound_pairs = last.(_named_parameter_leaves(fit_specification.bounds))
+    bound_pairs = last.(_named_parameter_leaves(prepared_fit.specification.bounds))
     lower_bounds, upper_bounds = first.(bound_pairs), last.(bound_pairs)
     starting_values = prepared_fit.selection.baseline[prepared_fit.selection.indices]
     all(lower_bounds .<= starting_values .<= upper_bounds) || throw(ArgumentError("Current selected values must lie within bounds."))
-    algorithm = fit_specification.algorithm
-    backend_result = if algorithm isa Metaheuristics.Algorithm
-        private_algorithm = _configured_mh_algorithm(algorithm; parallel_evaluation = threaded)
-        candidate_objective = candidate_values -> _selected_optimizer_objective(
-            prepared_fit, candidate_values, private_algorithm.parameters isa Metaheuristics.NSGA2)
-        Metaheuristics.optimize(candidate_objective, Metaheuristics.boxconstraints(lower_bounds, upper_bounds), private_algorithm)
-    else
-        optimization_function = OptimizationBase.OptimizationFunction(
-            (candidate_values, fit_context) -> loss(fit_context, candidate_values), fit_specification.adtype)
-        optimization_problem = OptimizationBase.OptimizationProblem(optimization_function,
-            starting_values, prepared_fit; lb = lower_bounds, ub = upper_bounds)
-        OptimizationBase.solve(optimization_problem, algorithm; fit_specification.searchoptions...)
-    end
-    if algorithm isa Metaheuristics.Algorithm && algorithm.parameters isa Metaheuristics.NSGA2
-        pareto_values = Metaheuristics.positions(Metaheuristics.get_non_dominated_solutions(backend_result.population))
-        return [_model_fit_result(prepared_fit, collect(candidate_row), backend_result) for candidate_row in eachrow(pareto_values)]
-    end
-    optimal_values = backend_result isa Metaheuristics.State ? Metaheuristics.minimizer(backend_result) : backend_result.u
-    return _model_fit_result(prepared_fit, optimal_values, backend_result)
+    return _optimise(prepared_fit.specification.algorithm, prepared_fit, lower_bounds, upper_bounds,
+        starting_values; threaded)
 end
 
-function _selected_optimizer_objective(prepared_fit, candidate_values::AbstractVector, multiobjective::Bool)
-    if multiobjective
-        objective_values = collect(values(loss_terms(prepared_fit.specification.loss, prepared_fit.setup,
-            _expanded_parameters(prepared_fit.selection, candidate_values))))
-        return (objective_values, [0.0], [0.0])
+# Preserve caller configuration while isolating mutable status, parameters and RNG.
+function _configured_mh_algorithm(supplied_algorithm::Metaheuristics.Algorithm;
+                                  nparticles = nothing, generations = nothing, parallel_evaluation = nothing)
+    run_algorithm = deepcopy(supplied_algorithm)
+    run_algorithm.status = Metaheuristics.State(nothing, [])
+    if nparticles !== nothing
+        nparticles > 0 || throw(ArgumentError("nparticles must be positive"))
+        run_algorithm.parameters.N = nparticles
     end
-    return loss(prepared_fit, candidate_values)
+    if generations !== nothing
+        generations > 0 || throw(ArgumentError("generations must be positive"))
+        run_algorithm.options.iterations = generations
+    end
+    parallel_evaluation === nothing || (run_algorithm.options.parallel_evaluation = parallel_evaluation)
+    return run_algorithm
 end
-function _selected_optimizer_objective(prepared_fit, candidate_values::AbstractMatrix, multiobjective::Bool)
-    candidate_outputs = Vector{Any}(undef, size(candidate_values, 1))
-    Threads.@threads for candidate_index in axes(candidate_values, 1)
-        candidate_outputs[candidate_index] = _selected_optimizer_objective(deepcopy(prepared_fit),
-            collect(view(candidate_values, candidate_index, :)), multiobjective)
+
+"""Optimization.jl solvers: search from the model's current values; `threaded` does not apply."""
+function _optimise(optimiser, prepared_fit, lower_bounds, upper_bounds, starting_values; threaded::Bool)
+    fit_specification = prepared_fit.specification
+    optimization_function = OptimizationBase.OptimizationFunction(
+        (candidate_values, fit_context) -> loss(fit_context, candidate_values), fit_specification.adtype)
+    optimization_problem = OptimizationBase.OptimizationProblem(optimization_function,
+        starting_values, prepared_fit; lb = lower_bounds, ub = upper_bounds)
+    optimization_solution = OptimizationBase.solve(optimization_problem, optimiser; fit_specification.searchoptions...)
+    return _model_fit_result(prepared_fit, optimization_solution.u, optimization_solution)
+end
+
+"""Metaheuristics algorithms: population search inside the bounds on a private algorithm copy."""
+function _optimise(supplied_algorithm::Metaheuristics.Algorithm, prepared_fit, lower_bounds, upper_bounds,
+                   starting_values; threaded::Bool)
+    private_algorithm = _configured_mh_algorithm(supplied_algorithm; parallel_evaluation = threaded)
+    private_fit = _cristool_once_per_task(typeof(prepared_fit)) do
+        deepcopy(prepared_fit)
     end
-    return multiobjective ? (permutedims(hcat(first.(candidate_outputs)...)),
-        zeros(size(candidate_values, 1), 1), zeros(size(candidate_values, 1), 1)) : candidate_outputs
+    candidate_objective = _MetaheuristicsObjective(private_algorithm.parameters, prepared_fit, private_fit)
+    final_state = Metaheuristics.optimize(candidate_objective,
+        Metaheuristics.boxconstraints(lower_bounds, upper_bounds), private_algorithm)
+    return _metaheuristics_fit_results(private_algorithm.parameters, prepared_fit, final_state)
+end
+
+"""Metaheuristics objective: one candidate serially, or a population in parallel on per-task copies."""
+struct _MetaheuristicsObjective{Parameters, Fit, PrivateFit}
+    parameters::Parameters
+    prepared_fit::Fit
+    private_fit::PrivateFit
+end
+
+# Metaheuristics requires a method accepting `Any`; the argument shape then selects the evaluation.
+(candidate_objective::_MetaheuristicsObjective)(candidate_values) =
+    _evaluate_candidates(candidate_objective, candidate_values)
+
+_evaluate_candidates(candidate_objective::_MetaheuristicsObjective, candidate_values::AbstractVector) =
+    _candidate_score(candidate_objective.parameters, candidate_objective.prepared_fit, candidate_values)
+
+function _evaluate_candidates(candidate_objective::_MetaheuristicsObjective, candidate_values::AbstractMatrix)
+    candidate_scores = Vector{_candidate_score_type(candidate_objective.parameters)}(undef, size(candidate_values, 1))
+    Threads.@threads for candidate_index in axes(candidate_values, 1)
+        candidate_scores[candidate_index] = _candidate_score(candidate_objective.parameters,
+            candidate_objective.private_fit(), collect(view(candidate_values, candidate_index, :)))
+    end
+    return _population_scores(candidate_objective.parameters, candidate_scores)
+end
+
+# Scalar algorithms minimise the total loss; NSGA2 minimises each named objective.
+_candidate_score(::Metaheuristics.AbstractParameters, prepared_fit, candidate_values) =
+    loss(prepared_fit, candidate_values)
+_candidate_score(::Metaheuristics.NSGA2, prepared_fit, candidate_values) =
+    (collect(Float64, values(loss_terms(prepared_fit, candidate_values))), [0.0], [0.0])
+
+_candidate_score_type(::Metaheuristics.AbstractParameters) = Float64
+_candidate_score_type(::Metaheuristics.NSGA2) = Tuple{Vector{Float64}, Vector{Float64}, Vector{Float64}}
+
+_population_scores(::Metaheuristics.AbstractParameters, candidate_scores) = candidate_scores
+_population_scores(::Metaheuristics.NSGA2, candidate_scores) =
+    (permutedims(reduce(hcat, first.(candidate_scores))),
+     zeros(length(candidate_scores), 1), zeros(length(candidate_scores), 1))
+
+_metaheuristics_fit_results(::Metaheuristics.AbstractParameters, prepared_fit, final_state) =
+    _model_fit_result(prepared_fit, Metaheuristics.minimizer(final_state), final_state)
+function _metaheuristics_fit_results(::Metaheuristics.NSGA2, prepared_fit, final_state)
+    pareto_values = Metaheuristics.positions(Metaheuristics.get_non_dominated_solutions(final_state.population))
+    return [_model_fit_result(prepared_fit, collect(candidate_row), final_state) for candidate_row in eachrow(pareto_values)]
 end
 
 function _model_fit_result(prepared_fit, optimal_values, backend_result)
     fitted_model = _selected_model(prepared_fit.model, prepared_fit.selection, optimal_values)
-    named_objectives = loss_terms(prepared_fit.specification.loss, prepared_fit.setup,
-        _expanded_parameters(prepared_fit.selection, optimal_values))
     return FitResult(fitted_model, _selected_named_values(prepared_fit.selection, optimal_values),
-        named_objectives, backend_result, prepared_fit)
+        loss_terms(prepared_fit, optimal_values), backend_result, prepared_fit)
 end
-
-struct SelectedLikelihood{Loss, Selection} <: AbstractPELossFunction
-    lossfunction::Loss
-    selection::Selection
-end
-loss(selected_likelihood::SelectedLikelihood, private_setup::LossSetup, selected_values) =
-    loss(selected_likelihood.lossfunction, private_setup,
-        _expanded_parameters(selected_likelihood.selection, selected_values))
 
 """Build a Turing model with explicit priors over selected kinetic parameters."""
 function nuts_model(prepared_fit::PreparedFit{<:Any, <:BayesianSpec})
     prior_values = last.(_named_parameter_leaves(prepared_fit.specification.priors))
-    private_preparation = _cristool_once_per_task(LossSetup) do
-        deepcopy(prepared_fit.setup)
+    private_fit = _cristool_once_per_task(typeof(prepared_fit)) do
+        deepcopy(prepared_fit)
     end
-    return _cristool_nuts_loss_model(prior_values,
-        SelectedLikelihood(prepared_fit.specification.loss, prepared_fit.selection), private_preparation)
+    return _cristool_nuts_loss_model(prior_values, private_fit)
 end
 
 """Joint parameter draws: selected named paths in rows, common sample IDs in columns."""
@@ -447,64 +479,61 @@ predicted at their observation times. `runs` may hold experiments (conditions
 resolved from their time-zero observations) or numeric `RunConditions`, which
 need `saveat`. A `FitResult` predicts its single fitted draw.
 """
-predict(fit_outcome::Union{FitResult, InferenceResult},
-        prediction_runs::AbstractVector = fit_outcome.preparation.experiments; kwargs...) =
-    predict(fit_outcome.preparation.model, prediction_runs, _result_samples(fit_outcome);
-        solver = fit_outcome.preparation.solver, mode = fit_outcome.preparation.mode,
-        problem_options = fit_outcome.preparation.problem_options,
-        _numerical_solve_settings(fit_outcome.preparation.solve_settings)..., kwargs...)
-
-# Scoring settings (observable order, projections) belong to the fit, not its predictions.
-_numerical_solve_settings(solve_settings::NamedTuple) = NamedTuple{Tuple(filter(
-    in((:algorithm, :solve_options, :callback_factory, :steady_options)), keys(solve_settings)))}(solve_settings)
+function predict(fit_outcome::Union{FitResult, InferenceResult},
+        prediction_runs::AbstractVector = fit_outcome.preparation.setup.experiments; kwargs...)
+    preparation = fit_outcome.preparation
+    fitted_solves = preparation.setup.solves
+    # Scoring settings (observable order, weights, projections) belong to the fit, not its predictions.
+    return predict(preparation.model, prediction_runs, _result_samples(fit_outcome);
+        solver = preparation.solver, mode = fitted_solves.mode, problem_options = preparation.problem_options,
+        algorithm = fitted_solves.requested_algorithm, solve_options = fitted_solves.solve_options,
+        callback_factory = fitted_solves.callback_factory, kwargs...)
+end
 
 _result_samples(inference_result::InferenceResult) = inference_result.samples
 _result_samples(fit_result::FitResult) = ParameterSamples(fit_result.preparation.selection.names,
     reshape(last.(_named_parameter_leaves(fit_result.parameters)), :, 1); source = :fit)
 
 """
-    predict(model, runs, samples; solver, mode=:transient, problem_options=(;),
-            saveat=nothing, observables=nothing, solve_settings...)
+    predict(model, runs, samples; solver, mode=TransientMode(), problem_options=(;),
+            saveat=nothing, observables=nothing, algorithm=nothing, solve_options=(;),
+            callback_factory=nothing)
 
 Propagate user-supplied joint kinetic draws. The solver is required so that a
-prediction never silently changes numerical method. Remaining keywords are the
-solve settings accepted by `prepare_fit` (e.g. `solve_options`). Each draw is
-reused across all runs; noise is added only through `measurement_samples`.
+prediction never silently changes numerical method. `algorithm`,
+`solve_options` and `callback_factory` are the solve settings accepted by
+`prepare_fit`. Each draw is reused across all runs; noise is added only through
+`measurement_samples`.
 """
 function predict(crystal_model::CrystallisationModel, prediction_runs::AbstractVector,
-        joint_samples::ParameterSamples; solver::AbstractSolver, mode::Symbol = :transient,
-        problem_options::NamedTuple = (;), saveat = nothing, observables = nothing, solve_settings...)
-    mode in (:transient, :steady) || throw(ArgumentError("mode must be :transient or :steady."))
+        joint_samples::ParameterSamples; solver::AbstractSolver, mode::AbstractSimulationMode = TransientMode(),
+        problem_options::NamedTuple = (;), saveat = nothing, observables = nothing,
+        algorithm = nothing, solve_options::NamedTuple = (;), callback_factory = nothing)
     isempty(prediction_runs) && throw(ArgumentError("Supply prediction experiments or run conditions."))
     sample_selection = _kinetic_selection(crystal_model, joint_samples.names)
-    expanded_draws = hcat([_expanded_parameters(sample_selection, view(joint_samples.values, :, draw_index))
-        for draw_index in axes(joint_samples.values, 2)]...)
-    physical_runs = CrystallisationProblem[]
-    prediction_experiments = CrystallisationExperiment[]
-    for (run_index, prediction_run) in enumerate(prediction_runs)
-        if prediction_run isa CrystallisationExperiment
-            physical_run = _model_experiment_problem(crystal_model, prediction_run, solver; mode, problem_options...)
-            requested_times = saveat === nothing ?
-                _loss_saveat(prediction_run, solver; require_multiple = false) : collect(Float64, saveat)
-            experiment_id = prediction_run.exp_id
-        elseif prediction_run isa RunConditions
-            saveat === nothing && throw(ArgumentError("Predictions from run conditions need saveat."))
-            physical_run = CrystallisationProblem(crystal_model, prediction_run; solver, problem_options...)
-            requested_times, experiment_id = collect(Float64, saveat), run_index
-        else
-            throw(ArgumentError("Predictions take experiments or RunConditions."))
-        end
-        _validate_save_times(requested_times)
-        push!(physical_runs, physical_run)
-        push!(prediction_experiments, CrystallisationExperiment(exp_id = experiment_id,
-            observables = (; concentration = Observable(time = requested_times, mean = zeros(length(requested_times)))),
-            conditions = RunConditions(temperature = physical_run.temp_profile,
-                concentration = physical_run.initial_concentration)))
-    end
-    prepared_predictions = prepare_loss(physical_runs, prediction_experiments;
-        exclude_initial_concentration = false, mode, solve_settings...)
-    ensemble_predictions = run_ensemble(expanded_draws, prepared_predictions; observables)
-    return PredictionResult(joint_samples, getproperty.(prediction_experiments, :exp_id), ensemble_predictions)
+    expanded_draws = reduce(hcat, [_expanded_parameters(sample_selection, view(joint_samples.values, :, draw_index))
+        for draw_index in axes(joint_samples.values, 2)])
+    prediction_specs = [_prediction_run(prediction_run, run_index, crystal_model, solver, mode, saveat, problem_options)
+        for (run_index, prediction_run) in enumerate(prediction_runs)]
+    prepared_solves = _prepare_solves(first.(prediction_specs), getindex.(prediction_specs, 2), mode;
+        algorithm, solve_options, callback_factory)
+    ensemble_predictions = run_ensemble(expanded_draws, prepared_solves; observables)
+    return PredictionResult(joint_samples, last.(prediction_specs), ensemble_predictions)
+end
+
+"""`(problem, requested times, run id)` for one prediction run."""
+function _prediction_run(experiment_run::CrystallisationExperiment, run_index::Int, crystal_model,
+                         solver, simulation_mode, saveat, problem_options)
+    requested_times = saveat === nothing ? _observation_times(experiment_run) : collect(Float64, saveat)
+    return (_model_experiment_problem(crystal_model, experiment_run, solver, simulation_mode; problem_options...),
+        requested_times, experiment_run.exp_id)
+end
+
+function _prediction_run(run_conditions::RunConditions, run_index::Int, crystal_model,
+                         solver, simulation_mode, saveat, problem_options)
+    saveat === nothing && throw(ArgumentError("Predictions from run conditions need saveat."))
+    return (CrystallisationProblem(crystal_model, run_conditions; solver, problem_options...),
+        collect(Float64, saveat), run_index)
 end
 
 """Summarise physical trajectory uncertainty, requiring explicit exclusion of failures."""
@@ -524,8 +553,8 @@ function measurement_samples(predictions::PredictionResult, observable_name::Sym
     return map(enumerate(predictions.ensembles)) do (experiment_index, ensemble_prediction)
         measurement_matrix = copy(observable_values(ensemble_prediction, observable_name))
         for time_index in eachindex(ensemble_prediction.time)
-            noise_distribution = noise isa Distributions.UnivariateDistribution ? noise :
-                noise(predictions.experiments[experiment_index], observable_name, ensemble_prediction.time[time_index])
+            noise_distribution = _noise_distribution(noise, predictions.experiments[experiment_index],
+                observable_name, ensemble_prediction.time[time_index])
             noise_distribution isa Distributions.UnivariateDistribution || throw(ArgumentError("Supply a univariate additive noise distribution."))
             for draw_index in axes(measurement_matrix, 1)
                 ensemble_prediction.success[draw_index] || continue
@@ -535,3 +564,7 @@ function measurement_samples(predictions::PredictionResult, observable_name::Sym
         measurement_matrix
     end
 end
+
+# A fixed distribution applies everywhere; a callable chooses one per run, observable and time.
+_noise_distribution(noise::Distributions.UnivariateDistribution, run_id, observable_name, saved_time) = noise
+_noise_distribution(noise, run_id, observable_name, saved_time) = noise(run_id, observable_name, saved_time)
