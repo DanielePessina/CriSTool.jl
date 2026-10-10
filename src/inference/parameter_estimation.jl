@@ -238,19 +238,7 @@ function _checked_weight(weight)
     return Float64(weight)
 end
 
-_total_nparams(nucl, gr, agg, br; diss = nodissolution()) =
-    _nparams_of(nucl) + _nparams_of(gr) + _nparams_of(diss) +
-    _nparams_of(agg) + _nparams_of(br)
-
-_nparams_of(kinetic_function) = hasproperty(kinetic_function, :nparams) ?
-    getproperty(kinetic_function, :nparams) : 0
-
-_kinetic_parameter_count(configured_problem::CrystallisationProblem) =
-    _total_nparams(configured_problem.kinetics_nucleationfunction,
-        configured_problem.kinetics_growthfunction,
-        configured_problem.kinetics_aggregationfunction,
-        configured_problem.kinetics_breakagefunction;
-        diss = configured_problem.kinetics_dissolutionfunction)
+_kinetic_parameter_count(configured_problem::CrystallisationProblem) = _parameter_count(configured_problem)
 _kinetic_parameter_count(prepared_solves::PreparedSolves) =
     _kinetic_parameter_count(first(prepared_solves.runs).problem)
 _kinetic_parameter_count(setup::LossSetup) = _kinetic_parameter_count(setup.solves)

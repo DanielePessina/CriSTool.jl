@@ -193,10 +193,7 @@ end
 CriSTool.saturation_concentration(solubility::SimulateLinearSolubility, temperature_profile, elapsed_time) =
     solubility.slope_per_kelvin * (CriSTool.temperature(temperature_profile, elapsed_time) - 273.15) + solubility.intercept
 
-struct SimulateLinearGrowth <: AbstractFPScalarGrowthFunction
-    nparams::Int
-end
-SimulateLinearGrowth() = SimulateLinearGrowth(1)
+struct SimulateLinearGrowth <: AbstractFPScalarGrowthFunction end
 CriSTool.paramaxis(::SimulateLinearGrowth) = CriSTool.ComponentArrays.Axis(linear_growth_coefficient = 1)
 CriSTool.growthrate(::SimulateLinearGrowth, kinetic_parameters, configured_run::CrystallisationProblem, ode_state, elapsed_time) =
     kinetic_parameters[1] * (supersaturation(configured_run, ode_state, elapsed_time) - 1)

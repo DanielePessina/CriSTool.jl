@@ -109,8 +109,7 @@ using CriSTool
 
 growth_only_model = CrystallisationModel(
     LysozymeSystem(saturation_model = ConstantSolubility(10.0));
-    nucleation = nucl_empirical_fixed(log10_nucleation_prefactor = -Inf,
-                                      nucleation_order = 1.0),
+    nucleation = CallableNucleation((rate_values, rate_context) -> 0.0; parameters = (;)),
     growth = growth_empirical(growth_coefficient = 3e-9, growth_order = 1.2))
 
 seeded_run = RunConditions(temperature = 293.15, concentration = 20.0,

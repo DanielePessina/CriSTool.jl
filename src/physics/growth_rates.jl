@@ -23,36 +23,6 @@ function growthrate!(destination::AbstractVector,
     return destination
 end
 
-"""Compatibility mesh adapter for scalar dissolution laws used as a legacy
-growth model.  New code should put the law in the independent `diss` slot and
-call `dissolutionrate!`/`net_growth_rate!` instead."""
-function growthrate!(destination::AbstractVector,
-                     gf::AbstractFPScalarDissolutionFunction,
-                     parameters,
-                     problem::CrystallisationProblem,
-                     state,
-                     time,
-                     mesh::AbstractVector)
-    length(destination) == length(mesh) ||
-        throw(ArgumentError("growthrate! destination and mesh must have the same length."))
-    scalar_rate = growthrate(gf, parameters, problem, state, time)
-    fill!(destination, scalar_rate)
-    return destination
-end
-
-"""Compatibility mesh adapter for legacy length dissolution models supplied
-through the growth slot."""
-function growthrate!(destination::AbstractVector,
-                     gf::AbstractFPLengthDissolutionFunction,
-                     parameters,
-                     problem::CrystallisationProblem,
-                     state,
-                     time,
-                     mesh::AbstractVector)
-    return dissolutionrate!(destination, gf, parameters, problem, state, time,
-                            mesh)
-end
-
 """
     growthrate_at_length(gf::AbstractFPScalarGrowthFunction, parameters,
                          problem, state, time, crystal_length)
@@ -66,21 +36,6 @@ growthrate_at_length(gf::AbstractFPScalarGrowthFunction,
                      state,
                      time,
                      crystal_length::Real) = growthrate(gf, parameters, problem, state, time)
-
-growthrate_at_length(gf::AbstractFPScalarDissolutionFunction,
-                     parameters,
-                     problem::CrystallisationProblem,
-                     state,
-                     time,
-                     crystal_length::Real) = growthrate(gf, parameters, problem, state, time)
-
-growthrate_at_length(gf::AbstractFPLengthDissolutionFunction,
-                     parameters,
-                     problem::CrystallisationProblem,
-                     state,
-                     time,
-                     crystal_length::Real) = dissolutionrate_at_length(
-                         gf, parameters, problem, state, time, crystal_length)
 
 @inline _growth_activation_rate(log10_growth_coefficient, activation_energy,
                                 temperature, gas_constant) =
@@ -220,18 +175,6 @@ end
     crystal_length::Real) = dissolutionrate(dissolutionfunction, parameters,
                                              problem, state, time)
 
-function dissolutionrate_at_length(
-    dissolutionfunction::AbstractFPLengthDissolutionFunction,
-    parameters,
-    problem::CrystallisationProblem,
-    state,
-    time,
-    crystal_length::Real)
-    throw(MethodError(dissolutionrate_at_length,
-                      (dissolutionfunction, parameters, problem, state, time,
-                       crystal_length)))
-end
-
 """Fill a mesh-sized destination with length-dependent dissolution."""
 function dissolutionrate!(destination::AbstractVector,
                           dissolutionfunction::AbstractFPLengthDissolutionFunction,
@@ -325,8 +268,7 @@ function net_growth_rate!(destination::AbstractVector,
     length(destination) == length(mesh) ||
         throw(ArgumentError("growth-rate destination and mesh must have the same length."))
 
-    if growthfunction isa Union{AbstractFPLengthGrowthFunction,
-                                AbstractFPLengthDissolutionFunction}
+    if _is_length_law(growthfunction)
         growthrate!(destination, growthfunction, growth_parameters, problem,
                     state, time, mesh)
     else
@@ -335,7 +277,7 @@ function net_growth_rate!(destination::AbstractVector,
         fill!(destination, growth_value)
     end
 
-    if dissolutionfunction isa AbstractFPLengthDissolutionFunction
+    if _is_length_law(dissolutionfunction)
         _add_length_dissolution_rates!(destination, dissolutionfunction,
                                        dissolution_parameters, problem, state,
                                        time, mesh)
@@ -350,13 +292,6 @@ function net_growth_rate!(destination::AbstractVector,
     return destination
 end
 
-"""Legacy three-argument net-rate alias for callers without dissolution."""
-@inline net_growth_rate(growthfunction, parameters, problem, state, time) =
-    growthrate(growthfunction, parameters, problem, state, time)
-
-"""Compatibility spelling for the legacy growth-only net-rate helper."""
-@inline net_growthrate(args...) = net_growth_rate(args...)
-
 function _validate_dissolution_scalar_parameters(model, parameters)
     all(isfinite, parameters) ||
         throw(ArgumentError("$(typeof(model)) parameters must be finite."))
@@ -370,14 +305,6 @@ function _validate_dissolution_parameters(model::AbstractDissolutionFunction,
     return nothing
 end
 
-# Legacy `growth_dissolution` models were historically supplied through the
-# growth field.  Keep their validation there while sharing the independent
-# dissolution validation hook for the new `diss` field.
-_validate_growth_parameters(model::AbstractDissolutionFunction,
-                            parameters,
-                            problem::CrystallisationProblem) =
-    _validate_dissolution_parameters(model, parameters, problem)
-
 function _validate_dissolution_parameters(model::growth_dissolution,
                                           parameters,
                                           problem::CrystallisationProblem)
@@ -389,29 +316,6 @@ function _validate_dissolution_parameters(model::growth_dissolution,
         throw(ArgumentError("dissolution_order must be strictly positive."))
     return nothing
 end
-
-_validate_growth_parameters(model::growth_dissolution,
-                            parameters,
-                            problem::CrystallisationProblem) =
-    _validate_dissolution_parameters(model, parameters, problem)
-
-function _validate_dissolution_parameters(model::growth_energy_dissolution,
-                                          parameters,
-                                          problem::CrystallisationProblem)
-    _validate_dissolution_scalar_parameters(model, parameters)
-    p = _named_params(model, parameters)
-    p.dissolution_coefficient >= 0.0 ||
-        throw(ArgumentError("dissolution_coefficient must be nonnegative."))
-    p.growth_order > 0.0 || throw(ArgumentError("growth_order must be strictly positive."))
-    p.dissolution_order > 0.0 ||
-        throw(ArgumentError("dissolution_order must be strictly positive."))
-    return nothing
-end
-
-_validate_growth_parameters(model::growth_energy_dissolution,
-                            parameters,
-                            problem::CrystallisationProblem) =
-    _validate_dissolution_parameters(model, parameters, problem)
 
 function _validate_dissolution_parameters(model::growth_dissolution_length,
                                           parameters,
@@ -433,11 +337,6 @@ function _validate_dissolution_parameters(model::growth_dissolution_length,
     end
     return nothing
 end
-
-_validate_growth_parameters(model::growth_dissolution_length,
-                            parameters,
-                            problem::CrystallisationProblem) =
-    _validate_dissolution_parameters(model, parameters, problem)
 
 function _validate_growth_parameters(model::growth_empirical_length,
                                      parameters,
@@ -577,11 +476,11 @@ end
     growthrate(gf::growth_energy, parameters::AbstractVector,
                problem::CrystallisationProblem, state, t) -> Real
 
-Calculate growth rate with Arrhenius temperature dependence using fixed activation energy.
+Power-law growth with an Arrhenius temperature dependence.
 
 # Arguments
-- `gf`: Growth function with embedded activation energy
-- `parameters`: Vector [log10_growth_coefficient, growth_order]
+- `parameters`: Vector [log10_growth_coefficient, activation_energy,
+  growth_order], with activation energy in J/mol.
 - `problem`: Crystallisation problem providing the saturation model and gas
   constant.
 - `state`: Current solver state, including the named solvent-state values.
@@ -595,35 +494,7 @@ function growthrate(gf::growth_energy, parameters::T, prob::CrystallisationProbl
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
     return _growth_energy_rate(p.log10_growth_coefficient, p.growth_order,
-                               gf.activation_energy, S, temp, prob.R_gas_constant)
-    ## multiply by 1e12 to convert to typical units
-end
-
-"""
-    growthrate(gf::growth_energy_est, parameters::AbstractVector,
-               problem::CrystallisationProblem, state, t) -> Real
-
-Calculate growth rate with Arrhenius temperature dependence and estimated activation energy.
-
-# Arguments
-- `gf`: Growth function struct
-- `parameters`: Vector [log10_growth_coefficient, activation_energy, growth_order],
-  with activation energy in J/mol.
-- `problem`: Crystallisation problem providing the saturation model and gas
-  constant.
-- `state`: Current solver state, including the named solvent-state values.
-- `t`: Time in seconds.
-
-# Returns
-- Growth rate (m/s) if S > 1.001, otherwise 0
-"""
-function growthrate(gf::growth_energy_est, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
-    p = _named_params(gf, parameters)
-    S = supersaturation(prob, state, t)
-    temp = temperature(prob.temp_profile, t)
-    return _growth_energy_rate(p.log10_growth_coefficient, p.growth_order,
                                p.activation_energy, S, temp, prob.R_gas_constant)
-    ## multiply by 1e12 to convert to typical units
 end
 
 """
@@ -699,59 +570,6 @@ end
 
 ### Dissolution
 
-"""
-    dissolutionrate(gf::growth_dissolution_length, parameters::AbstractVector,
-                    problem::CrystallisationProblem, state, t) -> Vector
-
-Calculate length-dependent dissolution rate (negative growth).
-
-# Arguments
-- `gf`: Dissolution growth function
-- `parameters`: Vector [dissolution_coefficient, activation_energy,
-  dissolution_order, size_dependence_coefficient, size_dependence_exponent]
-  for dissolution kinetics; the coefficient is in m/s and activation energy
-  in J/mol.
-- `problem`: Crystallisation problem with a discretised solver mesh.
-- `state`: Current solver state, including the named solvent-state values and
-  crystal population.
-- `t`: Time in seconds.
-
-# Returns
-- Vector of dissolution rates (m/s) at each mesh point, zero vector if supersaturated
-"""
-function dissolutionrate(gf::growth_dissolution_length, parameters::T,
-                         prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
-    mesh = _length_mesh(prob.solver)
-    rate_type = promote_type(eltype(parameters), eltype(state))
-    destination = Vector{rate_type}(undef, length(mesh))
-    dissolutionrate!(destination, gf, parameters, prob, state, t, mesh)
-    return destination
-end
-
-# Source-compatible name for callers that supplied this law through `gr`.
-growthrate(gf::growth_dissolution_length, parameters::T,
-           prob::CrystallisationProblem, state, t) where {T <: AbstractVector} =
-    dissolutionrate(gf, parameters, prob, state, t)
-
-"""
-    growthrate!(destination, gf::growth_dissolution_length, parameters,
-                prob, state, t[, mesh])
-
-Fill `destination` with the signed, length-dependent dissolution rate.
-The optional mesh defaults to `prob.solver.cell_centre`.  The destination is
-kept separate from the public allocating `growthrate` convenience method so
-finite-volume and WENO RHS evaluations can reuse a typed scratch buffer.
-"""
-function growthrate!(destination::AbstractVector,
-                     gf::growth_dissolution_length,
-                     parameters,
-                     prob::CrystallisationProblem,
-                     state,
-                     t)
-    mesh = _length_mesh(prob.solver)
-    return dissolutionrate!(destination, gf, parameters, prob, state, t, mesh)
-end
-
 function dissolutionrate!(destination::AbstractVector,
                           gf::growth_dissolution_length,
                           parameters,
@@ -778,19 +596,9 @@ function dissolutionrate!(destination::AbstractVector,
     return destination
 end
 
-# Source-compatible mutating name for the old `gr` slot.
-growthrate!(destination::AbstractVector,
-            gf::growth_dissolution_length,
-            parameters,
-            prob::CrystallisationProblem,
-            state,
-            t,
-            mesh::AbstractVector) =
-    dissolutionrate!(destination, gf, parameters, prob, state, t, mesh)
-
 """
-    growthrate_at_length(gf::growth_dissolution_length, parameters,
-                         prob, state, t, length)
+    dissolutionrate_at_length(gf::growth_dissolution_length, parameters,
+                              prob, state, t, length)
 
 Evaluate a length-dependent signed dissolution rate at one crystal length
 without constructing a mesh-sized result.
@@ -811,25 +619,15 @@ function dissolutionrate_at_length(gf::growth_dissolution_length,
         gf, named_parameters, dissolution_prefactor, crystal_length)
 end
 
-growthrate_at_length(gf::growth_dissolution_length,
-                     parameters,
-                     prob::CrystallisationProblem,
-                     state,
-                     t,
-                     crystal_length::Real) =
-    dissolutionrate_at_length(gf, parameters, prob, state, t, crystal_length)
-
 """
-    growthrate(gf::growth_dissolution, parameters::AbstractVector,
-               problem::CrystallisationProblem, state, t) -> Real
+    dissolutionrate(gf::growth_dissolution, parameters::AbstractVector,
+                    problem::CrystallisationProblem, state, t) -> Real
 
-Calculate scalar dissolution rate (negative growth) with Arrhenius temperature dependence.
+Scalar dissolution rate (negative growth) with Arrhenius temperature dependence.
 
 # Arguments
-- `gf`: Dissolution growth function
 - `parameters`: Vector [dissolution_coefficient, activation_energy,
-  dissolution_order] for dissolution kinetics; the coefficient is in m/s and
-  activation energy in J/mol.
+  dissolution_order]; the coefficient is in m/s and activation energy in J/mol.
 - `problem`: Crystallisation problem providing the saturation model, gas
   constant, and temperature profile.
 - `state`: Current solver state, including the named solvent-state values.
@@ -838,87 +636,10 @@ Calculate scalar dissolution rate (negative growth) with Arrhenius temperature d
 # Returns
 - Dissolution rate (negative m/s) if undersaturated, 0 otherwise
 """
-function growthrate(gf::growth_dissolution, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
+function dissolutionrate(gf::growth_dissolution, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
     p = _named_params(gf, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
     return _dissolution_rate(p.dissolution_coefficient, p.activation_energy,
                              p.dissolution_order, S, temp, prob.R_gas_constant)
-end
-
-"""Independent dissolution dispatch for the legacy empirical law."""
-dissolutionrate(gf::growth_dissolution, parameters::T,
-                prob::CrystallisationProblem, state, t) where {T <: AbstractVector} =
-    growthrate(gf, parameters, prob, state, t)
-
-"""
-    growthrate(gf::growth_energy_dissolution, parameters::AbstractVector,
-               problem::CrystallisationProblem, state, t) -> Real
-
-Calculate growth or dissolution rate depending on supersaturation.
-
-Uses `growth_energy` for supersaturated conditions (S > 1.001) and
-`growth_dissolution` for undersaturated conditions.
-
-# Arguments
-- `gf`: Combined growth/dissolution function
-- `parameters`: Vector [log10_growth_coefficient, growth_order,
-  dissolution_coefficient, activation_energy, dissolution_order] for the
-  combined kinetics.
-- `problem`: Crystallisation problem providing the saturation model, gas
-  constant, and temperature profile.
-- `state`: Current solver state, including the named solvent-state values.
-- `t`: Time in seconds.
-
-# Returns
-- Growth rate (m/s) if supersaturated, dissolution rate if undersaturated
-"""
-function growthrate(gf::growth_energy_dissolution, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
-    p = _named_params(gf, parameters)
-    S = supersaturation(prob, state, t)
-    temp = temperature(prob.temp_profile, t)
-    growth_threshold = one(S) + CRISTOOL_DISSOLUTION_EQUILIBRIUM_TOLERANCE
-    dissolution_threshold = one(S) - CRISTOOL_DISSOLUTION_EQUILIBRIUM_TOLERANCE
-    if S > growth_threshold
-        return _growth_energy_rate(p.log10_growth_coefficient, p.growth_order,
-                                   53e3, S, temp, prob.R_gas_constant)
-    elseif S < dissolution_threshold
-        return _dissolution_rate(p.dissolution_coefficient, p.activation_energy,
-                                 p.dissolution_order, S, temp, prob.R_gas_constant)
-    end
-    return zero(S)
-end
-
-"""Independent dissolution contribution of the legacy combined law."""
-function dissolutionrate(gf::growth_energy_dissolution, parameters::T,
-                         prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
-    p = _named_params(gf, parameters)
-    S = supersaturation(prob, state, t)
-    temp = temperature(prob.temp_profile, t)
-    return _dissolution_rate(p.dissolution_coefficient, p.activation_energy,
-                             p.dissolution_order, S, temp, prob.R_gas_constant)
-end
-
-###
-
-"""
-    growthrate(grf::growth_empirical_fixed, parameters,
-               problem::CrystallisationProblem, state, t) -> Real
-
-Calculate empirical growth rate using pre-fixed parameters embedded in the struct.
-
-# Arguments
-- `grf`: Fixed empirical growth function with embedded growth coefficient and order
-- `parameters`: Ignored (parameters taken from grf)
-- `problem`: Crystallisation problem providing the saturation model.
-- `state`: Current solver state, including the named solvent-state values.
-- `t`: Time in seconds.
-
-# Returns
-- Growth rate (m/s) if S > 1.001, otherwise 0
-"""
-function growthrate(grf::growth_empirical_fixed, parameters, prob::CrystallisationProblem, state, t)
-    S = supersaturation(prob, state, t)
-    return S > 1.001 ? grf.growth_coefficient *
-                       (S - 1)^grf.growth_order : 0.0
 end

@@ -95,9 +95,7 @@ function _mesh_boundary_flow_state(solver::FiniteVol, problem, ode_solution)
                                                parameters.nucl, problem,
                                                numerical_state, simulation_time)
 
-        if problem.kinetics_growthfunction isa Union{AbstractFPScalarGrowthFunction,
-                                                     AbstractFPScalarDissolutionFunction} &&
-           !(problem.kinetics_dissolutionfunction isa AbstractFPLengthDissolutionFunction)
+        if !_uses_length_rates(problem)
             scalar_growth_rate = _fv_scalar_net_growth_rate(
                 problem.kinetics_growthfunction, parameters.gr,
                 problem.kinetics_dissolutionfunction, parameters.diss,
@@ -151,11 +149,10 @@ High-resolution (OSPRE-limited) transport for scalar growth, first-order
 signed upwinding for length-dependent growth; selected by the growth law.
 """
 crystallisation_odeproblem(solver::FiniteVol, problem::CrystallisationProblem, saveat) =
-    _finite_volume_odeproblem(problem.kinetics_growthfunction, solver, problem, saveat)
+    _finite_volume_odeproblem(Val(_is_length_law(problem.kinetics_growthfunction)), solver, problem, saveat)
 
 """Build the high-resolution FV ODE for scalar growth."""
-function _finite_volume_odeproblem(growthfunction::Union{AbstractFPScalarGrowthFunction,
-                                                         AbstractFPScalarDissolutionFunction},
+function _finite_volume_odeproblem(length_growth::Val{false},
                                    solver::FiniteVol, CryProblem::CrystallisationProblem, saveat)
     # Pre-allocate flux cache using DiffCache for ForwardDiff compatibility
     # DiffCache automatically handles type conversion for dual numbers during AD
@@ -172,7 +169,7 @@ function _finite_volume_odeproblem(growthfunction::Union{AbstractFPScalarGrowthF
         cell_centre = CryProblem.solver.cell_centre
         dissolutionfunction = CryProblem.kinetics_dissolutionfunction
 
-        if dissolutionfunction isa AbstractFPLengthDissolutionFunction
+        if _is_length_law(dissolutionfunction)
             net_growth_rates = get_tmp(_growth_rate_cache_dc, st)
             net_growth_rate!(net_growth_rates,
                                    CryProblem.kinetics_growthfunction,
@@ -276,8 +273,7 @@ function _finite_volume_odeproblem(growthfunction::Union{AbstractFPScalarGrowthF
 end
 
 """Build the FV ODE for length-dependent (mesh-aligned) growth."""
-function _finite_volume_odeproblem(growthfunction::Union{AbstractFPLengthGrowthFunction,
-                                                         AbstractFPLengthDissolutionFunction},
+function _finite_volume_odeproblem(length_growth::Val{true},
                                    solver::FiniteVol, CryProblem::CrystallisationProblem, saveat)
     # Pre-allocate flux cache using DiffCache for ForwardDiff compatibility
     _flux_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 1))

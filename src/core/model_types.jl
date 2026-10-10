@@ -28,8 +28,9 @@ LysozymeSystem(; kwargs...) = CrystallisationSystem(;
 
 """`required_properties(law)` declares additional material properties used by a law."""
 required_properties(kinetic_law) = ()
-required_properties(::Union{nucl_CNT, nucl_CNTnoS, nucl_CNT_fixed, nucl_CNT_plus_second}) =
-    (:molecular_volume,)
+required_properties(::Union{nucl_CNT, nucl_CNTnoS}) = (:molecular_volume,)
+required_properties(combined_law::CombinedNucleation) =
+    Tuple(union(required_properties(combined_law.primary), required_properties(combined_law.secondary)))
 
 function _validate_required_material_property(kinetic_law, required_name, required_value)
     required_value !== nothing && (!(required_value isa Real) || isfinite(required_value)) ||
@@ -53,7 +54,7 @@ struct KineticModel{Law, Parameters <: NamedTuple}
     law::Law
     parameters::Parameters
     function KineticModel(kinetic_law; parameters::NamedTuple = (;))
-        declared_values = ComponentArray(collect(Float64, zeros(kinetic_law.nparams)), paramaxis(kinetic_law))
+        declared_values = ComponentArray(zeros(_parameter_count(kinetic_law)), paramaxis(kinetic_law))
         canonical_parameters = _canonical_kinetic_parameters(declared_values, parameters)
         supplied_values = ComponentArray(; canonical_parameters...)
         all(parameter_value -> parameter_value isa Real && isfinite(parameter_value), supplied_values) ||
@@ -84,6 +85,10 @@ end
 
 paramaxis(bound_kinetic::KineticModel) = paramaxis(bound_kinetic.law)
 
+CombinedNucleation(primary::KineticModel, secondary::KineticModel) =
+    KineticModel(CombinedNucleation(primary.law, secondary.law);
+        parameters = (primary = primary.parameters, secondary = secondary.parameters))
+
 """
     CrystallisationModel(system; nucleation, growth, dissolution=nodissolution(),
                          aggregation=noaggregation(), breakage=nobreakage())
@@ -109,7 +114,7 @@ CrystallisationModel(material_system; nucleation, growth, dissolution = nodissol
 
 _bound_kinetic(bound_kinetic::KineticModel) = bound_kinetic
 function _bound_kinetic(kinetic_law)
-    kinetic_law.nparams == 0 || throw(ArgumentError("$(nameof(typeof(kinetic_law))) needs parameter values; " *
+    _parameter_count(kinetic_law) == 0 || throw(ArgumentError("$(nameof(typeof(kinetic_law))) needs parameter values; " *
         "bind them with its keyword call, e.g. $(nameof(typeof(kinetic_law)))(name = value, ...)."))
     return KineticModel(kinetic_law)
 end
@@ -219,16 +224,14 @@ simulate(configured_run::CrystallisationProblem; saveat, kwargs...) =
     last(runsimulation(configured_run; save_idx = saveat, kwargs...))
 
 """Context for callable kinetics, with physical values and advanced problem/state access."""
-struct KineticContext{Problem, State, Time}
+struct KineticContext{Problem, State, Time, System}
     problem::Problem
     state::State
     time::Time
+    system::System
 end
-function Base.getproperty(rate_context::KineticContext, field_name::Symbol)
-    field_name === :system && return getfield(rate_context, :problem).material_system
-    return getfield(rate_context, field_name)
-end
-Base.propertynames(::KineticContext) = (:problem, :state, :time, :system)
+KineticContext(configured_run::CrystallisationProblem, numerical_state, clock_time) =
+    KineticContext(configured_run, numerical_state, clock_time, configured_run.material_system)
 supersaturation(rate_context::KineticContext) =
     supersaturation(rate_context.problem, rate_context.state, rate_context.time)
 temperature(rate_context::KineticContext) = temperature(rate_context.problem.temp_profile, rate_context.time)
@@ -262,13 +265,6 @@ CallableLengthGrowth(kinetic_callable; parameters::NamedTuple, required::Tuple =
     CallableLengthGrowth(kinetic_callable, parameters, required)
 
 const _CallableKinetic = Union{CallableGrowth, CallableNucleation, CallableLengthGrowth}
-Base.propertynames(callable_law::_CallableKinetic) = (:callable, :schema, :required, :nparams, :string, :symbols)
-function Base.getproperty(callable_law::_CallableKinetic, field_name::Symbol)
-    field_name === :nparams && return length(ComponentArray(; getfield(callable_law, :schema)...))
-    field_name === :string && return string(nameof(typeof(callable_law)))
-    field_name === :symbols && return Symbol.(ComponentArrays.labels(ComponentArray(; getfield(callable_law, :schema)...)))
-    return getfield(callable_law, field_name)
-end
 paramaxis(callable_law::_CallableKinetic) = first(getaxes(ComponentArray(; callable_law.schema...)))
 required_properties(callable_law::_CallableKinetic) = callable_law.required
 KineticModel(callable_law::_CallableKinetic) = KineticModel(callable_law; parameters = callable_law.schema)

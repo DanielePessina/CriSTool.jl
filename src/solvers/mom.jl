@@ -15,11 +15,7 @@ function _mom_extinction_callback(CryProblem::CrystallisationProblem)
     # Extinction handling is only meaningful for explicitly signed scalar
     # kinetics.  Keeping the callback off the ordinary positive-growth path
     # avoids changing its event/counter behavior.
-    dissolution_enabled = !(CryProblem.kinetics_dissolutionfunction isa nodissolution) ||
-                          (CryProblem.kinetics_growthfunction isa
-                           AbstractFPScalarDissolutionFunction)
-    dissolution_enabled ||
-        return nothing
+    _dissolution_enabled(CryProblem) || return nothing
 
     n_mom = CryProblem.solver.nmoments
     n_mom < 3 && return nothing
@@ -110,17 +106,11 @@ _validate_solver_kinetics(solver::AbstractSolver, problem::CrystallisationProble
 function _validate_solver_kinetics(solver::MoM, problem::CrystallisationProblem)
     solver.nmoments >= 2 ||
         throw(ArgumentError("MoM requires nmoments >= 2 (the concentration closure uses µ2)."))
-    if problem.kinetics_growthfunction isa AbstractFPLengthGrowthFunction ||
-       problem.kinetics_growthfunction isa AbstractFPLengthDissolutionFunction ||
-       problem.kinetics_dissolutionfunction isa AbstractFPLengthDissolutionFunction
+    _uses_length_rates(problem) &&
         throw(ArgumentError("MoM requires scalar kinetics; choose DQMOM for length growth or a mesh solver."))
-    end
-    problem.kinetics_aggregationfunction isa noaggregation &&
-        problem.kinetics_breakagefunction isa nobreakage ||
+    _has_binary_sources(problem) &&
         throw(ArgumentError("MoM does not support aggregation or breakage; choose a quadrature or discretised solver."))
-    signed_dissolution = !(problem.kinetics_dissolutionfunction isa nodissolution) ||
-                         problem.kinetics_growthfunction isa AbstractFPScalarDissolutionFunction
-    signed_dissolution && solver.nmoments < 3 &&
+    _dissolution_enabled(problem) && solver.nmoments < 3 &&
         throw(ArgumentError("MoM dissolution requires nmoments >= 3 to track crystal volume."))
     return nothing
 end

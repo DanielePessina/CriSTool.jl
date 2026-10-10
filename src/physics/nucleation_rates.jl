@@ -147,107 +147,17 @@ function nucleationrate(nf::nucl_secondary, parameters::T, prob::Crystallisation
 end
 
 """
-    nucleationrate(::nucl_prim_plus_second, parameters::AbstractVector,
+    nucleationrate(combined_law::CombinedNucleation, parameters,
                    problem::CrystallisationProblem, state, t) -> Real
 
-Calculate combined primary (empirical) and secondary nucleation rate.
-
-# Arguments
-- `parameters`: Vector [ln_nucleation_prefactor_primary, activation_energy_primary,
-  nucleation_order_primary, ln_nucleation_prefactor_secondary,
-  activation_energy_secondary, nucleation_order_secondary] (6 parameters total)
-- `problem`: Crystallisation problem providing the saturation model, solver,
-  and physical constants.
-- `state`: Current solver state, including the named solvent-state values and
-  crystal population.
-- `t`: Time in seconds.
-
-# Returns
-- Combined nucleation rate (number/m³/s)
+Sum of the primary and secondary component rates, each evaluated with its
+nested parameter block.
 """
-function nucleationrate(nf::nucl_prim_plus_second, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
-    p = _named_params(nf, parameters)
-    prim_rate = nucleationrate(nucl_empirical_energy(), p.prim, prob, state, t)
-    sec_rate = nucleationrate(nucl_secondary(), p.sec, prob, state, t)
-    return prim_rate + sec_rate
-end
-
-"""
-    nucleationrate(::nucl_CNT_plus_second, parameters::AbstractVector,
-                   problem::CrystallisationProblem, state, t) -> Real
-
-Calculate combined CNT primary and secondary nucleation rate.
-
-# Arguments
-- `parameters`: Vector [ln_nucleation_prefactor_cnt, surface_energy,
-  ln_nucleation_prefactor_secondary, activation_energy_secondary,
-  nucleation_order_secondary] (5 parameters total)
-- `problem`: Crystallisation problem providing the saturation model, solver,
-  and physical constants.
-- `state`: Current solver state, including the named solvent-state values and
-  crystal population.
-- `t`: Time in seconds.
-
-# Returns
-- Combined nucleation rate (number/m³/s)
-"""
-function nucleationrate(nf::nucl_CNT_plus_second, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
-    p = _named_params(nf, parameters)
-    cnt_rate = nucleationrate(nucl_CNT(), p.cnt, prob, state, t)
-    sec_rate = nucleationrate(nucl_secondary(), p.sec, prob, state, t)
-    return cnt_rate + sec_rate
-end
-
-"""
-    nucleationrate(NuF::nucl_CNT_fixed, parameters::AbstractVector,
-                   problem::CrystallisationProblem, state, t) -> Real
-
-Calculate CNT nucleation rate using pre-fixed parameters embedded in the struct.
-
-# Arguments
-- `NuF`: Fixed CNT nucleation function with embedded log prefactor and surface energy
-- `parameters`: Ignored (parameters are taken from NuF)
-- `problem`: Crystallisation problem providing the saturation model, molecular
-  volume, and physical constants.
-- `state`: Current solver state, including the named solvent-state values.
-- `t`: Time in seconds.
-
-# Returns
-- Nucleation rate (number/m³/s) if S > 1.001, otherwise 0
-"""
-function nucleationrate(NuF::nucl_CNT_fixed, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
-    S = supersaturation(prob, state, t)
-    temp = temperature(prob.temp_profile, t)
-    return if S > 1.001
-        exp(NuF.ln_nucleation_prefactor) *
-        S *
-        exp(-16π * NuF.surface_energy^3 * prob.molecular_volume^2 /
-            (3(prob.boltzmann_constant * temp)^3 * (log(S))^2))
-    else
-        0.0
-    end
-end
-
-"""
-    nucleationrate(NuF::nucl_empirical_fixed, parameters::AbstractVector,
-                   problem::CrystallisationProblem, state, t) -> Real
-
-Calculate empirical nucleation rate using pre-fixed parameters embedded in the struct.
-
-# Arguments
-- `NuF`: Fixed empirical nucleation function with embedded log prefactor and nucleation order
-- `parameters`: Ignored (parameters are taken from NuF)
-- `problem`: Crystallisation problem providing the saturation model.
-- `state`: Current solver state, including the named solvent-state values.
-- `t`: Time in seconds.
-
-# Returns
-- Nucleation rate (number/m³/s) if S > 1.001, otherwise 0
-"""
-function nucleationrate(NuF::nucl_empirical_fixed, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
-    S = supersaturation(prob, state, t)
-    return S > 1.001 ? 10^NuF.log10_nucleation_prefactor *
-                       (S - 1)^NuF.nucleation_order : 0.0
+function nucleationrate(combined_law::CombinedNucleation, parameters::AbstractVector,
+                        prob::CrystallisationProblem, state, t)
+    named_values = _named_params(combined_law, parameters)
+    return nucleationrate(combined_law.primary, named_values.primary, prob, state, t) +
+           nucleationrate(combined_law.secondary, named_values.secondary, prob, state, t)
 end
 
 """

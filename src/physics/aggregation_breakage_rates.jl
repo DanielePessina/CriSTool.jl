@@ -225,10 +225,7 @@ function _breakage_rate_uniform_volume(breakagefunction,
     length_mesh = problem.solver.cell_centre
     cell_faces = problem.solver.cell_face
     cell_dL = problem.solver.cell_dL
-    rate_scale = breakagefunction isa breakage_empirical ?
-                 named_parameters.breakage_coefficient :
-                 named_parameters.ln_breakage_coefficient
-    rate_type = promote_type(eltype(numberdensity), typeof(rate_scale))
+    rate_type = promote_type(eltype(numberdensity), eltype(parameters))
     breakage_rate = zeros(rate_type, length(numberdensity))
 
     @inbounds for parent_index in eachindex(numberdensity)

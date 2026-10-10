@@ -11,15 +11,14 @@ from a user script, follow [Tutorial 4](https://github.com/DanielePessina/CriSTo
 and the custom-family section below.
 
 Key ideas:
-- Each kinetic struct has `nparams`, `string`, and often `symbols`.
-- Each struct also declares a `paramaxis(::T)` method returning a
-  ComponentArrays `Axis` — this is what powers named fields such as
+- Each kinetic struct declares a `paramaxis(::T)` method returning a
+  ComponentArrays `Axis`. It is the single declaration of the law's
+  parameters: their names, order and count. It powers named fields such as
   `p.ln_nucleation_prefactor` and `p.surface_energy` in rate functions.
 - Model users bind values by name and never assemble vectors. The low-level
   `runsimulation` interface (for automatic differentiation and sensitivity
-  work) builds a `ComponentArray` view over a flat parameter vector. Its
-  compatibility form is `[nucl; gr; agg; br]` when `diss` is omitted; the
-  canonical independent-dissolution form is `[nucl; gr; diss; agg; br]`.
+  work) builds a `ComponentArray` view over a flat parameter vector in the
+  order `[nucl; gr; diss; agg; br]`.
 - To add a new model: subtype the right `Abstract*Function`, declare
   `paramaxis`, and implement the corresponding rate method.
 
@@ -29,21 +28,21 @@ Key ideas:
 bound_growth = growth_empirical(growth_coefficient = 1e-9, growth_order = 2.0)
 same_growth  = KineticModel(growth_empirical(); parameters = (
     growth_coefficient = 1e-9, growth_order = 2.0))
-energy_growth = growth_energy(activation_energy = 60e3,
-    log10_growth_coefficient = -8.0, growth_order = 2.0)
+energy_growth = growth_energy(log10_growth_coefficient = -8.0,
+    activation_energy = 60e3, growth_order = 2.0)
 ```
 
 A built-in law called with no keywords, such as `growth_empirical()`, is the
 unbound law. Called with all of its parameter names it returns a bound
 `KineticModel`; a partial set of names is an error. Keywords naming a struct
-field, such as `activation_energy` on `growth_energy` or `Lref` on
-`growth_empirical_length`, configure the law rather than bind a parameter.
-Laws without parameters (`noaggregation()`, `nobreakage()`, `nodissolution()`,
-the `*_fixed` variants) are bound automatically when placed in a
+field, such as `Lref` on `growth_empirical_length`, configure the law rather
+than bind a parameter. Laws without parameters (`noaggregation()`,
+`nobreakage()`, `nodissolution()`) are bound automatically when placed in a
 `CrystallisationModel`.
 
-Unlisted parameters in a fitting specification remain fixed; separate fixed
-kinetic variants are unnecessary in the model workflow. For a simple custom
+Unlisted parameters in a fitting specification remain fixed, so no separate
+fixed kinetic variants exist. To switch nucleation off, use a callable law
+that returns zero, `CallableNucleation((values, context) -> 0.0; parameters = (;))`. For a simple custom
 law use `CallableGrowth`, `CallableNucleation` or `CallableLengthGrowth`; see
 [Bringing your own system](bring-your-own-system.md) and Tutorial 4.
 The dispatch-based interface below remains available for advanced extensions.
@@ -53,11 +52,11 @@ The dispatch-based interface below remains available for advanced extensions.
 ```julia
 using CriSTool
 
-nucl     = nucl_CNT()        # nparams = 2, axis Axis(ln_nucleation_prefactor=1, surface_energy=2)
-nucl_emp = nucl_empirical()  # nparams = 2, axis Axis(log10_nucleation_prefactor=1, nucleation_order=2)
-growth   = growth_empirical()# nparams = 2, axis Axis(growth_coefficient=1, growth_order=2)
-growth_L = growth_empirical_length() # adds a length multiplier; nparams = 4
-growth_E = growth_energy()   # log10_growth_coefficient, growth_order
+nucl     = nucl_CNT()        # Axis(ln_nucleation_prefactor=1, surface_energy=2)
+nucl_emp = nucl_empirical()  # Axis(log10_nucleation_prefactor=1, nucleation_order=2)
+growth   = growth_empirical()# Axis(growth_coefficient=1, growth_order=2)
+growth_L = growth_empirical_length() # adds a length multiplier; four parameters
+growth_E = growth_energy()   # log10_growth_coefficient, activation_energy, growth_order
 ```
 
 Common parameter blocks are:
@@ -69,33 +68,47 @@ Common parameter blocks are:
 | Nucleation | `nucl_empirical_energy()` | `ln_nucleation_prefactor`, `activation_energy`, `nucleation_order` |
 | Growth | `growth_empirical()` | `growth_coefficient` (m/s), `growth_order` |
 | Growth | `growth_empirical_length()` | `growth_coefficient` (m/s), `growth_order`, `size_dependence_coefficient`, `size_dependence_exponent` |
-| Growth | `growth_energy()` | `log10_growth_coefficient`, `growth_order`; activation energy is stored on the model |
-| Growth | `growth_energy_est()` | `log10_growth_coefficient`, `activation_energy`, `growth_order` |
+| Nucleation | `nucl_secondary()` | `ln_nucleation_prefactor`, `activation_energy`, `nucleation_order` |
+| Nucleation | `CombinedNucleation(primary, secondary)` | the two component axes nested under `primary` and `secondary` |
+| Growth | `growth_energy()` | `log10_growth_coefficient`, `activation_energy`, `growth_order` |
 | Growth | `growth_BCF()` | `growth_coefficient`, `activation_temperature` |
 | Growth | `growth_BpS()` | `growth_coefficient`, `energy_barrier_temperature_squared` |
 
-Use `nparams` and `paramaxis(model)` rather than hard-coding a block length
-when building a general fitting or sampling workflow. Fixed variants such as
-`growth_empirical_fixed` and `nucl_empirical_fixed` embed their parameters in
-the model and contribute no free parameter slots.
+Use `paramaxis(model)` rather than hard-coding a block length when building a
+general fitting or sampling workflow. To fix a parameter, such as the
+activation energy of `growth_energy`, bind its value and leave it out of the
+fitted parameter selection.
 
-## Signed growth and dissolution
-
-The built-in dissolution models use the same `growthrate` interface as growth,
-but return a signed crystal growth rate: positive values grow crystals and
-negative values dissolve them. The default equilibrium deadband is
-`|S - 1| ≤ 0.001`, where `S = c / saturation_concentration(problem, t)`.
+`CombinedNucleation` sums any two nucleation laws. Called with two bound laws
+it returns the bound combination:
 
 ```julia
-dissolution = growth_dissolution()          # coefficient, activation energy, order
-combined    = growth_energy_dissolution()   # one combined five-parameter law
+primary_plus_secondary = CombinedNucleation(
+    nucl_CNT(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4),
+    nucl_secondary(ln_nucleation_prefactor = 20.0, activation_energy = 0.0, nucleation_order = 2.0))
+```
+
+## Growth and dissolution
+
+Dissolution laws form their own family, `AbstractDissolutionFunction`, and sit
+in the model's `dissolution` slot. Growth laws return a nonnegative rate and
+dissolution laws a nonpositive one; the solvers add them to obtain the signed
+net crystal growth rate. Positive values grow crystals and negative values
+dissolve them. The default equilibrium deadband is `|S - 1| ≤ 0.001`, where
+`S = c / saturation_concentration(problem, t)`.
+
+```julia
+dissolving_model = CrystallisationModel(LysozymeSystem();
+    nucleation = nucl_CNT(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4),
+    growth = growth_energy(log10_growth_coefficient = -8.0, activation_energy = 53e3, growth_order = 2.0),
+    dissolution = growth_dissolution(dissolution_coefficient = 1e-8, activation_energy = 40e3,
+        dissolution_order = 1.0))
 length_dissolution = growth_dissolution_length() # adds size-dependence terms
 length_growth = growth_empirical_length()        # empirical growth with size factor
 ```
 
 `growth_dissolution` uses the dimensionless undersaturation driving force
-`(1 - S)^d` and returns a scalar rate. `growth_energy_dissolution` uses the
-growth law above the deadband and the dissolution law below it. The
+`(1 - S)^d` and returns a scalar rate. The
 length-dependent dissolution model evaluates `(1 + κ * L / Lref)^p` at each
 mesh length, with `Lref = 1e-6` m by default; it is supported by `FiniteVol`
 and `WENO`. The analogous `growth_empirical_length()` model uses
@@ -117,36 +130,28 @@ method allocates a vector for standalone inspection.
 
 ## The `paramaxis` API
 
-`paramaxis` has four public forms (all exported):
+`paramaxis` has three public forms (all exported):
 
 ```julia
 using CriSTool, ComponentArrays
 
-paramaxis(model)              # single-family axis, e.g. Axis(ln_nucleation_prefactor=1, surface_energy=2)
-paramaxis(nucl, gr, agg, br)  # four-family axis without independent dissolution
-paramaxis(nucl, gr, diss, agg, br)  # canonical axis with dissolution
-paramaxis(prob)               # composite axis read off a CrystallisationProblem
+paramaxis(model)                    # single-law axis, e.g. Axis(ln_nucleation_prefactor=1, surface_energy=2)
+paramaxis(nucl, gr, diss, agg, br)  # composite axis with one block per slot
+paramaxis(prob)                     # composite axis read off a CrystallisationProblem
 ```
-
-Use `growth_dissolution()` as `diss = ...` when growth and dissolution are
-independent parameter blocks. The five-parameter
-`growth_energy_dissolution()` model is a single combined signed law; it is not
-two independent blocks.
 
 Use the composite form to wrap a flat parameter vector with named slices:
 
 ```julia
 flat = [38.0, 0.0007, 1e-9 / 60, 3.0]
-p    = ComponentArray(flat, paramaxis(nucl_CNT(), growth_empirical(),
+p    = ComponentArray(flat, paramaxis(nucl_CNT(), growth_empirical(), nodissolution(),
                                        noaggregation(), nobreakage()))
 p.nucl.ln_nucleation_prefactor    # 38.0
 p.gr.growth_order                 # 3.0
 ```
 
-User-defined variants that have not declared a custom `paramaxis` (or a
-rate-function-less placeholder) fall back to a generic `Axis(θ1=1, θ2=2, ...)`
-with one entry per `nparams` slot. All built-in families, including
-`growth_energy_dissolution`, declare descriptive axes.
+Every law, including a custom one, must declare `paramaxis`; there is no
+generic fallback.
 
 ## Add a new kinetic family (three pieces)
 
@@ -169,12 +174,7 @@ import CriSTool: paramaxis, nucleationrate, growthrate
 using ComponentArrays
 
 # --- Custom nucleation ---
-struct nucl_custom <: AbstractFPNucleationFunction
-    nparams::Int64
-    string::String
-    symbols::Vector{Symbol}
-end
-nucl_custom() = nucl_custom(2, "Custom Nu", [:ln_prefactor, :nucleation_order])
+struct nucl_custom <: AbstractFPNucleationFunction end
 
 paramaxis(::nucl_custom) = ComponentArrays.Axis(ln_prefactor = 1, nucleation_order = 2)
 
@@ -186,12 +186,7 @@ function nucleationrate(nf::nucl_custom, parameters,
 end
 
 # --- Custom growth ---
-struct growth_custom <: AbstractFPScalarGrowthFunction
-    nparams::Int64
-    string::String
-    symbols::Vector{Symbol}
-end
-growth_custom() = growth_custom(2, "Custom Gr", [:growth_coefficient, :growth_order])
+struct growth_custom <: AbstractFPScalarGrowthFunction end
 
 paramaxis(::growth_custom) = ComponentArrays.Axis(growth_coefficient = 1, growth_order = 2)
 

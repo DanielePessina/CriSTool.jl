@@ -209,10 +209,38 @@ end
           CriSTool.nucleationrate(nucl_CNT(), [38.0, 0.0007], rate_problem, supersaturated_state, 0.0)
     # Dissolution with zero activation energy: -(2e-9/60)(1 - 0.5)^1.5; inside
     # the deadband (S = 0.9995) the rate is exactly zero.
-    @test CriSTool.growthrate(growth_dissolution(), [2e-9 / 60, 0.0, 1.5], rate_problem, undersaturated_state, 0.0) ≈
+    @test CriSTool.dissolutionrate(growth_dissolution(), [2e-9 / 60, 0.0, 1.5], rate_problem, undersaturated_state, 0.0) ≈
           -(2e-9 / 60) * sqrt(0.125)
-    @test CriSTool.growthrate(growth_dissolution(), [2e-9 / 60, 0.0, 1.5], rate_problem,
+    @test CriSTool.dissolutionrate(growth_dissolution(), [2e-9 / 60, 0.0, 1.5], rate_problem,
         numerics_state(3, 9.995), 0.0) == 0.0
+    # Arrhenius growth with zero activation energy: 10^-8 (1.5 - 1)^2.
+    @test CriSTool.growthrate(growth_energy(), [-8.0, 0.0, 2.0], rate_problem, supersaturated_state, 0.0) ≈ 2.5e-9
+    # Combined nucleation sums its components: 10^10·0.5² + 10^9·0.5¹.
+    combined_nucleation = CombinedNucleation(nucl_empirical(), nucl_empirical())
+    @test CriSTool.nucleationrate(combined_nucleation, [10.0, 2.0, 9.0, 1.0], rate_problem,
+        supersaturated_state, 0.0) ≈ 3.0e9
+end
+
+@testset "Kinetic parameter schema" begin
+    # paramaxis is the only parameter declaration; an empty axis counts zero.
+    @test CriSTool._parameter_count(nodissolution()) == 0
+    @test CriSTool._parameter_count(CombinedNucleation(nucl_CNT(), nucl_secondary())) == 5
+    bound_combination = CombinedNucleation(nucl_CNT(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4),
+        nucl_empirical(log10_nucleation_prefactor = 9.0, nucleation_order = 1.0))
+    @test bound_combination.parameters ==
+          (primary = (ln_nucleation_prefactor = 38.0, surface_energy = 6e-4),
+           secondary = (log10_nucleation_prefactor = 9.0, nucleation_order = 1.0))
+    # Partial or misspelled keywords name both the missing and unknown entries.
+    partial_binding_error = try
+        nucl_CNT(ln_nucleation_prefactor = 38.0, surface_energi = 6e-4)
+    catch binding_error
+        binding_error
+    end
+    @test partial_binding_error isa ArgumentError
+    @test occursin("missing (:surface_energy,)", partial_binding_error.msg)
+    @test occursin("unknown (:surface_energi,)", partial_binding_error.msg)
+    # Configuration keywords stay on the law; parameter keywords bind it.
+    @test growth_empirical_length(Lref = 2e-6).Lref == 2e-6
 end
 
 @eval begin
@@ -264,22 +292,19 @@ end
 
 # Boundary-flow kernels: nucleation proportional to (1 + t/10), constant
 # scalar speed, and a per-cell length law with context dependence.
-struct NumericsBoundaryNucleation <: CriSTool.AbstractFPNucleationFunction
-    nparams::Int
-end
+struct NumericsBoundaryNucleation <: CriSTool.AbstractNucleationFunction end
 CriSTool.paramaxis(::NumericsBoundaryNucleation) = CriSTool.ComponentArrays.Axis(boundary_birth = 1)
 CriSTool.nucleationrate(::NumericsBoundaryNucleation, parameters, problem, state, time) = parameters[1] * (1 + time / 10)
 
-struct NumericsBoundaryScalarGrowth <: CriSTool.AbstractFPScalarGrowthFunction
-    nparams::Int
-end
+struct NumericsBoundaryScalarGrowth <: CriSTool.AbstractFPScalarGrowthFunction end
 CriSTool.paramaxis(::NumericsBoundaryScalarGrowth) = CriSTool.ComponentArrays.Axis(boundary_speed = 1)
 CriSTool.growthrate(::NumericsBoundaryScalarGrowth, parameters, problem, state, time) = parameters[1]
 
 struct NumericsBoundaryLengthGrowth <: CriSTool.AbstractFPLengthGrowthFunction
-    nparams::Int
+    boundary_cell_rate_count::Int
 end
-CriSTool.paramaxis(law::NumericsBoundaryLengthGrowth) = CriSTool.ComponentArrays.Axis(boundary_cell_rates = 1:law.nparams)
+CriSTool.paramaxis(law::NumericsBoundaryLengthGrowth) =
+    CriSTool.ComponentArrays.Axis(boundary_cell_rates = 1:law.boundary_cell_rate_count)
 function CriSTool.growthrate!(destination::AbstractVector, ::NumericsBoundaryLengthGrowth, parameters, problem,
         state, time, mesh::AbstractVector)
     cell_count = length(mesh)
@@ -297,7 +322,7 @@ function numerics_boundary_problem(growth_law, growth_parameters; solver = WENO(
         operation = BatchOperation(volume = 2.5))
     return CrystallisationProblem(; operation, solver, crystal_density = 1500.0, volume_shape_factor = 0.5,
         initial_concentration = 5.0, saturation_model = ConstantSolubility(1.0),
-        kinetics_nucleationfunction = NumericsBoundaryNucleation(1), parameterset_nucleation = [8.0],
+        kinetics_nucleationfunction = NumericsBoundaryNucleation(), parameterset_nucleation = [8.0],
         kinetics_growthfunction = growth_law, parameterset_growth = growth_parameters)
 end
 numerics_saved_solution(problem, saved_times, saved_states; parameters = (; nucl = problem.parameterset_nucleation,
@@ -309,14 +334,14 @@ numerics_boundary_flows(problem, saved_times, saved_states; kwargs...) = CriSToo
 @testset "Mesh boundary mass flows" begin
     # Density [2,3,4,5]: upper linear trace 5.5; lower face L³ = 1, upper 125.
     # Mass flows are rho·kv·V·L³·flux = 1875 · L³ · flux.
-    scalar_problem = numerics_boundary_problem(NumericsBoundaryScalarGrowth(1), [0.25])
+    scalar_problem = numerics_boundary_problem(NumericsBoundaryScalarGrowth(), [0.25])
     scalar_flows = numerics_boundary_flows(scalar_problem, [0.0, 2.0], [[2.0, 3.0, 4.0, 5.0, 5.0], [2.0, 3.0, 4.0, 5.0, 7.0]])
     @test scalar_flows.size_boundary_lower_solid_mass_flow ≈ [-15_000.0, -18_000.0]   # birth 8, 9.6
     @test scalar_flows.size_boundary_upper_solid_mass_flow ≈ fill(322_265.625, 2)     # 0.25·5.5·125·1875
     # Trace 1 + 0.5(1 - 4) < 0 is clipped: no upper outflow.
     @test numerics_boundary_flows(scalar_problem, [0.0], [[2.0, 3.0, 4.0, 1.0, 5.0]]).size_boundary_upper_solid_mass_flow == [0.0]
     # Dissolving (G = -0.5): lower outflow 0.5·2·1·1875, no upper inflow.
-    dissolving_flows = numerics_boundary_flows(numerics_boundary_problem(NumericsBoundaryScalarGrowth(1), [-0.5]),
+    dissolving_flows = numerics_boundary_flows(numerics_boundary_problem(NumericsBoundaryScalarGrowth(), [-0.5]),
         [0.0], [[2.0, 3.0, 4.0, 5.0, 5.0]])
     @test dissolving_flows.size_boundary_lower_solid_mass_flow == [1875.0]
     @test dissolving_flows.size_boundary_upper_solid_mass_flow == [0.0]
@@ -333,7 +358,7 @@ numerics_boundary_flows(problem, saved_times, saved_states; kwargs...) = CriSToo
 
     # Candidate kinetics override the template for both FV and WENO.
     for mesh_solver in (FiniteVol(meshsize = 4, lmin = 1.0, lmax = 5.0), WENO(meshsize = 4, lmin = 1.0, lmax = 5.0))
-        candidate_template = numerics_boundary_problem(NumericsBoundaryScalarGrowth(1), [0.25]; solver = mesh_solver)
+        candidate_template = numerics_boundary_problem(NumericsBoundaryScalarGrowth(), [0.25]; solver = mesh_solver)
         growing_flows = numerics_boundary_flows(candidate_template, [0.0], [[2.0, 3.0, 4.0, 5.0, 5.0]];
             parameters = (; nucl = [16.0], gr = [0.5], diss = Float64[]))
         @test growing_flows.size_boundary_lower_solid_mass_flow == [-30_000.0]    # 16·1875

@@ -25,7 +25,7 @@ The operation is part of a run's `RunConditions`:
 using CriSTool
 
 msmpr_model = CrystallisationModel(LysozymeSystem(saturation_model = ConstantSolubility(1.0));
-    nucleation = nucl_empirical_fixed(log10_nucleation_prefactor = -Inf, nucleation_order = 1.0),
+    nucleation = CallableNucleation((rate_values, rate_context) -> 0.0; parameters = (;)),
     growth = growth_empirical(growth_coefficient = 1e-9 / 60, growth_order = 1.0))
 
 feed  = CrystallisationFeed(concentration = 2.0)                  # kg/m³, clear feed
@@ -96,8 +96,9 @@ steady-state runner on a problem built from the model and run:
 
 ```julia
 msmpr_problem = CrystallisationProblem(msmpr_model, msmpr_run; solver = MoM())
+# The callable nucleation law is opaque, so declare it time invariant.
 steady = solve_steadystate(msmpr_problem;
-    options = SteadyStateOptions(relaxation_horizon = 400.0))
+    options = SteadyStateOptions(relaxation_horizon = 400.0, autonomous = true))
 steady.equilibrium.concentration     # scalar kg/m³
 steady.equilibrium.d43               # scalar m
 steady.product.dissolved_solute_flow  # kg/s leaving in the liquid

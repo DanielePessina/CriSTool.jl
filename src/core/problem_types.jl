@@ -1,12 +1,5 @@
 ## Problem struct
 
-"""
-    AbstractCrystallisationProblem
-
-Abstract supertype for crystallization problem definitions.
-"""
-abstract type AbstractCrystallisationProblem end
-
 struct DefaultSolventDynamics end
 
 function (::DefaultSolventDynamics)(problem, state, time, growth)
@@ -43,7 +36,7 @@ _growth_surface_rate(solver::AbstractDiscretisedSolver, state, growth) =
 const default_solvent_dynamics = DefaultSolventDynamics()
 
 """
-    CrystallisationProblem{NuF,GrF,BrF,AggF,solmethod,NuP,GrP,BrP,AggP,TP,SM,SS,SD,DissF,DissP} <: AbstractCrystallisationProblem
+    CrystallisationProblem{NuF,GrF,BrF,AggF,solmethod,NuP,GrP,BrP,AggP,TP,SM,SS,SD,DissF,DissP}
 
 Main structure defining a crystallization problem with kinetics and solver specifications.
 
@@ -98,8 +91,7 @@ Base.@kwdef @concrete struct CrystallisationProblem{NuF <: AbstractNucleationFun
                                                     SD,
                                                     DissF <: AbstractDissolutionFunction,
                                                     DissP <: AbstractVector{<:Real},
-                                                    OP <: AbstractCrystallisationOperation} <:
-                             AbstractCrystallisationProblem
+                                                    OP <: AbstractCrystallisationOperation}
 
     # Operation
     temp_profile::TP = ConstantTemperature(273.15 + 20.0) # Default to 25°C
@@ -186,13 +178,24 @@ end
 
 """Validate a kinetic parameter block against its model declaration."""
 function _validate_parameter_block(model, parameters, label::Symbol)
-    expected = model.nparams
+    expected = _parameter_count(model)
     actual = length(parameters)
     actual == expected ||
         throw(ArgumentError("$label parameter block has length $actual, expected $expected " *
                             "for $(typeof(model))."))
     return parameters
 end
+
+"""Whether the dissolution slot holds an active law, making crystal growth signed."""
+_dissolution_enabled(problem::CrystallisationProblem) = !_is_null_kinetic(problem.kinetics_dissolutionfunction)
+
+"""Whether growth or dissolution returns a rate per crystal length."""
+_uses_length_rates(problem::CrystallisationProblem) =
+    _is_length_law(problem.kinetics_growthfunction) || _is_length_law(problem.kinetics_dissolutionfunction)
+
+"""Whether aggregation or breakage contributes a population source."""
+_has_binary_sources(problem::CrystallisationProblem) =
+    !(_is_null_kinetic(problem.kinetics_aggregationfunction) && _is_null_kinetic(problem.kinetics_breakagefunction))
 
 """Hook for model-specific construction-time growth validation."""
 _validate_growth_parameters(model, parameters, problem) = nothing

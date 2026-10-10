@@ -17,8 +17,8 @@ trajectory.d43[end]
 A model contains the material system and the bound kinetic laws. A law called
 with all of its parameter names returns a bound `KineticModel`; `nucl_CNT()`
 alone is the unbound law, and a partial set of names is an error. Keywords that
-name a law's configuration fields (for example `activation_energy` on
-`growth_energy`) configure the law instead of binding a parameter. Read named
+name a law's configuration fields (for example `Lref` on
+`growth_empirical_length`) configure the law instead of binding a parameter. Read named
 values through `crystal_model.growth.parameters`.
 
 `RunConditions(; temperature, concentration, solvent=(;), crystals=nothing,

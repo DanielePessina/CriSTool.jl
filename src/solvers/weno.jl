@@ -369,9 +369,7 @@ function _mesh_boundary_flow_state(solver::WENO, problem, ode_solution)
                                                parameters.nucl, problem,
                                                numerical_state, simulation_time)
 
-        if problem.kinetics_growthfunction isa Union{AbstractFPScalarGrowthFunction,
-                                                     AbstractFPScalarDissolutionFunction} &&
-           !(problem.kinetics_dissolutionfunction isa AbstractFPLengthDissolutionFunction)
+        if !_uses_length_rates(problem)
             scalar_growth_rate = net_growth_rate(
                 problem.kinetics_growthfunction, parameters.gr,
                 problem.kinetics_dissolutionfunction, parameters.diss,
@@ -437,12 +435,12 @@ function _mesh_boundary_flow_state(solver::WENO, problem, ode_solution)
               size_boundary_upper_solid_mass_flow = upper_mass_flow)
 end
 
-function _weno_rhs!(dstdt, st, p, t, CryProblem,
-                    growthfunction::Union{AbstractFPScalarGrowthFunction,
-                                          AbstractFPScalarDissolutionFunction},
+# `length_growth` is `Val(_is_length_law(growthfunction))`: scalar growth keeps
+# the positive-growth fast path, length growth fills a per-cell rate field.
+function _weno_rhs!(dstdt, st, p, t, CryProblem, growthfunction, length_growth::Val{false},
                     flux_cache, ndens_pad_cache, growth_rate_cache)
     numberdensity = crystal_state(CryProblem, st)
-    if CryProblem.kinetics_dissolutionfunction isa AbstractFPLengthDissolutionFunction
+    if _is_length_law(CryProblem.kinetics_dissolutionfunction)
         net_growth_rates = get_tmp(growth_rate_cache, st)
         net_growth_rate!(net_growth_rates,
                                growthfunction,
@@ -498,9 +496,7 @@ function _weno_rhs!(dstdt, st, p, t, CryProblem,
     return nothing
 end
 
-function _weno_rhs!(dstdt, st, p, t, CryProblem,
-                    growthfunction::Union{AbstractFPLengthGrowthFunction,
-                                          AbstractFPLengthDissolutionFunction},
+function _weno_rhs!(dstdt, st, p, t, CryProblem, growthfunction, length_growth::Val{true},
                     flux_cache, ndens_pad_cache, growth_rate_cache)
     numberdensity = crystal_state(CryProblem, st)
     net_growth_rates = get_tmp(growth_rate_cache, st)
@@ -536,6 +532,7 @@ function crystallisation_odeproblem(solver::WENO, CryProblem::CrystallisationPro
     _ndens_pad_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 4))
     _growth_rate_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize))
     feed_population = _operation_feed_population(CryProblem)
+    length_growth = Val(_is_length_law(CryProblem.kinetics_growthfunction))
 
     function WENO_Model(dstdt, st, p, t)
         _weno_rhs!(dstdt,
@@ -544,6 +541,7 @@ function crystallisation_odeproblem(solver::WENO, CryProblem::CrystallisationPro
                    t,
                    CryProblem,
                    CryProblem.kinetics_growthfunction,
+                   length_growth,
                    get_tmp(_flux_cache_dc, st),
                    get_tmp(_ndens_pad_cache_dc, st),
                    _growth_rate_cache_dc)
@@ -562,9 +560,7 @@ function crystallisation_odeproblem(solver::WENO, CryProblem::CrystallisationPro
     utyped = ET.(_get_initial_state(CryProblem))
     function weno_cfl_bound(numerical_state, kinetic_parameters, simulation_time)
         growthfunction = CryProblem.kinetics_growthfunction
-        if growthfunction isa Union{AbstractFPLengthGrowthFunction,
-                                    AbstractFPLengthDissolutionFunction} ||
-           CryProblem.kinetics_dissolutionfunction isa AbstractFPLengthDissolutionFunction
+        if _uses_length_rates(CryProblem)
             net_growth_rates = get_tmp(_growth_rate_cache_dc, numerical_state)
             net_growth_rate!(net_growth_rates,
                                    growthfunction,
@@ -587,10 +583,7 @@ function crystallisation_odeproblem(solver::WENO, CryProblem::CrystallisationPro
                                                   simulation_time);
                            courant = 0.9)
     end
-    signed_growth_transport =
-        !(CryProblem.kinetics_dissolutionfunction isa nodissolution) ||
-        (CryProblem.kinetics_growthfunction isa AbstractFPScalarDissolutionFunction) ||
-        (CryProblem.kinetics_growthfunction isa AbstractFPLengthDissolutionFunction)
+    signed_growth_transport = _dissolution_enabled(CryProblem)
     # Stage/step limiter hooks discard returned values.  A solve-local
     # callback instead caps the next step from the accepted-state transport
     # rate, including initialization.  For varying rates this is a local

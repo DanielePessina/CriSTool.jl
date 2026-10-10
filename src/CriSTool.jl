@@ -64,15 +64,14 @@ export CrystallisationSolution, AbstractPopulationTrajectory, MeshPopulation,
        MomentPopulation, QuadraturePopulation,
        CrystallisationSteadyStateSolution, SteadyStateConvergenceError, SteadyStateOptions,
        CrystallisationProblem
-export Observable, ObservableColumns, CrystallisationExperiment, AbstractExperiment,
+export Observable, ObservableColumns, CrystallisationExperiment,
        initial_concentration
 export AbstractCrystallisationOperation, BatchOperation, MSMPROperation, FedBatchOperation,
        CrystallisationFeed, reactor_vars, reactor_volume, operation_flows
 export AbstractInitialCrystals, LogNormalInitialCrystals, GaussianInitialCrystals,
        FromObservation, RunConditions
 export AbstractSolubilityModel, ConstantSolubility, PolynomialSolubility, CallableSolubility,
-       AbstractSaturationModel, ConstantSaturation, PolynomialSaturation, CallableSaturation,
-       lysozyme_solubility, lysozyme_saturation, saturation_concentration, supersaturation
+       lysozyme_solubility, saturation_concentration, supersaturation
 export AbstractTemperature, ConstantTemperature, LinearTemperature, RampTemperature,
        CallableTemperature, temperature
 export AbstractSolution, state_vars, size_metrics, observable_values, solvent_state,
@@ -80,17 +79,15 @@ export AbstractSolution, state_vars, size_metrics, observable_values, solvent_st
 export AbstractNucleationFunction, AbstractGrowthFunction, AbstractFPGrowthFunction,
        AbstractFPScalarGrowthFunction, AbstractFPLengthGrowthFunction, nucl_CNT,
        nucl_empirical, nucl_empirical_energy, nucl_CNTnoS, nucl_secondary,
-       nucl_prim_plus_second, nucl_CNT_plus_second, nucl_CNT_fixed,
-       nucl_empirical_fixed, AbstractDissolutionFunction,
+       CombinedNucleation, AbstractDissolutionFunction,
        AbstractFPScalarDissolutionFunction, AbstractFPLengthDissolutionFunction,
-       AbstractScalarDissolutionFunction, AbstractLengthDissolutionFunction,
-       nodissolution, nondissolution, dissolutionrate, dissolutionrate!, dissolutionrate_at_length,
+       nodissolution, dissolutionrate, dissolutionrate!, dissolutionrate_at_length,
        net_growth_rate, net_growth_rate!, net_growth_rate_at_length,
-       growth_empirical, growth_empirical_fixed, growth_energy, growth_energy_est,
+       growth_empirical, growth_energy,
        growth_empirical_length, growth_BpS, growth_BCF,
-       growth_dissolution, growth_dissolution_length, growth_energy_dissolution,
+       growth_dissolution, growth_dissolution_length,
        nucleationrate, growthrate, aggregationrate, breakagerate,
-       growthrate!, growthrate_at_length, net_growthrate
+       growthrate!, growthrate_at_length
 export AbstractAggregationFunction, AbstractBreakageFunction, nobreakage,
        breakage_empirical, breakage_uniform, noaggregation,
        aggr_scalar, aggr_linear, aggr_linearvol, aggr_avg

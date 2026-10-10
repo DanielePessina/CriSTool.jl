@@ -1,13 +1,6 @@
 ## Measurements
 
 """
-    AbstractObservable
-
-Abstract supertype for observable containers (see `Observable`).
-"""
-abstract type AbstractObservable end
-
-"""
     ObservableColumns(; time=:Time, mean, variance=nothing)
 
 Describe the source columns used to build one measured observable. Each
@@ -46,8 +39,7 @@ bootstrap, and plotting:
 - a supplied variance has one value per measurement and is finite and
   nonnegative.
 """
-struct Observable{Tt <: AbstractVector{<:Real}, Tm <: AbstractVector{<:Real}, Tv} <:
-       AbstractObservable
+struct Observable{Tt <: AbstractVector{<:Real}, Tm <: AbstractVector{<:Real}, Tv}
     time::Tt
     mean::Tm
     variance::Tv
@@ -89,13 +81,6 @@ function Observable(; time, mean, variance = nothing)
 end
 
 """
-    AbstractExperiment
-
-Abstract supertype for a single experimental run (see `CrystallisationExperiment`).
-"""
-abstract type AbstractExperiment end
-
-"""
     CrystallisationExperiment(; observables, exp_id, conditions, metadata=(;))
 
 A single crystallisation experiment: a typed `NamedTuple` of observables
@@ -108,8 +93,7 @@ The `NamedTuple` shape keeps the container type-stable and Tables.jl
 compatible; additional observables (pH, mass, PSD, ...) are added as new
 fields, not new container types.
 """
-Base.@kwdef struct CrystallisationExperiment{O <: NamedTuple, C <: RunConditions, M <: NamedTuple} <:
-                   AbstractExperiment
+Base.@kwdef struct CrystallisationExperiment{O <: NamedTuple, C <: RunConditions, M <: NamedTuple}
     observables::O
     exp_id::Int
     conditions::C

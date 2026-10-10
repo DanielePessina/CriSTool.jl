@@ -275,15 +275,11 @@ function _aggregation_moment_source(aggregationfunction::AbstractAggregationFunc
     maximum_order >= 0 || throw(ArgumentError("maximum_order must be nonnegative."))
     length(nodes) == length(weights) ||
         throw(ArgumentError("Aggregation nodes and weights must have the same length."))
-    supported = aggregationfunction isa noaggregation ||
-                aggregationfunction isa aggr_scalar ||
-                aggregationfunction isa aggr_linear ||
-                aggregationfunction isa aggr_linearvol ||
-                aggregationfunction isa aggr_avg
-    supported || throw(ArgumentError("Aggregation function $(typeof(aggregationfunction)) " *
-                                    "has no validated QMOM moment closure."))
+    _has_moment_closure(aggregationfunction) ||
+        throw(ArgumentError("Aggregation function $(typeof(aggregationfunction)) " *
+                            "has no validated QMOM moment closure."))
 
-    aggregationfunction isa noaggregation &&
+    _is_null_kinetic(aggregationfunction) &&
         return zeros(promote_type(eltype(nodes), eltype(weights), typeof(shape_factor),
                                   typeof(pair_weight_scale)), maximum_order + 1)
     isempty(nodes) &&
@@ -369,13 +365,11 @@ function _breakage_moment_source(breakagefunction::AbstractBreakageFunction,
     maximum_order >= 0 || throw(ArgumentError("maximum_order must be nonnegative."))
     length(nodes) == length(weights) ||
         throw(ArgumentError("Breakage nodes and weights must have the same length."))
-    supported = breakagefunction isa nobreakage ||
-                breakagefunction isa breakage_empirical ||
-                breakagefunction isa breakage_uniform
-    supported || throw(ArgumentError("Breakage function $(typeof(breakagefunction)) " *
-                                    "has no validated QMOM moment closure."))
+    _has_moment_closure(breakagefunction) ||
+        throw(ArgumentError("Breakage function $(typeof(breakagefunction)) " *
+                            "has no validated QMOM moment closure."))
 
-    breakagefunction isa nobreakage &&
+    _is_null_kinetic(breakagefunction) &&
         return zeros(promote_type(eltype(nodes), eltype(weights), eltype(parameters),
                                   typeof(weight_scale)), maximum_order + 1)
     isempty(nodes) &&
@@ -539,11 +533,7 @@ function _qmom_solvent_derivatives(problem::CrystallisationProblem,
 end
 
 function _qmom_extinction_callback(problem::CrystallisationProblem)
-    dissolution_enabled = !(problem.kinetics_dissolutionfunction isa nodissolution) ||
-                          (problem.kinetics_growthfunction isa
-                           AbstractFPScalarDissolutionFunction)
-    dissolution_enabled ||
-        return nothing
+    _dissolution_enabled(problem) || return nothing
     n_moments = moment_count(problem.solver)
     n_moments >= 4 || return nothing
 
@@ -576,39 +566,15 @@ end
 
 function _validate_qmom_problem(problem::CrystallisationProblem)
     _validate_qmom_solver(problem.solver)
-    growthfunction = problem.kinetics_growthfunction
-    (growthfunction isa AbstractFPScalarGrowthFunction ||
-     growthfunction isa AbstractFPScalarDissolutionFunction) ||
-        throw(ArgumentError("QMOM requires a scalar growth function; " *
-                            "length-dependent kinetics are supported by FiniteVol/WENO only."))
-    (growthfunction isa AbstractFPLengthGrowthFunction ||
-     growthfunction isa AbstractFPLengthDissolutionFunction) &&
-        throw(ArgumentError("$(typeof(growthfunction)) is length-dependent and is not supported by QMOM; " *
-                            "use FiniteVol or WENO."))
-
-    dissolutionfunction = problem.kinetics_dissolutionfunction
-    dissolutionfunction isa AbstractFPLengthDissolutionFunction &&
-        throw(ArgumentError("$(typeof(dissolutionfunction)) is length-dependent and is not " *
-                            "supported by QMOM; use FiniteVol or WENO."))
-    dissolutionfunction isa AbstractFPScalarDissolutionFunction ||
-        throw(ArgumentError("QMOM requires an AbstractFPScalarDissolutionFunction or " *
-                            "nodissolution()."))
-
-    aggregationfunction = problem.kinetics_aggregationfunction
-    (aggregationfunction isa noaggregation ||
-     aggregationfunction isa aggr_scalar ||
-     aggregationfunction isa aggr_linear ||
-     aggregationfunction isa aggr_linearvol ||
-     aggregationfunction isa aggr_avg) ||
-        throw(ArgumentError("Aggregation function $(typeof(aggregationfunction)) " *
-                            "has no validated QMOM moment closure."))
-
-    breakagefunction = problem.kinetics_breakagefunction
-    (breakagefunction isa nobreakage ||
-     breakagefunction isa breakage_empirical ||
-     breakagefunction isa breakage_uniform) ||
-        throw(ArgumentError("Breakage function $(typeof(breakagefunction)) " *
-                            "has no validated QMOM moment closure."))
+    for rate_law in (problem.kinetics_growthfunction, problem.kinetics_dissolutionfunction)
+        _is_length_law(rate_law) &&
+            throw(ArgumentError("$(typeof(rate_law)) is length-dependent and is not supported by QMOM; " *
+                                "use FiniteVol or WENO."))
+    end
+    for binary_law in (problem.kinetics_aggregationfunction, problem.kinetics_breakagefunction)
+        _has_moment_closure(binary_law) ||
+            throw(ArgumentError("$(typeof(binary_law)) has no validated QMOM moment closure."))
+    end
     return problem
 end
 
@@ -696,8 +662,7 @@ function crystallisation_odeproblem(solver::QMOM, problem::CrystallisationProble
     initial_moments[1] > problem.solver.empty_population_tolerance &&
         invert_moments(initial_moments, problem.solver)
 
-    no_binary_sources = problem.kinetics_aggregationfunction isa noaggregation &&
-                        problem.kinetics_breakagefunction isa nobreakage
+    no_binary_sources = !_has_binary_sources(problem)
     fast_scalar_path = problem.operation isa BatchOperation && no_binary_sources && n_moments == 6 && n_solvent == 1 &&
                        propertynames(problem.initial_solvent_state) == (:concentration,) &&
                        problem.solvent_dynamics isa DefaultSolventDynamics

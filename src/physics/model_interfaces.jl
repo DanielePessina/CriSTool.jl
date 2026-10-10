@@ -20,30 +20,18 @@ fluxlimiter_ospre(gradient_ratio) = gradient_ratio <= zero(gradient_ratio) ?
 """`named_parameters(law, values)` provides supported named access for custom dispatch-based kinetics."""
 @inline named_parameters(kinetic_law, parameter_values::AbstractVector) = _named_params(kinetic_law, parameter_values)
 
-# Generic fallback for kinetics that haven't declared a custom paramaxis.
-# Generates `θ1, θ2, ...` from `model.nparams`. Specific paramaxis methods
-# (e.g. `paramaxis(::nucl_CNT) = ComponentArrays.Axis(ln_nucleation_prefactor=1,
-# surface_energy=2)`) take precedence.
-function paramaxis(model::Union{AbstractNucleationFunction, AbstractGrowthFunction,
-                                AbstractDissolutionFunction,
-                                AbstractAggregationFunction, AbstractBreakageFunction})
-    n = model.nparams
-    n == 0 && return ComponentArrays.Axis()
-    return ComponentArrays.Axis(NamedTuple{Tuple(Symbol("θ", i) for i in 1:n)}(Tuple(1:n)))
-end
+"""
+    paramaxis(nucleation, growth, dissolution, aggregation, breakage)
 
-"""Composite parameter axis for nucleation, growth, and dissolution models.
-
-The independent dissolution block is inserted between growth and the binary
-population-balance terms.  This is the canonical axis for new callers.
+Composite parameter axis with one nested block per kinetic slot, in the order
+`nucl`, `gr`, `diss`, `agg`, `br`.
 """
 function paramaxis(nucl::AbstractNucleationFunction,
                    gr::AbstractGrowthFunction,
                    diss::AbstractDissolutionFunction,
                    agg::AbstractAggregationFunction,
                    br::AbstractBreakageFunction)
-    nν, ng, nd, na, nb = nucl.nparams, gr.nparams, diss.nparams,
-                         agg.nparams, br.nparams
+    nν, ng, nd, na, nb = map(_parameter_count, (nucl, gr, diss, agg, br))
     return ComponentArrays.Axis(
         nucl = ViewAxis(1:nν, paramaxis(nucl)),
         gr = ViewAxis((nν + 1):(nν + ng), paramaxis(gr)),
@@ -51,19 +39,6 @@ function paramaxis(nucl::AbstractNucleationFunction,
         agg = ViewAxis((nν + ng + nd + 1):(nν + ng + nd + na), paramaxis(agg)),
         br = ViewAxis((nν + ng + nd + na + 1):(nν + ng + nd + na + nb),
                       paramaxis(br)))
-end
-
-# Composite axis spanning the four kinetic families. Slot order (nucl, gr,
-# agg, br) matches the legacy positional convention.
-function paramaxis(nucl::AbstractNucleationFunction,
-                   gr::AbstractGrowthFunction,
-                   agg::AbstractAggregationFunction,
-                   br::AbstractBreakageFunction)
-    nν, ng, na, nb = nucl.nparams, gr.nparams, agg.nparams, br.nparams
-    return ComponentArrays.Axis(nucl = ViewAxis(1:nν, paramaxis(nucl)),
-                gr = ViewAxis((nν + 1):(nν + ng), paramaxis(gr)),
-                agg = ViewAxis((nν + ng + 1):(nν + ng + na), paramaxis(agg)),
-                br = ViewAxis((nν + ng + na + 1):(nν + ng + na + nb), paramaxis(br)))
 end
 
 paramaxis(prob::CrystallisationProblem) = paramaxis(prob.kinetics_nucleationfunction,

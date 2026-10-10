@@ -149,11 +149,8 @@ function _steady_state_autonomy_issues(problem::CrystallisationProblem)
     operation.feed.concentration isa Real &&
         all(value -> value isa Real, values(operation.feed.solvent_state)) ||
         push!(issues, :feed_profile)
-    problem.temp_profile isa ConstantTemperature || push!(issues, :temperature_profile)
-    if !(problem.saturation_model isa ConstantSolubility ||
-         problem.saturation_model isa PolynomialSolubility)
-        push!(issues, :saturation_model)
-    end
+    _is_time_invariant(problem.temp_profile) || push!(issues, :temperature_profile)
+    _is_time_invariant(problem.saturation_model) || push!(issues, :saturation_model)
     problem.solvent_dynamics === default_solvent_dynamics ||
         push!(issues, :solvent_dynamics)
     isnothing(operation.feed.transport) || push!(issues, :feed_transport)
@@ -163,9 +160,7 @@ function _steady_state_autonomy_issues(problem::CrystallisationProblem)
                                   (:dissolution_kinetics, problem.kinetics_dissolutionfunction),
                                   (:aggregation_kinetics, problem.kinetics_aggregationfunction),
                                   (:breakage_kinetics, problem.kinetics_breakagefunction))
-        (parentmodule(typeof(kinetic_model)) === parentmodule(typeof(problem)) &&
-            !(kinetic_model isa _CallableKinetic)) ||
-            push!(issues, name)
+        _is_time_invariant(kinetic_model) || push!(issues, name)
     end
     return unique(issues)
 end

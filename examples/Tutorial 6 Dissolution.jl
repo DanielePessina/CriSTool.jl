@@ -13,11 +13,14 @@ using CriSTool
 using CairoMakie
 
 function main()
-    # Scalar signed dissolution uses the growth slot; its three SI parameters
-    # are the dissolution coefficient, activation energy and order.
+    # Dissolution has its own model slot; the solvers add its (negative) rate to
+    # the growth rate. Its three SI parameters are the dissolution coefficient,
+    # activation energy and order. Growth is zero below saturation, so only
+    # dissolution acts here.
     crystal_model = CrystallisationModel(LysozymeSystem(saturation_model = ConstantSolubility(10.0));
         nucleation = CallableNucleation((rate_values, rate_context) -> 0.0; parameters = (;)),
-        growth = growth_dissolution(dissolution_coefficient = 2e-9 / 60, activation_energy = 0.0,
+        growth = growth_empirical(growth_coefficient = 1e-9 / 60, growth_order = 1.0),
+        dissolution = growth_dissolution(dissolution_coefficient = 2e-9 / 60, activation_energy = 0.0,
             dissolution_order = 1.5))
     # A narrow 25 µm seed starts below saturation, so crystals dissolve and c rises.
     undersaturated_run = RunConditions(temperature = 293.15, concentration = 5.0,
