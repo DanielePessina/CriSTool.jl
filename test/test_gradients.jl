@@ -58,8 +58,10 @@ end
 end
 
 @testset "FiniteVol (30 cells) final concentration gradient" begin
+    # Tight solve tolerances: the finite-difference reference differences two adaptive
+    # solves, so the default reltol (1e-4) would put step-size noise into the oracle.
     finite_volume_problem = CrystallisationProblem(fixture_lysozyme_model, fixture_lysozyme_conditions;
-        solver = FiniteVol(meshsize = 30, lmax = 50e-6))
+        solver = FiniteVol(meshsize = 30, lmax = 50e-6, reltol = 1e-10, abstol = 1e-14))
     finite_volume_objective = scaled_values -> last(runsimulation(gradient_lysozyme_values(scaled_values),
         finite_volume_problem; save_idx = [0.0, 7200.0, 14400.0])).concentration[end]
     @test DI.gradient(finite_volume_objective, gradient_forward_backend, gradient_lysozyme_scaled_point) ≈
