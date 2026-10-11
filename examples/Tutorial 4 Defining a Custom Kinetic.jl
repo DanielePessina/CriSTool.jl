@@ -17,11 +17,11 @@ function main()
     @assert successful_retcode(trajectory)
     println("Custom growth: final concentration = ", trajectory.concentration[end])
     # Callable parameters are selected by name like built-in ones.
-    coefficient_spec = OptimisationSpec(bounds = (growth = (coefficient = (1e-12, 1e-10),),),
-        algorithm = DE(N = 8, options = Options(iterations = 2, seed = 1)))
     measured_runs = load_measurements(joinpath(@__DIR__, "fake-experimental-dataset.csv"))
-    println("Fitted coefficient: ",
-        fit(prepare_fit(crystal_model, measured_runs, coefficient_spec)).parameters.growth.coefficient)
+    coefficient_problem = EstimationProblem(crystal_model, measured_runs;
+        bounds = (growth = (coefficient = (1e-12, 1e-10),),))
+    println("Fitted coefficient: ", solve(coefficient_problem,
+        DE(N = 8, options = Options(iterations = 2, seed = 1))).parameters.growth.coefficient)
     # Advanced users can still define custom law types, paramaxis and rate methods.
     trajectory
 end

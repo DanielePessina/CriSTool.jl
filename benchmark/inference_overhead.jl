@@ -3,7 +3,7 @@
 # Run:  julia --project=benchmark benchmark/inference_overhead.jl [MoM|FV200|steady ...]
 #
 # For each solver (MoM and FiniteVol(meshsize = 200)) it times
-#   (a) one prepared loss evaluation as `fit` performs it, and its ForwardDiff gradient;
+#   (a) one estimation-problem loss evaluation as `solve` performs it, and its ForwardDiff gradient;
 #   (b) the sum of the raw `solve` calls for the same runs, same options, built once;
 #       (a) - (b) is the work CriSTool does outside the integrator;
 #   (c) `solve(problem, solver)` against the raw solve of the same run;
@@ -39,8 +39,8 @@ end
 
 # The raw solve: the template built by the prepared setup, the same options the
 # package passes to `solve`, with the integrator as the only timed work.
-function overhead_raw_solve_inputs(prepared_fit, kinetic_values)
-    map(prepared_fit.setup.solves.runs) do prepared_run
+function overhead_raw_solve_inputs(estimation_problem, kinetic_values)
+    map(estimation_problem.setup.solves.runs) do prepared_run
         # The prepared run holds the solve-time (discretised) problem.
         configured_problem = prepared_run.problem
         odeproblem, _ = crystallisation_odeproblem(configured_problem.solver, configured_problem,
@@ -73,9 +73,9 @@ end
 
 function benchmark_overhead_solver(solver_label, overhead_solver)
     println("\n== ", solver_label, " ==")
-    prepared_fit = prepare_fit(OVERHEAD_MODEL, OVERHEAD_RUNS,
-        OptimisationSpec(bounds = OVERHEAD_BOUNDS, algorithm = nothing); solver = overhead_solver)
-    loss_objective = selected_values -> loss(prepared_fit, selected_values)
+    estimation_problem = EstimationProblem(OVERHEAD_MODEL, OVERHEAD_RUNS; bounds = OVERHEAD_BOUNDS,
+        solver = overhead_solver)
+    loss_objective = selected_values -> loss(estimation_problem, selected_values)
     gradient_config = ForwardDiff.GradientConfig(loss_objective, OVERHEAD_THETA, ForwardDiff.Chunk{4}())
     gradient_buffer = similar(OVERHEAD_THETA)
     loss_objective(OVERHEAD_THETA)
@@ -87,10 +87,9 @@ function benchmark_overhead_solver(solver_label, overhead_solver)
         @be(ForwardDiff.gradient!(gradient_buffer, loss_objective, OVERHEAD_THETA, gradient_config),
             seconds = OVERHEAD_SECONDS))
 
-    # (f) the same loss and gradient with the 7 experiments solved on threads.
-    threaded_fit = prepare_fit(OVERHEAD_MODEL, OVERHEAD_RUNS,
-        OptimisationSpec(bounds = OVERHEAD_BOUNDS, algorithm = nothing);
-        solver = overhead_solver, parallel = EnsembleThreads())
+    # (f) the same loss and gradient with the 7 experiments solved on threads, as
+    # solve(problem, optimiser; parallel = EnsembleThreads()) evaluates them.
+    threaded_fit = CriSTool._with_parallel(estimation_problem, EnsembleThreads())
     threaded_objective = selected_values -> loss(threaded_fit, selected_values)
     threaded_config = ForwardDiff.GradientConfig(threaded_objective, OVERHEAD_THETA, ForwardDiff.Chunk{4}())
     threaded_objective(OVERHEAD_THETA)
@@ -103,8 +102,8 @@ function benchmark_overhead_solver(solver_label, overhead_solver)
     @printf("   speedup with %d threads: loss %.2fx, gradient %.2fx\n", Threads.nthreads(),
         loss_time / threaded_loss_time, gradient_time / threaded_gradient_time)
 
-    raw_inputs = overhead_raw_solve_inputs(prepared_fit, OVERHEAD_THETA)
-    raw_dual_inputs = overhead_raw_solve_inputs(prepared_fit, overhead_dual_values(OVERHEAD_THETA))
+    raw_inputs = overhead_raw_solve_inputs(estimation_problem, OVERHEAD_THETA)
+    raw_dual_inputs = overhead_raw_solve_inputs(estimation_problem, overhead_dual_values(OVERHEAD_THETA))
     raw_time = record_overhead("(b) raw solves, 7 runs",
         @be(overhead_raw_solves(raw_inputs), seconds = OVERHEAD_SECONDS))
     raw_dual_time = record_overhead("(b) raw dual solves, 7 runs",
@@ -115,7 +114,7 @@ function benchmark_overhead_solver(solver_label, overhead_solver)
 
     first_run = first(OVERHEAD_RUNS)
     first_conditions = merge(first_run.conditions; concentration = initial_concentration(first_run))
-    first_times = first(prepared_fit.setup.solves.runs).saveat
+    first_times = first(estimation_problem.setup.solves.runs).saveat
     first_problem = CrystallisationProblem(OVERHEAD_MODEL, first_conditions, (first(first_times), last(first_times)))
     solve(first_problem, overhead_solver; saveat = first_times)
     record_overhead("(c) solve, run 1",
@@ -158,8 +157,7 @@ function benchmark_overhead_steady(solver_label, overhead_solver)
             concentration = Observable(time = [0.0], mean = [steady_concentration], variance = [0.01]),
             d43 = Observable(time = [0.0], mean = [steady_result.equilibrium.d43], variance = [1e-14])),
         conditions = OVERHEAD_STEADY_CONDITIONS, exp_id = 1)
-    steady_fit = prepare_fit(OVERHEAD_MODEL, [steady_experiment],
-        OptimisationSpec(bounds = OVERHEAD_BOUNDS, algorithm = nothing);
+    steady_fit = EstimationProblem(OVERHEAD_MODEL, [steady_experiment]; bounds = OVERHEAD_BOUNDS,
         solver = overhead_solver, mode = SteadyMode(steady_options))
     steady_objective = selected_values -> loss(steady_fit, selected_values)
     steady_objective(OVERHEAD_THETA)

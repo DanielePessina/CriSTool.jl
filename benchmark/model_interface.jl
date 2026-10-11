@@ -15,8 +15,8 @@ function benchmark_model_interface()
     benchmark_experiment = CrystallisationExperiment(observables = (
         concentration = Observable(time = benchmark_times, mean = named_trajectory.concentration,
             variance = fill(.01, length(benchmark_times))),), exp_id = 1, conditions = RunConditions(temperature = 293.15))
-    selected_preparation = prepare_fit(benchmark_model, [benchmark_experiment],
-        OptimisationSpec(bounds = (growth = (growth_order = (1., 4.),),), algorithm = nothing))
+    selected_preparation = EstimationProblem(benchmark_model, [benchmark_experiment];
+        bounds = (growth = (growth_order = (1., 4.),),))
     full_preparation = selected_preparation.setup
     @test loss(selected_preparation, [3.]) ≈ loss(GaussianNLL(), full_preparation, native_parameters) atol = 1e-10
 

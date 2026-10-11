@@ -1,7 +1,8 @@
 """
 Approximate Bayesian computation samplers, the algorithms of
-`solve(::EstimationProblem, ::AbstractABCSampler)`. To add a sampler, define a new `<:AbstractABCSampler` struct and a `_runsampler`
-method returning the result; `result.P` must hold the particles. The runner receives
+`solve(::EstimationProblem, ::AbstractABCSampler)`. To add a sampler, define a
+new `<:AbstractABCSampler` struct and a `_runsampler` method returning the
+result; `result.P` must hold the particles. The runner receives
 `reference_loss`, a zero-argument function evaluating the loss at the model's current
 values, so samplers that do not need it never pay for the solve.
 """
