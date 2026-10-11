@@ -34,9 +34,6 @@ import Base.Iterators
 import CSV
 import JSON
 
-# MCMC chain types (vendored KissABC resolves a FlexiChains dispatch ambiguity).
-import FlexiChains
-
 # Optimization
 using Metaheuristics
 

@@ -15,7 +15,6 @@ ConcreteStructs = "2569d6c7-a4a2-43d3-a901-331e8e4be471"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 DiffEqCallbacks = "459566f4-90b8-5000-8ac3-15dfb0a30def"
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
-FlexiChains = "4a37a8b9-6e57-4b92-8664-298d46e639f7"
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 MCMCChains = "c7f686f2-ff18-58e9-bc7b-31028e88f75d"
@@ -35,10 +34,12 @@ Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 Turing = "fce5fe82-541a-59a6-adf8-730c64b5f9a0"
 
 [weakdeps]
+FlexiChains = "4a37a8b9-6e57-4b92-8664-298d46e639f7"
 Makie = "ee78f7c6-11fb-53f2-987a-cfe4a2b5a57a"
 PairPlots = "43a3c2be-4208-490b-832a-a21dcd55d7da"
 
 [extensions]
+CriSToolFlexiChainsExt = "FlexiChains"
 CriSToolMakieExt = "Makie"
 CriSToolPairPlotsExt = ["Makie", "PairPlots"]
 
@@ -84,10 +85,11 @@ Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
 DifferentiationInterface = "a0c0ee7d-e4b9-4e03-894e-1c5f64a51d63"
 FiniteDifferences = "26cc04aa-876d-5657-8c51-4c34ba976000"
+FlexiChains = "4a37a8b9-6e57-4b92-8664-298d46e639f7"
 ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
 OptimizationOptimJL = "36348300-93cb-4f02-beb5-3c3902f8871e"
 PairPlots = "43a3c2be-4208-490b-832a-a21dcd55d7da"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Aqua", "CairoMakie", "DifferentiationInterface", "FiniteDifferences", "ForwardDiff", "OptimizationOptimJL", "PairPlots", "Test"]
+test = ["Aqua", "CairoMakie", "DifferentiationInterface", "FiniteDifferences", "FlexiChains", "ForwardDiff", "OptimizationOptimJL", "PairPlots", "Test"]

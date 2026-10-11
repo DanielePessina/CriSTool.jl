@@ -9,6 +9,8 @@
 - Depend on `OrdinaryDiffEqTsit5`, `OrdinaryDiffEqSSPRK` and `SciMLBase` instead
   of the full `OrdinaryDiffEq`. Other time steppers come from the user's own
   environment (for example `OrdinaryDiffEqSDIRK` or `OrdinaryDiffEq`).
+- FlexiChains is a weak dependency; `CriSToolFlexiChainsExt` resolves the
+  vendored AIS `bundle_samples` dispatch ambiguity when FlexiChains is loaded.
 - Removed the unexported `forwardsensitivity` helper and the SciMLSensitivity
   dependency. Differentiate `runsimulation(parameters, problem)` with
   ForwardDiff for local sensitivities; it covers every solver and operation.
