@@ -40,6 +40,7 @@ replacements are:
 | `chains_to_matrix` (export) | `result.samples`; the chain stays in `result.backend_result` |
 | `plot_measurements_vs_ensemble`, `plot_ps_measurements_vs_ensemble`, `plot_measurements_vs_simulation`, `plot_ps_measurements_vs_simulation`, `ChainMeasurementPlots`, `ABCplot` | `plot_predictions(predictions, experiments)` |
 | `ChainPairPlots`, DataFrame `plot_posterior_pairplot` methods | `plot_posterior_pairplot(result)` or `plot_posterior_pairplot(samples; prior, reference)` |
+| `CriSTool.forwardsensitivity(problem, saveat)` (SciMLSensitivity `ODEForwardSensitivityProblem`, MoM and FiniteVol batch only) | `ForwardDiff.jacobian(θ -> last(runsimulation(θ, problem; save_idx = saveat)).concentration, θ)`, which covers every solver and operation; see [Sensitivity analysis](sensitivity.md) |
 | `CRISTOOL_PALETTE`, terminal start/end panels, `outputdir` persistence | removed; save results and figures explicitly (`savename`, `savedir`) |
 
 ## Run conditions, law binding and study settings

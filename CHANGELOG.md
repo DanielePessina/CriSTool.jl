@@ -6,6 +6,9 @@
   backend) enables `plot_predictions` and `ChainStatsPlots`; `PairPlots`
   additionally enables `plot_posterior_pairplot`. `using CriSTool` no longer
   loads Makie.
+- Removed the unexported `forwardsensitivity` helper and the SciMLSensitivity
+  dependency. Differentiate `runsimulation(parameters, problem)` with
+  ForwardDiff for local sensitivities; it covers every solver and operation.
 - Named material and kinetic models reused across simulation, selected-parameter
   optimisation, explicit-prior Bayesian/ABC inference and joint predictions.
 - Callable scalar/node-dependent kinetics with supported named parameter and

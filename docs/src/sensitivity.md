@@ -7,12 +7,8 @@ intended for automatic differentiation and sensitivity work (use `simulate`
 with a `CrystallisationModel` for ordinary runs); the sampling and sensitivity estimators come from
 GlobalSensitivity.jl and QuasiMonteCarlo.jl.
 
-The lower-level `CriSTool.forwardsensitivity` helper currently covers batch scalar
-growth and independent scalar dissolution with MoM or FiniteVol, using the same
-numeric SI parameters as `runsimulation(parameters, problem)`. It is qualified because it is not
-exported. It rejects length-dependent kinetics and binary aggregation/breakage
-explicitly because those source terms need a separate sensitivity
-implementation.
+Local (forward) sensitivities are ForwardDiff derivatives of the same map;
+see [Local sensitivities](#Local-sensitivities).
 
 [Tutorial 3 — Sensitivity Analysis](https://github.com/DanielePessina/CriSTool.jl/blob/main/examples/Tutorial%203%20Sensitivity%20Analysis.jl)
 is the full runnable example. It uses the terminal concentration as its
@@ -43,6 +39,25 @@ simulate_terminal_concentration = function (parameters)
     _, solution = runsimulation(parameters, problem; save_idx = save_grid)
     return solution.concentration[end]
 end
+```
+
+## Local sensitivities
+
+Differentiate
+`runsimulation(parameters, problem)` with ForwardDiff to get, for example, the
+sensitivity of the concentration at every save time to every kinetic parameter.
+This works for every solver, operation and kinetic law that `runsimulation`
+supports:
+
+```julia
+import ForwardDiff
+
+save_times = [0.0, 3600.0, 7200.0, 10800.0]
+concentration_of(parameters) =
+    last(runsimulation(parameters, problem; save_idx = save_times)).concentration
+# Row i, column j is dC(save_times[i]) / d parameters[j].
+local_sensitivities = ForwardDiff.jacobian(concentration_of,
+    collect(kinetic_parameter_vector(problem)))
 ```
 
 ## Sobol indices

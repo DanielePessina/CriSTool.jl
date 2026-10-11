@@ -14,7 +14,6 @@ using Turing
 # Scientific Computing & Differential Equations
 using OrdinaryDiffEq
 import DiffEqCallbacks: AutoAbstol, StepsizeLimiter
-using SciMLSensitivity
 using OptimizationBase
 using PreallocationTools: DiffCache, get_tmp
 
@@ -172,8 +171,6 @@ include("inference/chain_utilities.jl")
 
 include("inference/bayesian.jl")
 
-# Uncertainty workflows.
-include("uncertainty/sensitivity.jl")
 include("inference/workflow_interfaces.jl")
 include("inference/model_workflows.jl")
 
