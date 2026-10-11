@@ -596,7 +596,7 @@ end
 # matrix is not defined for dual numbers.
 _qmom_primal(number::AbstractFloat) = number
 _qmom_primal(number::Integer) = float(number)
-_qmom_primal(number::Real) = _qmom_primal_unwrapped(number, OrdinaryDiffEq.SciMLBase.value(number))
+_qmom_primal(number::Real) = _qmom_primal_unwrapped(number, SciMLBase.value(number))
 _qmom_primal_unwrapped(number::T, unwrapped::T) where {T} =
     throw(ArgumentError("QMOM node tracking cannot extract a primal value from $T."))
 _qmom_primal_unwrapped(number, unwrapped) = _qmom_primal(unwrapped)

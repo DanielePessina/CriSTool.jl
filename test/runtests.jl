@@ -7,6 +7,9 @@ using DataFrames
 import DifferentiationInterface as DI
 import ForwardDiff
 import FiniteDifferences
+# Time steppers passed explicitly as `algorithm` or `timestepping_algorithm`.
+using OrdinaryDiffEqTsit5: Tsit5
+using OrdinaryDiffEqSSPRK: SSPRK43
 
 include("fixtures.jl")
 

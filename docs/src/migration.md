@@ -105,6 +105,7 @@ flags became values rather than symbols.
 | `nmoments(::QMOM)` | `moment_order(solver)` |
 | `steady.concentration`, `steady.d43`, `steady.time`, `steady.moments` | `steady.equilibrium.concentration` (etc.); `steady.solution` is the one-sample `CrystallisationSolution` |
 | `timestepping_algorithm = :ssprk43` (`:auto`) | `timestepping_algorithm = SSPRK43()` (`nothing`) |
+| `CriSTool.OrdinaryDiffEq.Euler()` and other algorithms through CriSTool's `OrdinaryDiffEq` dependency | load the algorithm's subpackage yourself (for example `using OrdinaryDiffEqLowOrderRK: Euler`, or `using OrdinaryDiffEq`); CriSTool depends only on `OrdinaryDiffEqTsit5` and `OrdinaryDiffEqSSPRK` |
 | `tolerance_mode = :auto` (`:scalar`) | `auto_abstol = true` (`false`) |
 | `QMOM(inversion_algorithm = :wheeler)`, solver `string` fields | removed |
 | `runsimulation(params, nucl, gr, agg, br, c0; ...)`, `runsimulation(params; nucl, gr, ..., initial_crystals)` | `runsimulation(params, problem; save_idx)` or `simulate(model, conditions; solver, saveat)` |

@@ -12,7 +12,12 @@ using Statistics
 using Turing
 
 # Scientific Computing & Differential Equations
-using OrdinaryDiffEq
+# The solver defaults (Tsit5, SSPRK43) come from the OrdinaryDiffEq subpackages;
+# users pass any other algorithm instance from the subpackage that defines it.
+using SciMLBase: SciMLBase, ODEProblem, remake, solve, CallbackSet, ContinuousCallback,
+                 DiscreteCallback
+using OrdinaryDiffEqTsit5: Tsit5
+using OrdinaryDiffEqSSPRK: SSPRK43
 import DiffEqCallbacks: AutoAbstol, StepsizeLimiter
 using OptimizationBase
 using PreallocationTools: DiffCache, get_tmp

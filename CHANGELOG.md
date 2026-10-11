@@ -6,6 +6,9 @@
   backend) enables `plot_predictions` and `ChainStatsPlots`; `PairPlots`
   additionally enables `plot_posterior_pairplot`. `using CriSTool` no longer
   loads Makie.
+- Depend on `OrdinaryDiffEqTsit5`, `OrdinaryDiffEqSSPRK` and `SciMLBase` instead
+  of the full `OrdinaryDiffEq`. Other time steppers come from the user's own
+  environment (for example `OrdinaryDiffEqSDIRK` or `OrdinaryDiffEq`).
 - Removed the unexported `forwardsensitivity` helper and the SciMLSensitivity
   dependency. Differentiate `runsimulation(parameters, problem)` with
   ForwardDiff for local sensitivities; it covers every solver and operation.
