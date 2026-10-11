@@ -1,12 +1,12 @@
 """
-Makie plots of prediction ensembles against measurements and MCMC chain
+Makie plot conversions for solutions, plots of prediction ensembles against measurements and MCMC chain
 diagnostics. Loaded when a Makie backend (for example `using CairoMakie`) is
 loaded alongside CriSTool.
 """
 module CriSToolMakieExt
 
 using CriSTool
-using CriSTool: _plot_output_path
+using CriSTool: _plot_output_path, AbstractDiscretisedSolver
 import CriSTool: plot_predictions, ChainStatsPlots
 import MCMCChains
 import Makie
@@ -79,6 +79,39 @@ function plot_predictions(predictions::PredictionResult, experiments = nothing;
     _save_makie_figure(figure, _plot_output_path(savename, savedir, " Predictions"))
     showplot && display(figure)
     return figure
+end
+
+# --- Plot conversion traits ---------------------------------------------------
+# `lines(solution)`, `lines(solution, :d43)` and the same calls with `scatter`,
+# `stairs`, `scatterlines` ... convert a solution to (time, observable) points in
+# SI units (s, kg/m³, m). `plot(solution)` defaults to a line. The mesh form
+# `lines(solution, solver, time_index)` draws the number density at one saved
+# time against the cell centres of the discretised `solver` that produced it.
+
+Makie.plottype(::CrystallisationSolution) = Makie.Lines
+
+function _solution_time_series_points(solution::CrystallisationSolution, observable_name::Symbol)
+    observable_series = observable_values(solution, observable_name)
+    observable_series isa AbstractVector && length(observable_series) == length(solution.time) ||
+        throw(ArgumentError("Observable :$observable_name is not a per-time scalar series and " *
+                            "cannot be plotted against time."))
+    return Makie.Point2d.(solution.time, observable_series)
+end
+
+Makie.convert_arguments(::Makie.PointBased, solution::CrystallisationSolution) =
+    (_solution_time_series_points(solution, :concentration),)
+Makie.convert_arguments(::Makie.PointBased, solution::CrystallisationSolution, observable_name::Symbol) =
+    (_solution_time_series_points(solution, observable_name),)
+
+function Makie.convert_arguments(::Makie.PointBased, solution::CrystallisationSolution{<:MeshPopulation},
+                                 solver::AbstractDiscretisedSolver, time_index::Integer)
+    number_density = solution.population.numberdensity
+    length(solver.cell_centre) == size(number_density, 1) ||
+        throw(DimensionMismatch("solver has $(length(solver.cell_centre)) cells but the solution " *
+                                "has $(size(number_density, 1))."))
+    time_index in axes(number_density, 2) ||
+        throw(BoundsError(solution.time, time_index))
+    return (Makie.Point2d.(solver.cell_centre, view(number_density, :, time_index)),)
 end
 
 _chain_colour(chain_index) = Makie.wong_colors()[mod1(chain_index, length(Makie.wong_colors()))]

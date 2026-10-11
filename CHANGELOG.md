@@ -6,6 +6,9 @@
   backend) enables `plot_predictions` and `ChainStatsPlots`; `PairPlots`
   additionally enables `plot_posterior_pairplot`. `using CriSTool` no longer
   loads Makie.
+- Makie conversion traits for solutions: `lines(solution)`, `lines(solution, :d43)`
+  (any `observable_values` name) and `lines(solution, solver, time_index)` for
+  mesh size distributions; `plot(solution)` draws concentration against time.
 - Depend on `OrdinaryDiffEqTsit5`, `OrdinaryDiffEqSSPRK` and `SciMLBase` instead
   of the full `OrdinaryDiffEq`. Other time steppers come from the user's own
   environment (for example `OrdinaryDiffEqSDIRK` or `OrdinaryDiffEq`).

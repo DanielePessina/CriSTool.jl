@@ -68,3 +68,59 @@ using PairPlots: PairPlots
     @test has_plot_type(statistics_axes[4], PlotMakie.Density)
     @test isfile(joinpath(output_dir, "stats ChDensity.png"))
 end
+
+@testset "Solution plot conversions" begin
+    PlotMakie = CairoMakie.Makie
+    recipe_times = [0.0, 600.0, 1800.0, 3600.0]
+    recipe_solution = simulate(fixture_translation_model(), fixture_seeded_conditions();
+        solver = MoM(), saveat = recipe_times)
+    plotted_points(plot_object) = plot_object[1][]
+    # Converted data equal the solution's own vectors, and the closed form.
+    default_points = PlotMakie.convert_arguments(PlotMakie.PointBased(), recipe_solution)[1]
+    @test [point[1] for point in default_points] == recipe_solution.time
+    @test [point[2] for point in default_points] == recipe_solution.concentration
+    @test [point[2] for point in default_points] ≈ fixture_translation_concentration.(recipe_times) rtol = 1e-6
+    for observable_name in (:concentration, :d10, :d32, :d43, :moment2)
+        observable_points = PlotMakie.convert_arguments(PlotMakie.PointBased(), recipe_solution, observable_name)[1]
+        @test [point[1] for point in observable_points] == recipe_solution.time
+        @test [point[2] for point in observable_points] == observable_values(recipe_solution, observable_name)
+    end
+    d43_points = PlotMakie.convert_arguments(PlotMakie.PointBased(), recipe_solution, :d43)[1]
+    @test [point[2] for point in d43_points] ≈ fixture_translation_d43.(recipe_times) rtol = 1e-6
+    @test_throws ArgumentError PlotMakie.convert_arguments(PlotMakie.PointBased(), recipe_solution, :pH)
+
+    # Rendering through several plot types and the default `plot`.
+    recipe_figure = PlotMakie.Figure()
+    recipe_axis = PlotMakie.Axis(recipe_figure[1, 1])
+    line_plot = PlotMakie.lines!(recipe_axis, recipe_solution, :d43)
+    @test [point[2] for point in plotted_points(line_plot)] ≈ recipe_solution.d43 rtol = 1e-6
+    @test PlotMakie.scatter!(recipe_axis, recipe_solution) isa PlotMakie.Scatter
+    @test PlotMakie.stairs!(recipe_axis, recipe_solution, :d32) isa PlotMakie.Stairs
+    @test PlotMakie.plottype(recipe_solution) === PlotMakie.Lines
+    default_plot = PlotMakie.plot(recipe_solution)
+    @test default_plot.plot isa PlotMakie.Lines
+    @test [point[2] for point in plotted_points(default_plot.plot)] == recipe_solution.concentration
+    @test PlotMakie.lines(recipe_solution, :d43).figure isa PlotMakie.Figure
+    mktempdir() do output_dir
+        PlotMakie.save(joinpath(output_dir, "recipe.png"), recipe_figure)
+        @test isfile(joinpath(output_dir, "recipe.png"))
+    end
+
+    # Mesh size distribution: cell centres against the saved number density.
+    mesh_solver = FiniteVol(meshsize = 40, lmax = 40e-6)
+    mesh_solution = simulate(fixture_translation_model(), fixture_seeded_conditions();
+        solver = mesh_solver, saveat = recipe_times)
+    distribution_points = PlotMakie.convert_arguments(PlotMakie.PointBased(), mesh_solution, mesh_solver, 3)[1]
+    @test [point[1] for point in distribution_points] == mesh_solver.cell_centre
+    @test [point[2] for point in distribution_points] == mesh_solution.population.numberdensity[:, 3]
+    # Integrating n(L) over the uniform seed recovers the seed number: mass / (rho kv E[L^3]).
+    initial_points = PlotMakie.convert_arguments(PlotMakie.PointBased(), mesh_solution, mesh_solver, 1)[1]
+    seed_number = fixture_seed_mass / 1000.0 / fixture_uniform_moment(3)
+    @test sum(point[2] for point in initial_points) * step(mesh_solver.cell_centre) ≈ seed_number rtol = 2e-2
+    distribution_figure = PlotMakie.Figure()
+    distribution_axis = PlotMakie.Axis(distribution_figure[1, 1])
+    @test PlotMakie.lines!(distribution_axis, mesh_solution, mesh_solver, 2) isa PlotMakie.Lines
+    @test_throws BoundsError PlotMakie.convert_arguments(PlotMakie.PointBased(), mesh_solution, mesh_solver, 9)
+    @test_throws DimensionMismatch PlotMakie.convert_arguments(PlotMakie.PointBased(), mesh_solution,
+        FiniteVol(meshsize = 20, lmax = 40e-6), 1)
+end
