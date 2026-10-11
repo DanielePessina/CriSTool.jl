@@ -279,7 +279,7 @@ the solve's scalar type (Dual when the parameters are) for an in-place ODE,
 `nothing` for an out-of-place one.
 """
 function _steady_rhs_buffer(ode_problem)
-    OrdinaryDiffEq.SciMLBase.isinplace(ode_problem) || return nothing
+    SciMLBase.isinplace(ode_problem) || return nothing
     scalar_type = promote_type(eltype(ode_problem.u0), _parameter_eltype(ode_problem.p))
     return similar(ode_problem.u0, scalar_type)
 end
