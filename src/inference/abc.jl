@@ -53,6 +53,16 @@ Base.@kwdef struct ABCDETurner{Kernel <: KissABC.AbstractABCKernel} <: AbstractA
     burnin_frac::Float64 = 0.3
 end
 
+@doc """
+    AbstractABCKernel
+
+Kernel ψ(ρ|δ) with which `ABCDETurner` weights a particle by its cost excess
+ρ = cost - best_cost: `GaussianABCKernel()`, `LaplaceABCKernel()` or `FlatABCKernel()`.
+""" AbstractABCKernel
+@doc "Gaussian ABC kernel, log ψ = -ρ²/(2δ²)." GaussianABCKernel
+@doc "Laplace ABC kernel, log ψ = -|ρ|/δ." LaplaceABCKernel
+@doc "Flat ABC kernel, log ψ = 0: every particle within the target weighs the same." FlatABCKernel
+
 """
     AbstractABCStopping
 

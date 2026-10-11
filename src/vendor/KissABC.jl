@@ -232,17 +232,11 @@ function sample_from_logweights(rng::AbstractRNG, logws::AbstractVector)
     return idx === nothing ? length(logws) : idx
 end
 
-"""
-    AbstractABCKernel
-
-Kernel ψ(ρ|δ) weighting a particle by its cost excess ρ = cost - best_cost.
-"""
+# Kernel ψ(ρ|δ) weighting a particle by its cost excess ρ = cost - best_cost;
+# CriSTool documents the public types where it re-exports them.
 abstract type AbstractABCKernel end
-"""Gaussian kernel, log ψ = -ρ²/(2δ²)."""
 struct GaussianABCKernel <: AbstractABCKernel end
-"""Laplace kernel, log ψ = -|ρ|/δ."""
 struct LaplaceABCKernel <: AbstractABCKernel end
-"""Flat kernel, log ψ = 0: every particle within the target weighs the same."""
 struct FlatABCKernel <: AbstractABCKernel end
 
 """
