@@ -2,6 +2,11 @@
 
 ## 0.1.0 — unreleased
 
+- REPL display: run conditions, seeds, solvers, operations and feeds, kinetic
+  and crystallisation models, solutions (transient and steady), fits,
+  inference results and predictions print a readable summary, with a compact
+  one-line form inside containers. Sizes are shown in µm; stored values are
+  unchanged.
 - Plotting moved to package extensions: `using CairoMakie` (or another Makie
   backend) enables `plot_predictions` and `ChainStatsPlots`; `PairPlots`
   additionally enables `plot_posterior_pairplot`. `using CriSTool` no longer

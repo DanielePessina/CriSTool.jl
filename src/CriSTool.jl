@@ -177,6 +177,9 @@ include("inference/bayesian.jl")
 include("inference/workflow_interfaces.jl")
 include("inference/model_workflows.jl")
 
+# REPL display for user-facing types (after every type it dispatches on)
+include("core/show.jl")
+
 # Plotting entry points; their methods live in the Makie/PairPlots extensions.
 include("plotting/plots.jl")
 

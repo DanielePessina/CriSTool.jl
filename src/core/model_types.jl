@@ -133,17 +133,6 @@ end
 
 const _MODEL_KINETIC_SLOTS = (:nucleation, :growth, :dissolution, :aggregation, :breakage)
 
-function Base.show(display_io::IO, ::MIME"text/plain", crystal_model::CrystallisationModel)
-    println(display_io, "CrystallisationModel")
-    println(display_io, "  density: ", crystal_model.system.crystal_density, " kg/m³; shape factor: ",
-        crystal_model.system.volume_shape_factor)
-    println(display_io, "  solubility: ", typeof(crystal_model.system.saturation_model))
-    for slot_name in _MODEL_KINETIC_SLOTS
-        bound_kinetic = getproperty(crystal_model, slot_name)
-        println(display_io, "  ", slot_name, ": ", nameof(typeof(bound_kinetic.law)), " ", bound_kinetic.parameters)
-    end
-end
-
 function _validate_material_model(crystal_model::CrystallisationModel)
     material_system = crystal_model.system
     if material_system isa CrystallisationSystem
