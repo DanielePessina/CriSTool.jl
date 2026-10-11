@@ -97,13 +97,15 @@ weights resolved from the preparation loss, and local observable projections.
 Built with `prepare_loss` (normally through `prepare_fit`) and evaluated with
 `loss(lf, setup, params)`.
 """
-struct LossSetup{Solves <: PreparedSolves, Weights <: NamedTuple, Projections <: NamedTuple}
+struct LossSetup{Solves <: PreparedSolves, Weights <: NamedTuple, Projections <: NamedTuple,
+                 Parallel <: SciMLBase.BasicEnsembleAlgorithm}
     solves::Solves
     experiments::Vector{CrystallisationExperiment}
     observable_names::Vector{Symbol}
     included_observations::Vector{Dict{Symbol, Vector{Int}}}
     observable_weights::Weights
     observable_projections::Projections
+    parallel::Parallel
 end
 
 # Transient runs always start at time zero; steady runs need no start.
@@ -168,7 +170,8 @@ function prepare_loss(configured_problems::AbstractVector{<:CrystallisationProbl
                       experiments::AbstractVector{<:CrystallisationExperiment};
                       mode::AbstractSimulationMode = TransientMode(), loss_function = nothing,
                       observable_order = nothing, observable_projections::NamedTuple = (;),
-                      algorithm = nothing, solve_options::NamedTuple = (;), callback_factory = nothing)
+                      algorithm = nothing, solve_options::NamedTuple = (;), callback_factory = nothing,
+                      parallel::SciMLBase.BasicEnsembleAlgorithm = EnsembleSerial())
     length(configured_problems) == length(experiments) && !isempty(experiments) ||
         throw(ArgumentError("Supply one configured problem per experiment."))
     prepared_solves = _prepare_solves(configured_problems, map(_observation_times, experiments), mode;
@@ -186,7 +189,7 @@ function prepare_loss(configured_problems::AbstractVector{<:CrystallisationProbl
     observable_weights = _observable_weights(loss_function, names,
         heterogeneous_schema && isnothing(observable_order))
     return LossSetup(prepared_solves, collect(CrystallisationExperiment, experiments), names, included,
-                     observable_weights, observable_projections)
+                     observable_weights, observable_projections, parallel)
 end
 
 const _BUILTIN_LOSS_PROJECTION_NAMES = (
@@ -392,6 +395,39 @@ _pooled(::MeanAbsoluteError, objective_sum, observation_count::Int) =
     observation_count > 0 ? objective_sum / observation_count : objective_sum
 
 """
+    _experiment_solutions(parallel, prepared_solves, params)
+
+One solution per prepared run, in run order. `EnsembleSerial` returns a lazy
+generator, so a loss that stops at the first failed solve never pays for the
+remaining runs. `EnsembleThreads` solves the runs on a threaded loop; runs own
+distinct templates, so no task shares mutable solver state with another.
+Scoring then consumes the solutions in run order in both cases, which keeps
+threaded and serial losses bitwise identical.
+"""
+_experiment_solutions(::EnsembleSerial, prepared_solves::PreparedSolves, params) =
+    (_solve_prepared(prepared_solves, prepared_run, params) for prepared_run in prepared_solves.runs)
+
+function _experiment_solutions(::EnsembleThreads, prepared_solves::PreparedSolves, params)
+    run_solutions = Vector{Any}(undef, length(prepared_solves.runs))
+    run_failures = Vector{Any}(nothing, length(prepared_solves.runs))
+    Threads.@threads for run_index in eachindex(prepared_solves.runs)
+        # Keep each run's exception so the first one in run order is rethrown as it is, not
+        # wrapped in a task failure; serial and threaded losses then raise the same error.
+        try
+            run_solutions[run_index] = _solve_prepared(prepared_solves, prepared_solves.runs[run_index], params)
+        catch run_failure
+            run_failures[run_index] = run_failure
+        end
+    end
+    first_failure = findfirst(!isnothing, run_failures)
+    first_failure === nothing || throw(run_failures[first_failure])
+    return run_solutions
+end
+
+_experiment_solutions(unsupported::SciMLBase.BasicEnsembleAlgorithm, prepared_solves, params) =
+    throw(ArgumentError("parallel must be EnsembleSerial() or EnsembleThreads(), got $(typeof(unsupported))."))
+
+"""
     _loss_objectives(lf, setup, params) -> Vector
 
 One weighted objective per observable in `setup.observable_names`, pooled over
@@ -406,8 +442,8 @@ function _loss_objectives(lossfunction::Union{GaussianNLL, MeanAbsoluteError}, s
     objective_sums = [zero(eltype(params)) for _ in setup.observable_names]
     observation_counts = zeros(Int, length(setup.observable_names))
     prepared_solves = setup.solves
-    for (experiment_index, (prepared_run, expt)) in enumerate(zip(prepared_solves.runs, setup.experiments))
-        solution = _solve_prepared(prepared_solves, prepared_run, params)
+    experiment_solutions = _experiment_solutions(setup.parallel, prepared_solves, params)
+    for (experiment_index, (solution, expt)) in enumerate(zip(experiment_solutions, setup.experiments))
         # Numerical failures have a definite penalty. Exceptions from data,
         # kinetics and custom observables propagate, including DomainError.
         solution.success || return [zero(eltype(params)) + observable_weight * CRISTOOL_FAILED_SIMULATION_PENALTY

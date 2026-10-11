@@ -8,6 +8,7 @@
 #       (a) - (b) is the work CriSTool does outside the integrator;
 #   (c) `simulate(model, conditions)` against the raw solve of the same run;
 #   (d) `predict` over 100 joint parameter draws;
+# (f) the same loss, gradient and predict with `parallel = EnsembleThreads()`;
 # and (e) a steady MSMPR relaxation (`solve_steadystate` and a steady loss).
 # Every row reports the median time, allocations and allocated bytes.
 using CriSTool, Chairmarks, ComponentArrays, ForwardDiff, Printf, Random
@@ -83,6 +84,22 @@ function benchmark_overhead_solver(solver_label, overhead_solver)
         @be(ForwardDiff.gradient!(gradient_buffer, loss_objective, OVERHEAD_THETA, gradient_config),
             seconds = OVERHEAD_SECONDS))
 
+    # (f) the same loss and gradient with the 7 experiments solved on threads.
+    threaded_fit = prepare_fit(OVERHEAD_MODEL, OVERHEAD_RUNS,
+        OptimisationSpec(bounds = OVERHEAD_BOUNDS, algorithm = nothing);
+        solver = overhead_solver, parallel = EnsembleThreads())
+    threaded_objective = selected_values -> loss(threaded_fit, selected_values)
+    threaded_config = ForwardDiff.GradientConfig(threaded_objective, OVERHEAD_THETA, ForwardDiff.Chunk{4}())
+    threaded_objective(OVERHEAD_THETA)
+    ForwardDiff.gradient!(gradient_buffer, threaded_objective, OVERHEAD_THETA, threaded_config)
+    threaded_loss_time = record_overhead("(f) threaded loss, 7 runs",
+        @be(threaded_objective(OVERHEAD_THETA), seconds = OVERHEAD_SECONDS))
+    threaded_gradient_time = record_overhead("(f) threaded ForwardDiff gradient, 7 runs",
+        @be(ForwardDiff.gradient!(gradient_buffer, threaded_objective, OVERHEAD_THETA, threaded_config),
+            seconds = OVERHEAD_SECONDS))
+    @printf("   speedup with %d threads: loss %.2fx, gradient %.2fx\n", Threads.nthreads(),
+        loss_time / threaded_loss_time, gradient_time / threaded_gradient_time)
+
     raw_inputs = overhead_raw_solve_inputs(prepared_fit, OVERHEAD_THETA)
     raw_dual_inputs = overhead_raw_solve_inputs(prepared_fit, overhead_dual_values(OVERHEAD_THETA))
     raw_time = record_overhead("(b) raw solves, 7 runs",
@@ -114,6 +131,10 @@ function benchmark_overhead_solver(solver_label, overhead_solver)
     record_overhead("(d) predict, 100 draws x 7 runs",
         @be(predict(OVERHEAD_MODEL, OVERHEAD_RUNS, prediction_draws; solver = overhead_solver),
             seconds = 2 * OVERHEAD_SECONDS))
+    predict(OVERHEAD_MODEL, OVERHEAD_RUNS, prediction_draws; solver = overhead_solver, parallel = EnsembleThreads())
+    record_overhead("(f) threaded predict, 100 draws x 7 runs",
+        @be(predict(OVERHEAD_MODEL, OVERHEAD_RUNS, prediction_draws; solver = overhead_solver,
+                parallel = EnsembleThreads()), seconds = 2 * OVERHEAD_SECONDS))
     return nothing
 end
 

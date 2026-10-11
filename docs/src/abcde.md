@@ -19,7 +19,8 @@ abc_predictions = predict(abc_posterior)
 `target` is required and must be a finite number. Thresholds have the
 units/scale of the discrepancy and are a scientific choice; they are not
 inferred from an optimum or from a confidence interval. `early_stop=true` stops
-once the target is reached. `threaded` evaluates particles in parallel.
+once the target is reached. `threaded` evaluates particles in parallel; `parallel = EnsembleThreads()` solves
+the experiments of each discrepancy evaluation on threads.
 `ABCDETurnerSampler` remains a distinct sampler option. Native posterior output
 is retained as `backend_result`; joint draws use the common prediction interface.
 The sampler implementation is vendored in `CriSTool.KissABC`.

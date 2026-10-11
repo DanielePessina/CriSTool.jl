@@ -222,3 +222,23 @@ end
     @test DI.gradient(breakage_objective, gradient_forward_backend, [0.0, 1.0]) ≈
           DI.gradient(breakage_objective, gradient_difference_backend, [0.0, 1.0]) rtol = 1e-4
 end
+
+@testset "Threaded experiments: ForwardDiff gradient identical to serial and to finite differences" begin
+    gradient_times_by_experiment = [[0.0, 300.0, 1000.0], [0.0, 150.0, 600.0, 900.0], [0.0, 500.0]]
+    threaded_experiments = [fixture_experiment((time = elapsed_times,
+            concentration = fixture_translation_concentration.(elapsed_times; speed = true_speed)),
+        fixture_seeded_conditions(); observables = (:concentration,), exp_id = experiment_index)
+        for (experiment_index, (elapsed_times, true_speed)) in
+            enumerate(zip(gradient_times_by_experiment, (0.008, 0.01, 0.012)))]
+    gradient_specification = OptimisationSpec(bounds = (growth = (speed = (0.001, 0.05),),), algorithm = nothing)
+    serial_prepared = prepare_fit(fixture_translation_model(), threaded_experiments, gradient_specification)
+    threaded_prepared = prepare_fit(fixture_translation_model(), threaded_experiments, gradient_specification;
+        parallel = EnsembleThreads())
+    trial_speed = [0.015]
+    serial_gradient = DI.gradient(trial -> loss(serial_prepared, trial), gradient_forward_backend, trial_speed)
+    threaded_gradient = DI.gradient(trial -> loss(threaded_prepared, trial), gradient_forward_backend, trial_speed)
+    @test threaded_gradient == serial_gradient
+    @test !iszero(only(serial_gradient))
+    difference_gradient = DI.gradient(trial -> loss(threaded_prepared, trial), gradient_difference_backend, trial_speed)
+    @test threaded_gradient ≈ difference_gradient rtol = 1e-6
+end

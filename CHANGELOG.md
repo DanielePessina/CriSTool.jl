@@ -11,6 +11,12 @@
   inference results and predictions print a readable summary, with a compact
   one-line form inside containers. Sizes are shown in µm; stored values are
   unchanged.
+- Opt-in multithreading across experiments: `prepare_fit`, `fit` and `predict`
+  accept `parallel = EnsembleThreads()` (`EnsembleSerial()` and `EnsembleThreads()`
+  are re-exported from SciMLBase). Loss values, ForwardDiff gradients, fits and
+  predictions are bitwise identical to serial. `predict` now defaults to
+  `EnsembleSerial()` instead of always threading its (run, draw) pairs.
+
 - Plotting moved to package extensions: `using CairoMakie` (or another Makie
   backend) enables `plot_predictions` and `ChainStatsPlots`; `PairPlots`
   additionally enables `plot_posterior_pairplot`. `using CriSTool` no longer

@@ -28,6 +28,28 @@ belong to preparation. `fit(prepared; threaded=true)` evaluates Metaheuristics
 populations in parallel, each candidate on a private copy of the solve templates.
 `problem_options` passes extra numerical problem settings to every run.
 
+### Threads across experiments
+
+Each loss evaluation solves one ODE per experiment. With Julia started with
+several threads (`julia -t 4`), `parallel = EnsembleThreads()` (re-exported from
+SciMLBase) solves those experiments concurrently, for the loss and for its
+ForwardDiff gradient alike:
+
+```julia
+prepared_fit = prepare_fit(crystal_model, experiments, fit_specification;
+    solver = MoM(), parallel = EnsembleThreads())
+fitted_result = fit(prepared_fit)                          # uses the prepared setting
+fitted_result = fit(prepared_fit; parallel = EnsembleSerial())  # override for one call
+```
+
+The default is `EnsembleSerial()`. Scores are reduced in experiment order, so
+threaded and serial losses, gradients and fits are bitwise identical. The
+speed-up is bounded by the number of experiments and by the slowest one, and it
+composes with `threaded = true` (population or chain parallelism) through
+Julia's shared thread pool: prefer `parallel` when there are few candidates or
+chains and many experiments, and `threaded` otherwise. Any other ensemble type
+raises an `ArgumentError`.
+
 Transient experiments read their initial values from time-zero observations
 through `FromObservation` placeholders in their `RunConditions`; by default only
 the concentration. Initialising samples are excluded from scoring. Preparation
@@ -69,7 +91,8 @@ means `Turing.NUTS()`. Turing also exports a `predict`; import only what you nee
 ABC fitting and everything else do not need Turing.
 
 Priors are explicit and never automatically centred on a fitted optimum.
-`threaded` runs chains in parallel; other keywords such as `rng` and `progress`
+`threaded` runs chains in parallel (`MCMCThreads`) and `parallel = EnsembleThreads()`
+solves the experiments inside each log-density evaluation on threads; other keywords such as `rng` and `progress`
 go to `Turing.sample`. Prepared mutable state is private per sampling task. The
 native chain is kept in `posterior.backend_result`. See [ABCDE](abcde.md) for
 likelihood-free sampling and [Uncertainty](uq-ensembles.md) for predictions.
