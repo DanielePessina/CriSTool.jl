@@ -16,7 +16,7 @@ include("fixtures.jl")
 # `Pkg.test()` runs the core groups. Pass group names to run a subset, e.g.
 # `Pkg.test(test_args = ["simulate", "steady"])`; "all" adds the optional groups.
 const CORE_TEST_GROUPS = ["numerics", "simulate", "operations", "steady", "data", "fit_predict", "gradients"]
-const OPTIONAL_TEST_GROUPS = ["plotting", "aqua"]
+const OPTIONAL_TEST_GROUPS = ["plotting", "aqua", "static"]
 const SELECTED_TEST_GROUPS = isempty(ARGS) ? CORE_TEST_GROUPS :
                              "all" in ARGS ? vcat(CORE_TEST_GROUPS, OPTIONAL_TEST_GROUPS) : ARGS
 for group_name in SELECTED_TEST_GROUPS

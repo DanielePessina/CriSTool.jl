@@ -59,6 +59,7 @@ Distributions = "0.25.88"
 FiniteDifferences = "0.12"
 FlexiChains = "0.3.3, 0.4, 0.5, 0.6"
 ForwardDiff = "1"
+JET = "0.9, 0.10, 0.11"
 JSON = "1"
 LinearAlgebra = "^1.10.0"
 MCMCChains = "^6.0.0, 7"
@@ -89,9 +90,10 @@ DifferentiationInterface = "a0c0ee7d-e4b9-4e03-894e-1c5f64a51d63"
 FiniteDifferences = "26cc04aa-876d-5657-8c51-4c34ba976000"
 FlexiChains = "4a37a8b9-6e57-4b92-8664-298d46e639f7"
 ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
+JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
 OptimizationOptimJL = "36348300-93cb-4f02-beb5-3c3902f8871e"
 PairPlots = "43a3c2be-4208-490b-832a-a21dcd55d7da"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Aqua", "CairoMakie", "DifferentiationInterface", "FiniteDifferences", "FlexiChains", "ForwardDiff", "OptimizationOptimJL", "PairPlots", "Test"]
+test = ["Aqua", "CairoMakie", "DifferentiationInterface", "FiniteDifferences", "FlexiChains", "ForwardDiff", "JET", "OptimizationOptimJL", "PairPlots", "Test"]
