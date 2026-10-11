@@ -97,10 +97,12 @@ function crystallisation_odeproblem(solver::MoM, CryProblem::CrystallisationProb
     ODEprob = ODEProblem{false}(MoM_model,
                                 u0_typed,
                                 (saveat[1], saveat[end]),
-                                kinetic_values;
-                                callback = _solid_mass_extinction_callback(CryProblem))
+                                kinetic_values)
     return (ODEprob, _timestepping_algorithm(solver, Tsit5()))
 end
+
+_solver_callbacks(solver::MoM, problem::CrystallisationProblem, odeproblem) =
+    _solid_mass_extinction_callback(problem)
 
 function _wrap_solution(solver::MoM, problem::CrystallisationProblem, ode_solution,
                         boundary_flow_state::NamedTuple)

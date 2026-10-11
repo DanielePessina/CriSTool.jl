@@ -47,7 +47,8 @@ function overhead_raw_solve_inputs(prepared_fit, kinetic_values)
         solve_settings = (reltol = configured_solver.reltol,
             abstol = CriSTool._solver_absolute_floor(configured_problem, odeproblem),
             dense = false, maxiters = CriSTool.CRISTOOL_MAX_SOLVER_ITERS,
-            internalnorm = CriSTool._primal_error_norm, saveat = prepared_run.saveat)
+            internalnorm = CriSTool._primal_error_norm, saveat = prepared_run.saveat,
+            callback = CriSTool._solver_callbacks(configured_problem, odeproblem))
         (odeproblem, prepared_run.algorithm, solve_settings)
     end
 end

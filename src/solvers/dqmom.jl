@@ -290,10 +290,12 @@ function crystallisation_odeproblem(solver::DQMOM, problem::CrystallisationProbl
     ode_problem = ODEProblem{false}(DQMOM_model,
                                     initial_state,
                                     (saveat[1], saveat[end]),
-                                    parameters;
-                                    callback = _dqmom_boundary_callback(problem))
+                                    parameters)
     return ode_problem, _timestepping_algorithm(solver, Tsit5())
 end
+
+_solver_callbacks(solver::DQMOM, problem::CrystallisationProblem, odeproblem) =
+    _dqmom_boundary_callback(problem)
 
 function _wrap_solution(solver::DQMOM, problem::CrystallisationProblem, solution,
                         boundary_flow_state::NamedTuple)

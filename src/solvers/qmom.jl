@@ -1063,13 +1063,13 @@ function crystallisation_odeproblem(solver::QMOM, problem::CrystallisationProble
     ode_problem = ODEProblem{false}(QMOM_model,
                                     initial_state,
                                     (saveat[1], saveat[end]),
-                                    parameters;
-                                    callback = CallbackSet(
-                                        _solid_mass_extinction_callback(problem),
-                                        _qmom_vanishing_node_callback(problem,
-                                                                      moment_count_value)))
+                                    parameters)
     return ode_problem, _timestepping_algorithm(solver, Tsit5())
 end
+
+_solver_callbacks(solver::QMOM, problem::CrystallisationProblem, odeproblem) =
+    CallbackSet(_solid_mass_extinction_callback(problem),
+                _qmom_vanishing_node_callback(problem, Val(moment_count(solver))))
 
 """Saved quadrature rules of a moment trajectory; inactive nodes stay zero."""
 function _qmom_saved_quadratures(moment_matrix::AbstractMatrix, solver::QMOM, ::Val{M}) where {M}

@@ -15,6 +15,19 @@ crystallisation_odeproblem(problem::CrystallisationProblem, saveat,
                            kinetic_values = kinetic_parameter_vector(problem)) =
     crystallisation_odeproblem(problem.solver, problem, saveat, kinetic_values)
 
+"""
+    _solver_callbacks(problem, odeproblem) -> callback or `nothing`
+
+Package event callbacks of `problem.solver` for one solve of `odeproblem`
+(dissolution extinction, node removal, WENO CFL limiting). ODE templates never
+store callbacks: callbacks can hold mutable event state, so each solve builds
+its own and templates stay immutable and shareable. Each solver type with
+events provides one `_solver_callbacks(solver, problem, odeproblem)` method.
+"""
+_solver_callbacks(problem::CrystallisationProblem, odeproblem) =
+    _solver_callbacks(problem.solver, problem, odeproblem)
+_solver_callbacks(solver::AbstractSolver, problem::CrystallisationProblem, odeproblem) = nothing
+
 """Configured algorithm of `solver`, or `default_algorithm` when it is `nothing`."""
 _timestepping_algorithm(solver::AbstractSolver, default_algorithm) =
     something(solver.timestepping_algorithm, default_algorithm)
@@ -354,13 +367,10 @@ function _solve_crystallisation_ode(problem::CrystallisationProblem, odeproblem,
                                               selected_options.abstol, scalar_type;
                                               reltol = selected_options.reltol)
     user_callback = callback_factory === nothing ? nothing : callback_factory(odeproblem)
-    solve_callback = CallbackSet(auto_callback, user_callback)
-    # Templates are reused; callbacks can hold mutable event state. Do not share
-    # those states across parameter candidates or concurrent evaluations.
-    original_callback = get(odeproblem.kwargs, :callback, nothing)
-    solve_problem = isnothing(original_callback) ? odeproblem :
-                    remake(odeproblem; callback = deepcopy(original_callback))
-    return solve(solve_problem, algorithm; selected_options..., abstol = abstol,
+    # Package events precede the tolerance and user callbacks.
+    solve_callback = CallbackSet(_solver_callbacks(problem, odeproblem), auto_callback,
+                                 user_callback)
+    return solve(odeproblem, algorithm; selected_options..., abstol = abstol,
                  saveat = saveat, callback = solve_callback)
 end
 
