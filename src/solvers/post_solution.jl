@@ -135,29 +135,76 @@ function quantilecalculator(cellcentre::AbstractVector{T},
     return quant_matrix
 end
 
-"""Size ratio `numerator / denominator`, zero for a numerically empty population."""
-function _safe_moment_size_ratio(numerator, denominator, particle_count)
-    isfinite(particle_count) ||
-        throw(DomainError(particle_count,
-                          "Particle count must be finite when computing a size metric."))
-    if particle_count >= zero(particle_count) &&
-       particle_count <= CRISTOOL_MOMENT_DENSITY_FLOOR
-        return zero(promote_type(typeof(numerator), typeof(denominator)))
-    end
-    isfinite(numerator) && numerator >= zero(numerator) ||
-        throw(DomainError(numerator,
-                          "A nonempty population requires a finite nonnegative moment numerator."))
-    isfinite(denominator) && denominator > zero(denominator) ||
-        throw(DomainError(denominator,
-                          "A nonempty population requires a finite positive moment denominator."))
-    return numerator / denominator
+"""
+    ReconstructionFailure(value, message)
+
+Status of a saved trajectory that cannot be reconstructed into physical size
+metrics or a quadrature population: the offending `value` and the reason.
+Reconstruction returns it instead of throwing. Direct simulation raises it as
+`DomainError(value, message)`; prepared inference records it as a failed
+candidate.
+"""
+struct ReconstructionFailure{Value <: Real}
+    value::Value
+    message::String
 end
+
+"""The `DomainError` that reports `failure` to callers outside prepared inference."""
+_reconstruction_domain_error(failure::ReconstructionFailure) =
+    DomainError(failure.value, failure.message)
+
+"""The first `ReconstructionFailure` among `statuses`, or `nothing`."""
+_first_reconstruction_failure() = nothing
+_first_reconstruction_failure(failure::ReconstructionFailure, remaining_statuses...) = failure
+_first_reconstruction_failure(reconstructed, remaining_statuses...) =
+    _first_reconstruction_failure(remaining_statuses...)
+
+"""
+    _reconstruct_from(build, statuses...)
+
+`build(statuses...)` when no status is a `ReconstructionFailure`; otherwise the
+first failure, in argument order.
+"""
+_reconstruct_from(build, statuses...) =
+    _reconstruct_from(build, _first_reconstruction_failure(statuses...), statuses)
+_reconstruct_from(build, ::Nothing, statuses::Tuple) = build(statuses...)
+_reconstruct_from(build, failure::ReconstructionFailure, statuses::Tuple) = failure
+
+"""A reconstructed value, or throw a reconstruction failure as its `DomainError`."""
+_reconstructed_or_throw(reconstructed) = reconstructed
+_reconstructed_or_throw(failure::ReconstructionFailure) =
+    throw(_reconstruction_domain_error(failure))
+
+"""Whether a particle count is numerically empty, so its size ratios are zero."""
+_is_empty_moment_population(particle_count) =
+    particle_count >= zero(particle_count) && particle_count <= CRISTOOL_MOMENT_DENSITY_FLOOR
+
+"""`ReconstructionFailure` when the size ratio `numerator / denominator` is undefined, else `nothing`."""
+function _moment_size_ratio_failure(numerator, denominator, particle_count)
+    isfinite(particle_count) ||
+        return ReconstructionFailure(particle_count,
+            "Particle count must be finite when computing a size metric.")
+    _is_empty_moment_population(particle_count) && return nothing
+    isfinite(numerator) && numerator >= zero(numerator) ||
+        return ReconstructionFailure(numerator,
+            "A nonempty population requires a finite nonnegative moment numerator.")
+    isfinite(denominator) && denominator > zero(denominator) ||
+        return ReconstructionFailure(denominator,
+            "A nonempty population requires a finite positive moment denominator.")
+    return nothing
+end
+
+"""Size ratio `numerator / denominator` of a checked state, zero for a numerically empty population."""
+_moment_size_ratio(numerator, denominator, particle_count) =
+    _is_empty_moment_population(particle_count) ?
+        zero(promote_type(typeof(numerator), typeof(denominator))) : numerator / denominator
 
 """
     _momentsizes(mesh, numberdensity)
 
 Moment-derived size metrics (d10, d32, d43, moment2) of a mesh number-density
-matrix, computed once when a mesh solution is assembled.
+matrix, computed once when a mesh solution is assembled, or the
+`ReconstructionFailure` of an undefined ratio.
 """
 function _momentsizes(mesh::AbstractVector, numberdensity::AbstractMatrix)
     step_size = Base.step(mesh)
@@ -204,24 +251,49 @@ function _momentsizes(mesh::AbstractVector, numberdensity::AbstractMatrix)
 end
 
 """
+    _moment_ratio_trajectory(moment_matrix, numerator_row, denominator_row)
+
+Saved size ratios `µ[numerator_row] / µ[denominator_row]`, `NaN` when the
+numerator moment is not tracked, or the first `ReconstructionFailure` in time.
+"""
+function _moment_ratio_trajectory(moment_matrix::AbstractMatrix, numerator_row::Int,
+                                  denominator_row::Int)
+    tracked_moments, saved_count = size(moment_matrix)
+    tracked_moments >= numerator_row ||
+        return fill(convert(eltype(moment_matrix), NaN), saved_count)
+    for saved_index in 1:saved_count
+        ratio_failure = _moment_size_ratio_failure(moment_matrix[numerator_row, saved_index],
+                                                   moment_matrix[denominator_row, saved_index],
+                                                   moment_matrix[1, saved_index])
+        ratio_failure === nothing || return ratio_failure
+    end
+    return [_moment_size_ratio(moment_matrix[numerator_row, saved_index],
+                               moment_matrix[denominator_row, saved_index],
+                               moment_matrix[1, saved_index]) for saved_index in 1:saved_count]
+end
+
+"""
     _raw_moment_size_metrics(moment_matrix)
 
 Moment-ratio size metrics from a raw-moment matrix `(nmoments, nt)` whose row
-`k + 1` holds µk. A ratio whose numerator moment is not tracked is `NaN`.
+`k + 1` holds µk. A ratio whose numerator moment is not tracked is `NaN`. An
+undefined ratio returns its `ReconstructionFailure` (d10, then d32, then d43).
 """
-function _raw_moment_size_metrics(moment_matrix::AbstractMatrix)
-    tracked_moments, saved_count = size(moment_matrix)
-    untracked_ratio = fill(convert(eltype(moment_matrix), NaN), saved_count)
-    moment_ratio(numerator_row, denominator_row) = tracked_moments >= numerator_row ?
-        [_safe_moment_size_ratio(moment_matrix[numerator_row, saved_index],
-                                 moment_matrix[denominator_row, saved_index],
-                                 moment_matrix[1, saved_index]) for saved_index in 1:saved_count] :
-        copy(untracked_ratio)
-    return (; d10 = moment_ratio(2, 1), d32 = moment_ratio(4, 3), d43 = moment_ratio(5, 4),
-              moment2 = collect(view(moment_matrix, 3, :)))
-end
+_raw_moment_size_metrics(moment_matrix::AbstractMatrix) =
+    _reconstruct_from(_moment_ratio_trajectory(moment_matrix, 2, 1),
+                      _moment_ratio_trajectory(moment_matrix, 4, 3),
+                      _moment_ratio_trajectory(moment_matrix, 5, 4)) do d10, d32, d43
+        (; d10, d32, d43, moment2 = collect(view(moment_matrix, 3, :)))
+    end
 
-"""Assemble a `CrystallisationSolution` from an ODE solution and its population."""
+"""
+Assemble a `CrystallisationSolution` from an ODE solution and its population;
+size metrics that failed reconstruction return their `ReconstructionFailure`.
+"""
+_crystallisation_solution(problem::CrystallisationProblem, ode_solution, population,
+                          size_failure::ReconstructionFailure, final_state,
+                          reactor_state::NamedTuple) = size_failure
+
 function _crystallisation_solution(problem::CrystallisationProblem, ode_solution, population,
                                    size_moments::NamedTuple, final_state, reactor_state::NamedTuple)
     solvent_trajectories = _solvent_solution_state(problem, ode_solution)

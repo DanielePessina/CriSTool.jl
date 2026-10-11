@@ -38,17 +38,22 @@ function _seed_integral(seed_description::DistributionInitialCrystals, moment_po
     length_scale = quantile(length_distribution, 0.5)
     isfinite(length_scale) && length_scale > 0 ||
         throw(ArgumentError("Seed distribution must have a finite positive median."))
+    # QuadGK cannot integrate a non-finite integrand value. Record any such
+    # sample and integrate zero in its place, then reject the moment below.
+    nonfinite_integrand = Ref(false)
     scaled_integrand = scaled_length -> begin
         physical_length = length_scale * scaled_length
-        pdf(length_distribution, physical_length) * length_scale * scaled_length^moment_power
+        integrand_value = pdf(length_distribution, physical_length) * length_scale *
+                          scaled_length^moment_power
+        isfinite(integrand_value) && return integrand_value
+        nonfinite_integrand[] = true
+        return zero(integrand_value)
     end
-    scaled_value, integral_error = try
-        quadgk(scaled_integrand, lower_length / length_scale, upper_length / length_scale;
-            rtol = seed_description.quadrature_rtol, atol = 0.0, maxevals = 100_000)
-    catch integral_failure
-        integral_failure isa DomainError || rethrow()
+    scaled_value, integral_error = quadgk(scaled_integrand, lower_length / length_scale,
+        upper_length / length_scale;
+        rtol = seed_description.quadrature_rtol, atol = 0.0, maxevals = 100_000)
+    nonfinite_integrand[] &&
         throw(ArgumentError("Seed moment $moment_power is not finite/resolvable; supply valid support or explicit truncation."))
-    end
     isfinite(scaled_value) && scaled_value >= 0 &&
         integral_error <= seed_description.quadrature_rtol * abs(scaled_value) ||
         throw(ArgumentError("Seed moment $moment_power could not be resolved; check support and tail behaviour."))

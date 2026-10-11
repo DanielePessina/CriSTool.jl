@@ -407,3 +407,15 @@ end
     @test mesh_sizes.d32 ≈ [29 / 11, 166 / 39] .* 1e-6 rtol = 1e-14
     @test mesh_sizes.d43 ≈ [83 / 29, 4.5] .* 1e-6 rtol = 1e-14
 end
+
+@testset "Undefined size ratios are reconstruction failures" begin
+    # Rows µ0, µ1, µ2. The second save is nonempty (µ0 = 2) with µ1 = -1, so
+    # d10 = µ1/µ0 is undefined there; the status names that moment.
+    size_failure = CriSTool._raw_moment_size_metrics([2.0 2.0; 1.0 -1.0; 1.0 1.0])
+    @test size_failure isa CriSTool.ReconstructionFailure
+    @test size_failure.value == -1.0
+    thrown_failure = @test_throws DomainError CriSTool._reconstructed_or_throw(size_failure)
+    @test thrown_failure.value.val == -1.0
+    # A numerically empty population (µ0 = 0) has zero ratios, not a failure.
+    @test CriSTool._raw_moment_size_metrics([0.0 0.0; -1.0 0.0; 0.0 0.0]).d10 == [0.0, 0.0]
+end

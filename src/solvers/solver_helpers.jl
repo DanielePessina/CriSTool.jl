@@ -42,28 +42,36 @@ _size_boundary_flow_state(solver::AbstractDiscretisedSolver, problem, ode_soluti
     _mesh_boundary_flow_state(solver, problem, ode_solution)
 _size_boundary_flow_state(solver::AbstractMomentSolver, problem, ode_solution) = (;)
 
-"""Physical solution of an ODE solution; one `_wrap_solution(solver, ...)` method per solver."""
-_wrap_solution(problem::CrystallisationProblem, ode_solution) =
+"""
+    _reconstruct_solution(problem, ode_solution) -> AbstractSolution or ReconstructionFailure
+
+Physical solution of an ODE solution, or the `ReconstructionFailure` of a
+saved state that has no physical size metrics or quadrature. Each solver type
+provides one `_wrap_solution(solver, problem, ode_solution, boundary_flow_state)`
+method with this contract. Mesh boundary diagnostics re-enter user rate laws at
+the saved times, so exceptions from user code still propagate.
+"""
+_reconstruct_solution(problem::CrystallisationProblem, ode_solution) =
     _wrap_solution(problem.solver, problem, ode_solution,
                    _size_boundary_flow_state(problem.solver, problem, ode_solution))
 
-"""Return `(result, reconstructed)`, classifying only package reconstruction failures."""
-function _wrap_prepared_result(configured_problem, ode_solution;
-                               reconstruction_failure_handler = nothing)
-    # Mesh boundary diagnostics re-enter user rate laws at interpolated saved
-    # times. Evaluate them before guarding package-owned reconstruction.
-    boundary_flow_state = _size_boundary_flow_state(configured_problem.solver,
-                                                    configured_problem, ode_solution)
-    try
-        physical_result = _wrap_solution(configured_problem.solver, configured_problem,
-                                         ode_solution, boundary_flow_state)
-        return physical_result, true
-    catch reconstruction_error
-        reconstruction_error isa DomainError || rethrow()
-        reconstruction_failure_handler === nothing && rethrow()
-        return reconstruction_failure_handler(ode_solution, reconstruction_error), false
-    end
-end
+"""Physical solution of an ODE solution; a reconstruction failure throws its `DomainError`."""
+_wrap_solution(problem::CrystallisationProblem, ode_solution) =
+    _reconstructed_or_throw(_reconstruct_solution(problem, ode_solution))
+
+"""
+    _on_reconstructed(continue_with, reconstruction, failure_handler, ode_solution)
+
+`continue_with(physical_result)` for a reconstructed result. A
+`ReconstructionFailure` goes to `failure_handler(ode_solution, domain_error)`,
+or is thrown as its `DomainError` when the handler is `nothing`.
+"""
+_on_reconstructed(continue_with, physical_result, failure_handler, ode_solution) =
+    continue_with(physical_result)
+_on_reconstructed(continue_with, failure::ReconstructionFailure, ::Nothing, ode_solution) =
+    throw(_reconstruction_domain_error(failure))
+_on_reconstructed(continue_with, failure::ReconstructionFailure, failure_handler, ode_solution) =
+    failure_handler(ode_solution, _reconstruction_domain_error(failure))
 
 """
     weno_flux(y::AbstractArray{T}, i::Integer) where {T<:Real}

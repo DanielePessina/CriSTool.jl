@@ -297,10 +297,10 @@ function _solve_prepared(::TransientMode, prepared_run::PreparedRun, remade_prob
         prepared_run.algorithm, prepared_run.saveat; solve_options, callback_factory)
     SciMLBase.successful_retcode(raw_solution.retcode) ||
         return _failed_prepared_simulation(prepared_run, raw_solution, raw_solution.retcode)
-    physical_result, _ = _wrap_prepared_result(prepared_run.problem, raw_solution;
-        reconstruction_failure_handler = (failed_solution, reconstruction_error) ->
-            _failed_prepared_simulation(prepared_run, failed_solution, reconstruction_error))
-    return physical_result
+    return _on_reconstructed(identity, _reconstruct_solution(prepared_run.problem, raw_solution),
+        (failed_solution, reconstruction_error) ->
+            _failed_prepared_simulation(prepared_run, failed_solution, reconstruction_error),
+        raw_solution)
 end
 
 """Sorted distinct times of every observable measured in `expt`."""

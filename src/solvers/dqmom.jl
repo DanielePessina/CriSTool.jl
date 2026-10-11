@@ -326,28 +326,42 @@ function _wrap_solution(solver::DQMOM, problem::CrystallisationProblem, solution
         end
     end
 
-    projection_diagnostics = _dqmom_projection_diagnostics(node_matrix, weight_matrix, solver,
-                                                           Val(nquadrature))
+    projection_status = _dqmom_projection_diagnostics(node_matrix, weight_matrix, solver,
+                                                      Val(nquadrature))
+    trajectory_status = _dqmom_trajectory_failure(node_matrix, weight_matrix, solver)
 
     reactor_solution_state = _reactor_solution_state(problem, solution)
     # Reactor and solvent values follow the population and are not rescaled.
     final_state = vcat(collect(view(weight_matrix, :, n_time_points)),
                        collect(view(node_matrix, :, n_time_points)),
                        internal_matrix[(2 * nquadrature + 1):end, n_time_points])
-    if element_type <: AbstractFloat
-        all(node -> node > solver.minimum_size, node_matrix) ||
-            throw(DomainError(minimum(node_matrix),
-                              "DQMOM trajectory reached the lower size boundary."))
-        all(weight -> weight > 0.0, weight_matrix) ||
-            throw(DomainError(minimum(weight_matrix),
-                              "DQMOM trajectory produced a nonpositive weight."))
-    end
 
-    return _crystallisation_solution(problem, solution,
-                                     QuadraturePopulation(moment_matrix, node_matrix, weight_matrix,
-                                                          projection_diagnostics),
-                                     _raw_moment_size_metrics(moment_matrix), final_state,
-                                     merge(reactor_solution_state, boundary_flow_state))
+    return _reconstruct_from(projection_status, trajectory_status) do projection_diagnostics, _
+        _crystallisation_solution(problem, solution,
+                                  QuadraturePopulation(moment_matrix, node_matrix, weight_matrix,
+                                                       projection_diagnostics),
+                                  _raw_moment_size_metrics(moment_matrix), final_state,
+                                  merge(reactor_solution_state, boundary_flow_state))
+    end
+end
+
+"""
+    _dqmom_trajectory_failure(node_matrix, weight_matrix, solver)
+
+`ReconstructionFailure` when a saved node reached `minimum_size` or a weight is
+nonpositive, else `nothing`. Dual-valued trajectories are not checked.
+"""
+_dqmom_trajectory_failure(node_matrix::AbstractMatrix, weight_matrix, solver::DQMOM) = nothing
+
+function _dqmom_trajectory_failure(node_matrix::AbstractMatrix{<:AbstractFloat}, weight_matrix,
+                                   solver::DQMOM)
+    all(node -> node > solver.minimum_size, node_matrix) ||
+        return ReconstructionFailure(minimum(node_matrix),
+                                     "DQMOM trajectory reached the lower size boundary.")
+    all(weight -> weight > 0.0, weight_matrix) ||
+        return ReconstructionFailure(minimum(weight_matrix),
+                                     "DQMOM trajectory produced a nonpositive weight.")
+    return nothing
 end
 
 """
@@ -355,7 +369,7 @@ end
 
 Projection diagnostics of every saved DQMOM state.  The static projection
 matrix gives a 1-norm condition estimate without heap allocation.  A saved
-node pair closer than the coalescence tolerance throws `DomainError`.
+node pair closer than the coalescence tolerance returns a `ReconstructionFailure`.
 Diagnostics are omitted (`nothing`) for Dual-valued trajectories; they are
 not part of the differentiated model.
 """
@@ -372,9 +386,9 @@ function _dqmom_projection_diagnostics(node_matrix::AbstractMatrix{T}, weight_ma
         minimum_gap = _dqmom_minimum_node_gap(scaled_nodes)
         physical_minimum_gap = solver.coordinate_scale * minimum_gap
         physical_minimum_gap > solver.node_coalescence_tolerance * solver.coordinate_scale ||
-            throw(DomainError(physical_minimum_gap,
-                              "DQMOM trajectory reached node coalescence; " *
-                              "active quadrature nodes cannot merge or be reborn."))
+            return ReconstructionFailure(physical_minimum_gap,
+                                         "DQMOM trajectory reached node coalescence; " *
+                                         "active quadrature nodes cannot merge or be reborn.")
         projection_diagnostics[time_index] = DQMOMProjectionDiagnostics(
             :ok,
             minimum(@view weight_matrix[:, time_index]),

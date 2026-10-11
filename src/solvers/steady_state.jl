@@ -528,37 +528,37 @@ function _solve_steadystate_ode(problem::CrystallisationProblem, ode_problem,
     final_sample_index = lastindex(raw_solution.u)
     equilibrium_sample = SciMLBase.solution_slice(raw_solution,
         final_sample_index:final_sample_index)
-    physical_result, reconstructed = _wrap_prepared_result(problem, equilibrium_sample;
-        reconstruction_failure_handler)
-    reconstructed || return physical_result
-    density_diagnostics = _steady_population_density_diagnostics(problem.solver, problem, raw_state)
-    physical_valid, physical_status = _steady_physical_constraints(
-        problem, raw_state, physical_result, density_diagnostics)
-    hydraulics, product, balance = _steady_product_diagnostics(
-        problem, raw_state, physical_result, final_time)
-    balance_valid = balance.relative_error <= options.balance_reltol
-    diagnostics = (; converged,
-                    residual_norm = norm(residual, Inf),
-                    scaled_residual_norm, residual_limit,
-                    residual_scales = reference_scales,
-                    population_scaling = _steady_population_scaling_label(population_scaling),
-                    physical_state_valid = physical_valid,
-                    physical_state_status = physical_status,
-                    population_density_diagnostics = density_diagnostics,
-                    total_api_balance = balance,
-                    balance_reltol = options.balance_reltol,
-                    balance_valid,
-                    equilibrium_time = final_time,
-                    ode_final_state = raw_state,
-                    integration_options = steady_solve_options,
-                    solver_success)
+    return _on_reconstructed(_reconstruct_solution(problem, equilibrium_sample),
+                             reconstruction_failure_handler, equilibrium_sample) do physical_result
+        density_diagnostics = _steady_population_density_diagnostics(problem.solver, problem, raw_state)
+        physical_valid, physical_status = _steady_physical_constraints(
+            problem, raw_state, physical_result, density_diagnostics)
+        hydraulics, product, balance = _steady_product_diagnostics(
+            problem, raw_state, physical_result, final_time)
+        balance_valid = balance.relative_error <= options.balance_reltol
+        diagnostics = (; converged,
+                        residual_norm = norm(residual, Inf),
+                        scaled_residual_norm, residual_limit,
+                        residual_scales = reference_scales,
+                        population_scaling = _steady_population_scaling_label(population_scaling),
+                        physical_state_valid = physical_valid,
+                        physical_state_status = physical_status,
+                        population_density_diagnostics = density_diagnostics,
+                        total_api_balance = balance,
+                        balance_reltol = options.balance_reltol,
+                        balance_valid,
+                        equilibrium_time = final_time,
+                        ode_final_state = raw_state,
+                        integration_options = steady_solve_options,
+                        solver_success)
 
-    return CrystallisationSteadyStateSolution(physical_result, _equilibrium_values(physical_result),
-                                               residual, scaled_residual,
-                                               hydraulics, product, diagnostics,
-                                               raw_solution.stats, raw_solution.retcode,
-                                               solver_success && converged &&
-                                                   physical_valid && balance_valid)
+        return CrystallisationSteadyStateSolution(physical_result, _equilibrium_values(physical_result),
+                                                   residual, scaled_residual,
+                                                   hydraulics, product, diagnostics,
+                                                   raw_solution.stats, raw_solution.retcode,
+                                                   solver_success && converged &&
+                                                       physical_valid && balance_valid)
+    end
 end
 
 """
