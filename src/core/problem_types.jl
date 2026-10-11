@@ -143,12 +143,32 @@ replaces them.
 """
 function kinetic_parameter_vector(problem::CrystallisationProblem)
     crystal_model = problem.model
-    block_values = map(_MODEL_KINETIC_SLOTS) do slot_name
-        bound_parameters = getfield(crystal_model, slot_name).parameters
-        isempty(bound_parameters) ? Float64[] : collect(Float64, ComponentArray(; bound_parameters...))
+    flat_kinetic_values = Float64[]
+    for slot_name in _MODEL_KINETIC_SLOTS
+        _append_bound_parameter_values!(flat_kinetic_values,
+                                        getfield(crystal_model, slot_name).parameters)
     end
-    return ComponentArray(reduce(vcat, block_values), paramaxis(problem))
+    return ComponentArray(flat_kinetic_values, paramaxis(problem))
 end
+
+"""
+    _append_bound_parameter_values!(flat_kinetic_values, bound_parameters)
+
+Append bound kinetic values depth-first in field order, the layout
+`ComponentArray(; bound_parameters...)` gives: nested tuples recurse and
+vector leaves contribute their elements.
+"""
+function _append_bound_parameter_values!(flat_kinetic_values::Vector{Float64},
+                                         bound_parameters::NamedTuple)
+    for bound_value in values(bound_parameters)
+        _append_bound_parameter_values!(flat_kinetic_values, bound_value)
+    end
+    return flat_kinetic_values
+end
+_append_bound_parameter_values!(flat_kinetic_values::Vector{Float64}, bound_value::Real) =
+    push!(flat_kinetic_values, bound_value)
+_append_bound_parameter_values!(flat_kinetic_values::Vector{Float64}, bound_values::AbstractVector) =
+    append!(flat_kinetic_values, bound_values)
 
 function _validate_solid_mass_concentration_threshold(problem::CrystallisationProblem)
     threshold = problem.solid_mass_concentration_threshold
