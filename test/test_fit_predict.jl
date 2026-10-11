@@ -334,14 +334,17 @@ end
     @test all(0.005 .<= tiny_abc.samples.values .<= 0.02)
     unreachable_result = CriSTool._runsampler(ABCDE(),
         product_distribution([Uniform(0.0, 1.0)]), candidate -> 100.0, 0.0, () -> 100.0;
-        nparticles = 8, generations = 1, HPC = false, earlystop = false)
+        nparticles = 8, generations = 1, HPC = false, stopping = AllGenerations())
     @test !unreachable_result.reached_ϵ
+    # One Particles per parameter becomes the parameters × samples draw matrix.
+    @test CriSTool._abc_particles_matrix([CriSTool.MonteCarloMeasurements.Particles([1.0, 2.0, 3.0]),
+        CriSTool.MonteCarloMeasurements.Particles([10.0, 20.0, 30.0])]) == [1.0 2.0 3.0; 10.0 20.0 30.0]
 
     @test CriSTool.KissABC.logsumexp_stable([1.0, 2.0, 3.0]) ≈ log(exp(1.0) + exp(2.0) + exp(3.0))
     @test CriSTool.KissABC.logsumexp_stable([-1000.0, -1000.0]) ≈ -1000.0 + log(2.0)
-    @test CriSTool.KissABC.log_kernel_weight(2.0, 0.0, 1.0; kernel = :gaussian) ≈ -2.0
-    @test CriSTool.KissABC.log_kernel_weight(1.0, 0.0, 1.0; kernel = :laplace) ≈ -1.0
-    @test CriSTool.KissABC.log_kernel_weight(100.0, 0.0, 1.0; kernel = :none) == 0.0
+    @test CriSTool.KissABC.log_kernel_weight(GaussianABCKernel(), 2.0, 0.0, 1.0) ≈ -2.0
+    @test CriSTool.KissABC.log_kernel_weight(LaplaceABCKernel(), 1.0, 0.0, 1.0) ≈ -1.0
+    @test CriSTool.KissABC.log_kernel_weight(FlatABCKernel(), 100.0, 0.0, 1.0) == 0.0
     @test CriSTool.KissABC.group_range(3, 5) == 11:15
     # Inverse-CDF draws 0.05, 0.20, 0.90 against cumulative weights 0.1, 0.4, 1.0.
     sequence_rng = FitPredictSequenceRNG([0.05, 0.20, 0.90], 1)

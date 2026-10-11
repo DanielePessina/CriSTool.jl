@@ -40,7 +40,7 @@ The algorithm decides what `solve` returns and which keywords it takes:
 | Metaheuristics (`DE`, `PSO`, `ECA`, `NSGA2`, ...) | `bounds` | `FitResult` (NSGA2: one per Pareto candidate) | `parallel` |
 | Optimization.jl optimiser (`LBFGS()` from OptimizationOptimJL, ...) | `bounds` | `FitResult` | `adtype = AutoForwardDiff()`, `parallel`, and Optimization.jl options such as `maxiters` |
 | Turing sampler (`NUTS()`, needs `using Turing`) | `priors` | `InferenceResult` | `n_samples = 1000`, `n_chains = 1`, `rng`, `parallel`, and `Turing.sample` options such as `progress` |
-| `ABCDE()`, `ABCDETurner()` | `priors` | `InferenceResult` | `target` (required), `n_particles = 1024`, `n_generations = 128`, `early_stop = false`, `parallel` |
+| `ABCDE()`, `ABCDETurner()` | `priors` | `InferenceResult` | `target` (required), `n_particles = 1024`, `n_generations = 128`, `stopping = AllGenerations()`, `parallel` |
 
 A Metaheuristics algorithm runs on a private copy, so its options, status and
 RNG are not consumed and the same instance can be solved again. Results record

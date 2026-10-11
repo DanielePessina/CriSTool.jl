@@ -64,7 +64,7 @@ estimation API (see *SciML-shaped estimation* below).
 | `expt.temperature`, `expt.initial_crystals` | `expt.conditions.temperature`, `expt.conditions.crystals` |
 | `fit(prepared; algorithm = DE(...), adtype, searchoptions)` | `solve(EstimationProblem(model, experiments; bounds), DE(...))`; an Optimization.jl optimiser takes `adtype` and its options at `solve` |
 | `fit(prepared; sampler = NUTS(), n_samples, n_chains)` | `solve(EstimationProblem(model, experiments; priors), NUTS(); n_samples, n_chains)`; requires `using Turing` (a weak dependency) |
-| `fit(prepared; sampler, nparticles, generations, earlystop)` | `solve(problem, ABCDE(); target, n_particles, n_generations, early_stop)` |
+| `fit(prepared; sampler, nparticles, generations, earlystop)` | `solve(problem, ABCDE(); target, n_particles, n_generations, stopping)` |
 | `HPC = true` | `solve(problem, alg; parallel = EnsembleThreads())` |
 | `fit(prepared; threaded = true)` | `solve(problem, alg; parallel = EnsembleThreads())`; the algorithm picks candidate or experiment threading |
 | ABC target derived by a Wilks test from `confidenceinterval` | `solve(problem, ABCDE(); target = ...)` takes an explicit finite number |
@@ -237,7 +237,9 @@ dispatches on the algorithm. There are no deprecation shims.
 | `OptimisationSpec(; bounds, algorithm = LBFGS(), adtype, searchoptions = (maxiters = 50,))` | `solve(EstimationProblem(model, experiments; bounds), LBFGS(); adtype, maxiters = 50)` |
 | `BayesianSpec(; priors, sampler = NUTS(), n_samples, n_chains)` | `solve(EstimationProblem(model, experiments; priors), NUTS(); n_samples, n_chains)`; `fit(prepared; rng, progress)` keywords move to that `solve` |
 | `BayesianSpec(; sampler = nothing)` | pass the sampler explicitly: `solve(problem, NUTS())` |
-| `ABCSpec(; priors, target, sampler = ABCDESampler(), n_particles, n_generations, early_stop)` | `solve(EstimationProblem(model, experiments; priors, loss = MeanAbsoluteError()), ABCDE(); target, n_particles, n_generations, early_stop)` |
+| `ABCSpec(; priors, target, sampler = ABCDESampler(), n_particles, n_generations, early_stop)` | `solve(EstimationProblem(model, experiments; priors, loss = MeanAbsoluteError()), ABCDE(); target, n_particles, n_generations, stopping)` |
+| `early_stop = true` / `false` | `stopping = StopAtTarget()` / `AllGenerations()` |
+| `ABCDETurner(kernel = :gaussian)`, `:laplace`, `:none` | `ABCDETurner(kernel = GaussianABCKernel())`, `LaplaceABCKernel()`, `FlatABCKernel()` |
 | `ABCSpec`'s default `loss = MeanAbsoluteError()` | every `EstimationProblem` defaults to `loss = GaussianNLL()`; pass `loss = MeanAbsoluteError()` for an error discrepancy |
 | `ABCDESampler(α)`, `ABCDETurnerSampler(...)` | `ABCDE(; α)`, `ABCDETurner(...)` |
 | `prepare_fit(...; solver, mode, problem_options, observable_order, observable_projections, algorithm, solve_options, callback_factory)` | the same `EstimationProblem` keywords; the ODE algorithm is `alg` |

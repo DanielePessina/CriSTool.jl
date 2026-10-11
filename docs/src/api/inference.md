@@ -27,6 +27,13 @@ measurement_samples
 AbstractABCSampler
 ABCDE
 ABCDETurner
+AbstractABCStopping
+AllGenerations
+StopAtTarget
+AbstractABCKernel
+GaussianABCKernel
+LaplaceABCKernel
+FlatABCKernel
 rename_chain
 PredictionEnsemble
 prediction_summary

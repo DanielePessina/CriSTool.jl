@@ -17,10 +17,10 @@ abc_predictions = predict(abc_posterior)
 
 `target` is required and must be a finite number. Thresholds have the
 units/scale of the discrepancy and are a scientific choice; they are not
-inferred from an optimum or from a confidence interval. `early_stop=true` stops
-once the target is reached. `parallel = EnsembleThreads()` evaluates particles in parallel; the experiments
+inferred from an optimum or from a confidence interval. `stopping = StopAtTarget()` stops
+once every particle is within the target; the default `AllGenerations()` runs every generation. `parallel = EnsembleThreads()` evaluates particles in parallel; the experiments
 of each discrepancy evaluation then run serially.
 `ABCDETurner()` is the Turner and Sederberg variant, with its migration and
-kernel settings as fields. Other samplers subtype `AbstractABCSampler`. Native posterior output
+kernel settings as fields; `kernel` is `GaussianABCKernel()` (default), `LaplaceABCKernel()` or `FlatABCKernel()`. Other samplers subtype `AbstractABCSampler`. Native posterior output
 is retained as `backend_result`; joint draws use the common prediction interface.
 The sampler implementation is vendored in `CriSTool.KissABC`.

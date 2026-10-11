@@ -536,7 +536,7 @@ end
 
 """
     solve(problem::EstimationProblem, sampler::AbstractABCSampler; target, n_particles=1024,
-          n_generations=128, early_stop=false, parallel=EnsembleSerial()) -> InferenceResult
+          n_generations=128, stopping=AllGenerations(), parallel=EnsembleSerial()) -> InferenceResult
 
 Sample the priors by approximate Bayesian computation (`ABCDE()` or
 `ABCDETurner()`), accepting particles whose loss is within the explicit finite
@@ -545,7 +545,7 @@ particles on threads, each on a private copy of the solve templates; the
 experiments of one discrepancy run serially.
 """
 function SciMLBase.solve(estimation_problem::EstimationProblem, abc_sampler::AbstractABCSampler;
-        target::Real, n_particles::Integer = 1024, n_generations::Integer = 128, early_stop::Bool = false,
+        target::Real, n_particles::Integer = 1024, n_generations::Integer = 128, stopping::AbstractABCStopping = AllGenerations(),
         parallel::SciMLBase.BasicEnsembleAlgorithm = EnsembleSerial())
     isfinite(target) || throw(ArgumentError("ABC target must be explicit and finite."))
     n_particles > 0 && n_generations > 0 || throw(ArgumentError("Particle and generation counts must be positive."))
@@ -554,10 +554,9 @@ function SciMLBase.solve(estimation_problem::EstimationProblem, abc_sampler::Abs
     reference_values = _selected_baseline(split_problem.selection)
     abc_result = _runsampler(abc_sampler, joint_prior, _particle_discrepancy(split_problem, particle_parallel),
         target, () -> loss(split_problem, reference_values); nparticles = n_particles,
-        generations = n_generations, HPC = _threads_candidates(particle_parallel), earlystop = early_stop)
-    sample_matrix = _abc_particles_matrix(abc_result.P)
-    sample_matrix === nothing && throw(ArgumentError("ABC returned no posterior particles."))
-    posterior_draws = ParameterSamples(split_problem.selection.names, sample_matrix; source = :abc)
+        generations = n_generations, HPC = _threads_candidates(particle_parallel), stopping)
+    posterior_draws = ParameterSamples(split_problem.selection.names, _abc_particles_matrix(abc_result.P);
+        source = :abc)
     return InferenceResult(split_problem.model, posterior_draws, abc_sampler, abc_result, split_problem)
 end
 

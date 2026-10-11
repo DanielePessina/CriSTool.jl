@@ -106,7 +106,8 @@ export AbstractSolver, AbstractMomentSolver, FiniteVol, MoM, QMOM, DQMOM, WENO,
        invert_moments,
        moment_order, moment_count, quadrature,
        aggregation_moment_source, breakage_moment_source
-export AbstractABCSampler, ABCDE, ABCDETurner
+export AbstractABCSampler, ABCDE, ABCDETurner, AbstractABCStopping, AllGenerations, StopAtTarget
+export AbstractABCKernel, GaussianABCKernel, LaplaceABCKernel, FlatABCKernel
 export EnsembleSerial, EnsembleThreads
 export PredictionEnsemble, prediction_summary
 export plot_predictions, plot_posterior_pairplot, plot_chain_diagnostics
@@ -169,6 +170,7 @@ include("solvers/steady_state.jl")
 
 include("vendor/KissABC.jl")
 import .KissABC
+import .KissABC: AbstractABCKernel, GaussianABCKernel, LaplaceABCKernel, FlatABCKernel
 
 # Inference and posterior utilities.
 include("inference/parameter_estimation.jl")
