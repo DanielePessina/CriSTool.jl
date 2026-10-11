@@ -27,6 +27,5 @@ PredictionEnsemble
 prediction_summary
 ```
 
-`forwardsensitivity` is a lower-level qualified helper rather than an
-exported binding. See [Sensitivity analysis](../sensitivity.md) for its
-supported solver and kinetic subset.
+Local parameter sensitivities are ForwardDiff derivatives of
+`runsimulation`; see [Sensitivity analysis](../sensitivity.md).

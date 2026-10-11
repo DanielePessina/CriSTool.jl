@@ -12,9 +12,13 @@ using Statistics
 using Turing
 
 # Scientific Computing & Differential Equations
-using OrdinaryDiffEq
+# The solver defaults (Tsit5, SSPRK43) come from the OrdinaryDiffEq subpackages;
+# users pass any other algorithm instance from the subpackage that defines it.
+using SciMLBase: SciMLBase, ODEProblem, remake, solve, CallbackSet, ContinuousCallback,
+                 DiscreteCallback
+using OrdinaryDiffEqTsit5: Tsit5
+using OrdinaryDiffEqSSPRK: SSPRK43
 import DiffEqCallbacks: AutoAbstol, StepsizeLimiter
-using SciMLSensitivity
 using OptimizationBase
 using PreallocationTools: DiffCache, get_tmp
 
@@ -30,17 +34,12 @@ import Base.Iterators
 import CSV
 import JSON
 
-# Visualization
-import PairPlots
-import CairoMakie
-import Makie
-import FlexiChains
-
 # Optimization
 using Metaheuristics
 
 # Utilities
 using ConcreteStructs
+using PrecompileTools: @setup_workload, @compile_workload
 using MonteCarloMeasurements
 using StaticArrays
 
@@ -175,13 +174,17 @@ include("inference/chain_utilities.jl")
 
 include("inference/bayesian.jl")
 
-# Uncertainty workflows.
-include("uncertainty/sensitivity.jl")
 include("inference/workflow_interfaces.jl")
 include("inference/model_workflows.jl")
 
-# Plotting is included last because it consumes all public solution and
-# inference interfaces.
+# Plotting entry points; their methods live in the Makie/PairPlots extensions.
 include("plotting/plots.jl")
+
+include("precompile_workload.jl")
+
+function __init__()
+    Base.Experimental.register_error_hint(_plotting_method_error_hint, MethodError)
+    return nothing
+end
 
 end

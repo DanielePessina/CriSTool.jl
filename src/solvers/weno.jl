@@ -546,7 +546,7 @@ function crystallisation_odeproblem(solver::WENO, CryProblem::CrystallisationPro
     time_scalar_type = typeof(float(saveat[1]))
     configured_dtmax = Ref(time_scalar_type(Inf))
     bounded_weno_cfl = (numerical_state, kinetic_parameters, simulation_time) ->
-        min(configured_dtmax[], OrdinaryDiffEq.SciMLBase.value(
+        min(configured_dtmax[], SciMLBase.value(
             weno_cfl_bound(numerical_state, kinetic_parameters, simulation_time)))
     cfl_step_callback = StepsizeLimiter(bounded_weno_cfl;
         safety_factor = one(time_scalar_type), cached_dtcache = zero(time_scalar_type))

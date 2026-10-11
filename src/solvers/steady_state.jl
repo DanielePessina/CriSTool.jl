@@ -195,7 +195,7 @@ function _validate_steady_solver(solver::MoM)
 end
 
 function _steady_rhs(ode_problem, state, parameters, simulation_time)
-    if OrdinaryDiffEq.SciMLBase.isinplace(ode_problem.f, length(state))
+    if SciMLBase.isinplace(ode_problem.f, length(state))
         derivative = similar(state)
         ode_problem.f(derivative, state, parameters, simulation_time)
         return derivative
@@ -271,7 +271,7 @@ function _steady_autostop_callback(problem, ode_problem, reference_scales,
         return all(isfinite, scaled) && maximum(scaled) <= tolerance
     end
     return DiscreteCallback(condition,
-                            integrator -> OrdinaryDiffEq.SciMLBase.terminate!(integrator);
+                            integrator -> SciMLBase.terminate!(integrator);
                             save_positions = (false, true))
 end
 
@@ -458,12 +458,12 @@ function _solve_steadystate_ode(problem::CrystallisationProblem, ode_problem,
         problem, active_ode_problem, final_ode_state, raw_solution.prob.p, final_time,
         residence_time, reference_scales; shared_population_scale)
     scaled_residual_norm = maximum(scaled_residual)
-    solver_success = OrdinaryDiffEq.SciMLBase.successful_retcode(raw_solution.retcode)
+    solver_success = SciMLBase.successful_retcode(raw_solution.retcode)
     converged = solver_success && all(isfinite, scaled_residual) &&
                 scaled_residual_norm <= residual_limit
 
     final_sample_index = lastindex(raw_solution.u)
-    equilibrium_sample = OrdinaryDiffEq.SciMLBase.solution_slice(raw_solution,
+    equilibrium_sample = SciMLBase.solution_slice(raw_solution,
         final_sample_index:final_sample_index)
     physical_result, reconstructed = _wrap_prepared_result(problem, equilibrium_sample;
         reconstruction_failure_handler)

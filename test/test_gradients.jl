@@ -68,23 +68,29 @@ end
           DI.gradient(finite_volume_objective, gradient_difference_backend, gradient_lysozyme_scaled_point) rtol = 1e-3 atol = 1e-8
 end
 
-@testset "Forward sensitivity (MoM) equals finite differences" begin
+@testset "Time-resolved sensitivity dC(t)/dθ (MoM) equals finite differences" begin
+    # Forward sensitivities are ForwardDiff through `runsimulation`: one Jacobian
+    # row per save time, one column per parameter.
     sensitivity_problem = CrystallisationProblem(fixture_lysozyme_model,
         RunConditions(temperature = 290.15, concentration = 14.67))
     sensitivity_times = [0.0, 3600.0, 7200.0, 10800.0]
-    _, sensitivity_columns = CriSTool.extract_local_sensitivities(
-        CriSTool.forwardsensitivity(sensitivity_problem, sensitivity_times))
     sensitivity_values = collect(kinetic_parameter_vector(sensitivity_problem))
-    final_concentration_of(kinetic_values) =
-        last(runsimulation(kinetic_values, sensitivity_problem; save_idx = sensitivity_times)).concentration[end]
     # Only the O(1) parameters (ln prefactor, growth order) are differenced directly.
-    for parameter_index in (1, 4)
-        difference_sensitivity = FiniteDifferences.central_fdm(5, 1)(trial_value ->
-            final_concentration_of(setindex!(copy(sensitivity_values), trial_value, parameter_index)),
-            sensitivity_values[parameter_index])
-        # State 6 is the concentration in the MoM layout (5 moments, then C).
-        @test sensitivity_columns[parameter_index][6, end] ≈ difference_sensitivity rtol = 1e-4
+    sensitivity_indices = [1, 4]
+    function concentration_trajectory_of(order_one_values)
+        kinetic_values = collect(eltype(order_one_values), sensitivity_values)
+        kinetic_values[sensitivity_indices] = order_one_values
+        return last(runsimulation(kinetic_values, sensitivity_problem; save_idx = sensitivity_times)).concentration
     end
+    sensitivity_point = sensitivity_values[sensitivity_indices]
+    forward_jacobian = DI.jacobian(concentration_trajectory_of, gradient_forward_backend, sensitivity_point)
+    difference_jacobian = DI.jacobian(concentration_trajectory_of, gradient_difference_backend, sensitivity_point)
+    @test size(forward_jacobian) == (length(sensitivity_times), length(sensitivity_indices))
+    # The initial concentration is a condition, not a kinetic outcome.
+    @test all(iszero, forward_jacobian[1, :])
+    # Every later time carries a nonzero sensitivity that matches the oracle.
+    @test all(!iszero, forward_jacobian[2:end, :])
+    @test all(isapprox.(forward_jacobian[2:end, :], difference_jacobian[2:end, :]; rtol = 1e-4))
 end
 
 @testset "Fed-batch translation: d C / d speed equals the inventory closed form" begin

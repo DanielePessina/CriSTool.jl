@@ -286,7 +286,7 @@ function _solve_prepared(::TransientMode, prepared_run::PreparedRun, remade_prob
                          solve_options, callback_factory)
     raw_solution = _solve_crystallisation_ode(prepared_run.problem, remade_problem,
         prepared_run.algorithm, prepared_run.saveat; solve_options, callback_factory)
-    OrdinaryDiffEq.SciMLBase.successful_retcode(raw_solution.retcode) ||
+    SciMLBase.successful_retcode(raw_solution.retcode) ||
         return _failed_prepared_simulation(prepared_run, raw_solution, raw_solution.retcode)
     physical_result, _ = _wrap_prepared_result(prepared_run.problem, raw_solution;
         reconstruction_failure_handler = (failed_solution, reconstruction_error) ->

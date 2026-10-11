@@ -191,8 +191,14 @@ as `Tsit5()`, `SSPRK43()`, `Kvaerno5()` or `KenCarp4()`. The default
 `nothing` selects the solver-specific algorithm. A per-call `algorithm`
 keyword of `simulate` takes precedence over both.
 
+CriSTool depends only on the OrdinaryDiffEq subpackages that hold its defaults
+(`OrdinaryDiffEqTsit5`, `OrdinaryDiffEqSSPRK`). To use another algorithm, add
+the subpackage that defines it to your environment, for example
+`OrdinaryDiffEqSDIRK` for `Kvaerno5` and `KenCarp4`, or the full
+`OrdinaryDiffEq`, which re-exports them all.
+
 ```julia
-using OrdinaryDiffEq: SSPRK43
+using OrdinaryDiffEqSSPRK: SSPRK43
 
 sol = simulate(crystal_model, batch_run;
     solver = FiniteVol(meshsize = 200, lmax = 50e-6,

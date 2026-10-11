@@ -231,7 +231,7 @@ function _crystallisation_solution(problem::CrystallisationProblem, ode_solution
                                    size_moments.d43, size_moments.moment2,
                                    solvent_trajectories, reactor_state, final_state,
                                    ode_solution.stats,
-                                   OrdinaryDiffEq.SciMLBase.successful_retcode(ode_solution.retcode))
+                                   SciMLBase.successful_retcode(ode_solution.retcode))
 end
 
 """

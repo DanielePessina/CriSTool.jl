@@ -2,6 +2,18 @@
 
 ## 0.1.0 — unreleased
 
+- Plotting moved to package extensions: `using CairoMakie` (or another Makie
+  backend) enables `plot_predictions` and `ChainStatsPlots`; `PairPlots`
+  additionally enables `plot_posterior_pairplot`. `using CriSTool` no longer
+  loads Makie.
+- Depend on `OrdinaryDiffEqTsit5`, `OrdinaryDiffEqSSPRK` and `SciMLBase` instead
+  of the full `OrdinaryDiffEq`. Other time steppers come from the user's own
+  environment (for example `OrdinaryDiffEqSDIRK` or `OrdinaryDiffEq`).
+- FlexiChains is a weak dependency; `CriSToolFlexiChainsExt` resolves the
+  vendored AIS `bundle_samples` dispatch ambiguity when FlexiChains is loaded.
+- Removed the unexported `forwardsensitivity` helper and the SciMLSensitivity
+  dependency. Differentiate `runsimulation(parameters, problem)` with
+  ForwardDiff for local sensitivities; it covers every solver and operation.
 - Named material and kinetic models reused across simulation, selected-parameter
   optimisation, explicit-prior Bayesian/ABC inference and joint predictions.
 - Callable scalar/node-dependent kinetics with supported named parameter and

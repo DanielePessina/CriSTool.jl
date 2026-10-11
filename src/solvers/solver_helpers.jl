@@ -317,14 +317,10 @@ solution, the gradient consistent with the loss it accompanies. Plain
 `Float64` solves are unchanged. Pass `solve_options = (internalnorm = ...,)`
 to restore derivative error control.
 """
-_primal_error_norm(error_value::Number, time) = abs(OrdinaryDiffEq.SciMLBase.value(error_value))
+_primal_error_norm(error_value::Number, time) = abs(SciMLBase.value(error_value))
 _primal_error_norm(error_values::AbstractArray, time) =
-    sqrt(sum(error_value -> abs2(OrdinaryDiffEq.SciMLBase.value(error_value)), error_values) /
+    sqrt(sum(error_value -> abs2(SciMLBase.value(error_value)), error_values) /
          length(error_values))
-
-"""Algorithm hints: the non-stiff MoM closure needs none, other solvers are stiff."""
-_solver_alg_hints(solver::MoM) = (;)
-_solver_alg_hints(solver::AbstractSolver) = (alg_hints = [:stiff],)
 
 """
     _solve_crystallisation_ode(problem, odeproblem, algorithm, saveat;
@@ -339,11 +335,10 @@ function _solve_crystallisation_ode(problem::CrystallisationProblem, odeproblem,
                                     solve_options::NamedTuple = (;),
                                     callback_factory = nothing)
     _validate_crystallisation_solve_options(solve_options)
-    solver_defaults = merge((reltol = problem.solver.reltol,
-                             abstol = _solver_absolute_floor(problem, odeproblem),
-                             dense = false, maxiters = CRISTOOL_MAX_SOLVER_ITERS,
-                             internalnorm = _primal_error_norm),
-                            _solver_alg_hints(problem.solver))
+    solver_defaults = (reltol = problem.solver.reltol,
+                       abstol = _solver_absolute_floor(problem, odeproblem),
+                       dense = false, maxiters = CRISTOOL_MAX_SOLVER_ITERS,
+                       internalnorm = _primal_error_norm)
     selected_options = merge(solver_defaults, solve_options)
     scalar_type = promote_type(eltype(odeproblem.u0), _parameter_eltype(odeproblem.p))
     abstol, auto_callback = _auto_abstol_opts(problem.solver, odeproblem.u0,

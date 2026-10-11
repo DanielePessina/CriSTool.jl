@@ -1,8 +1,14 @@
+# Plotting lives in package extensions: CairoMakie loads CriSToolMakieExt and
+# PairPlots loads CriSToolPairPlotsExt.
 using Random
 using MCMCChains: Chains
+using CairoMakie: CairoMakie
+using PairPlots: PairPlots
 
 @testset "Prediction and posterior plots" begin
-    PlotMakie = CriSTool.Makie
+    PlotMakie = CairoMakie.Makie
+    @test Base.get_extension(CriSTool, :CriSToolMakieExt) !== nothing
+    @test Base.get_extension(CriSTool, :CriSToolPairPlotsExt) !== nothing
     plotting_model = fixture_translation_model()
     plotting_seed = fixture_uniform_seed()
     plotting_experiments = [CrystallisationExperiment(exp_id = run_id,
@@ -49,8 +55,16 @@ using MCMCChains: Chains
     @test isfile(joinpath(output_dir, "posterior Pairplot.png"))
     @test_throws DimensionMismatch plot_posterior_pairplot(posterior_draws; reference = [0.01], showplot = false)
 
-    statistics_figure = ChainStatsPlots(Chains(rand(MersenneTwister(7), 30, 2, 1), [:speed, :order]);
+    chain_draws = rand(MersenneTwister(7), 30, 2, 1)
+    statistics_figure = ChainStatsPlots(Chains(chain_draws, [:speed, :order]); burnin = 5,
         saveplot = true, savestring = "stats", savedir = output_dir, showplot = false)
     @test statistics_figure isa PlotMakie.Figure
+    # Axes alternate trace, density per parameter; the :order trace is the post-burn-in draws.
+    statistics_axes = panel_axes(statistics_figure)
+    @test length(statistics_axes) == 4
+    order_trace = only(filter(axis_plot -> axis_plot isa PlotMakie.Lines, statistics_axes[3].scene.plots))
+    @test [point[1] for point in order_trace[1][]] == 6:30
+    @test [point[2] for point in order_trace[1][]] ≈ chain_draws[6:end, 2, 1] rtol = 1e-6
+    @test has_plot_type(statistics_axes[4], PlotMakie.Density)
     @test isfile(joinpath(output_dir, "stats ChDensity.png"))
 end

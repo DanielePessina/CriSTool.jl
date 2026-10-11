@@ -54,6 +54,10 @@ positive variances for scored measurements; MAE does not. Predictions describe
 physical trajectories; adding measurement noise is a separate, explicit step
 (`measurement_samples`).
 
+Plotting is a package extension: run `using CairoMakie` to enable
+`plot_predictions` and `ChainStatsPlots`, and add `using PairPlots` for
+`plot_posterior_pairplot`. `using CriSTool` alone does not load Makie.
+
 Read the [development documentation](https://danielepessina.github.io/CriSTool.jl/dev/),
 the [model workflow guide](docs/src/model-workflow.md), and the
 [migration guide](docs/src/migration.md). `runsimulation` remains available as

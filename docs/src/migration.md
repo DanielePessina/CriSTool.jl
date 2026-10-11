@@ -40,6 +40,7 @@ replacements are:
 | `chains_to_matrix` (export) | `result.samples`; the chain stays in `result.backend_result` |
 | `plot_measurements_vs_ensemble`, `plot_ps_measurements_vs_ensemble`, `plot_measurements_vs_simulation`, `plot_ps_measurements_vs_simulation`, `ChainMeasurementPlots`, `ABCplot` | `plot_predictions(predictions, experiments)` |
 | `ChainPairPlots`, DataFrame `plot_posterior_pairplot` methods | `plot_posterior_pairplot(result)` or `plot_posterior_pairplot(samples; prior, reference)` |
+| `CriSTool.forwardsensitivity(problem, saveat)` (SciMLSensitivity `ODEForwardSensitivityProblem`, MoM and FiniteVol batch only) | `ForwardDiff.jacobian(θ -> last(runsimulation(θ, problem; save_idx = saveat)).concentration, θ)`, which covers every solver and operation; see [Sensitivity analysis](sensitivity.md) |
 | `CRISTOOL_PALETTE`, terminal start/end panels, `outputdir` persistence | removed; save results and figures explicitly (`savename`, `savedir`) |
 
 ## Run conditions, law binding and study settings
@@ -104,6 +105,7 @@ flags became values rather than symbols.
 | `nmoments(::QMOM)` | `moment_order(solver)` |
 | `steady.concentration`, `steady.d43`, `steady.time`, `steady.moments` | `steady.equilibrium.concentration` (etc.); `steady.solution` is the one-sample `CrystallisationSolution` |
 | `timestepping_algorithm = :ssprk43` (`:auto`) | `timestepping_algorithm = SSPRK43()` (`nothing`) |
+| `CriSTool.OrdinaryDiffEq.Euler()` and other algorithms through CriSTool's `OrdinaryDiffEq` dependency | load the algorithm's subpackage yourself (for example `using OrdinaryDiffEqLowOrderRK: Euler`, or `using OrdinaryDiffEq`); CriSTool depends only on `OrdinaryDiffEqTsit5` and `OrdinaryDiffEqSSPRK` |
 | `tolerance_mode = :auto` (`:scalar`) | `auto_abstol = true` (`false`) |
 | `QMOM(inversion_algorithm = :wheeler)`, solver `string` fields | removed |
 | `runsimulation(params, nucl, gr, agg, br, c0; ...)`, `runsimulation(params; nucl, gr, ..., initial_crystals)` | `runsimulation(params, problem; save_idx)` or `simulate(model, conditions; solver, saveat)` |

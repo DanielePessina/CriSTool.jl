@@ -335,17 +335,17 @@ CriSTool.growthrate(::SimulateLinearGrowth, kinetic_parameters, configured_run::
     @test_throws ArgumentError CrystallisationProblem(propertyless_model, fixture_seeded_conditions())
 
     # Solvent dynamics also apply to an empty population: a constant rate of
-    # -1 kg/m³/s over 2 s, integrated by explicit Euler, is exact.
+    # -1 kg/m³/s over 2 s, integrated with fixed Runge-Kutta steps, is exact.
     draining_problem = CrystallisationProblem(fixture_translation_model(speed = 0.0),
         RunConditions(temperature = 293.15, concentration = 20.0);
         solvent_dynamics = (configured_run, ode_state, elapsed_time, growth_rate) -> (; concentration = -1.0))
     euler_options(iteration_budget) = (; dt = 0.25, adaptive = false, maxiters = iteration_budget)
-    drained_trajectory = simulate(draining_problem; saveat = [0.0, 2.0], algorithm = CriSTool.OrdinaryDiffEq.Euler(),
+    drained_trajectory = simulate(draining_problem; saveat = [0.0, 2.0], algorithm = Tsit5(),
         solve_options = euler_options(8))
     @test drained_trajectory.success
     @test drained_trajectory.concentration ≈ [20.0, 18.0] atol = 1e-12
     # Eight steps are needed; a budget of four fails and is reported, not thrown.
-    @test !simulate(draining_problem; saveat = [0.0, 2.0], algorithm = CriSTool.OrdinaryDiffEq.Euler(),
+    @test !simulate(draining_problem; saveat = [0.0, 2.0], algorithm = Tsit5(),
         solve_options = euler_options(4)).success
     # Options owned by the package are refused instead of silently overridden.
     @test_throws ArgumentError simulate(draining_problem; saveat = [0.0, 2.0], solve_options = (; callback = nothing))
@@ -371,7 +371,7 @@ end
     for transport_speed in (1.0, -1.0)
         cfl_problem = CrystallisationProblem(
             CrystallisationModel(cfl_system; growth = fixture_constant_growth(speed = transport_speed)),
-            cfl_conditions; solver = WENO(meshsize = 10, lmax = 100e-6, timestepping_algorithm = transport_speed < 0 ? CriSTool.OrdinaryDiffEq.SSPRK43() : nothing))
+            cfl_conditions; solver = WENO(meshsize = 10, lmax = 100e-6, timestepping_algorithm = transport_speed < 0 ? SSPRK43() : nothing))
         @test largest_accepted_step(cfl_problem) <= 9.0 + 1e-12
         # A tighter user dtmax wins; it must not leak into the next solve.
         @test largest_accepted_step(cfl_problem; solve_options = (; dtmax = 2.0)) <= 2.0 + 1e-12
