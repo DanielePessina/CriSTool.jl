@@ -1,5 +1,7 @@
 # CriSTool
 
+[![codecov](https://codecov.io/gh/DanielePessina/CriSTool.jl/graph/badge.svg)](https://codecov.io/gh/DanielePessina/CriSTool.jl)
+
 CriSTool is a Julia package for crystallisation population-balance simulation,
 kinetic parameter estimation and uncertainty propagation. It supports batch,
 MSMPR and fed-batch operations with MoM, QMOM, DQMOM, finite-volume and WENO
