@@ -8,8 +8,8 @@ This redesign intentionally changes the recommended interface:
 | Rebuild physical keyword settings in each routine | Reuse `CrystallisationModel` |
 | `runsimulation` returns problem and solution | `solve(CrystallisationProblem(model, conditions, tspan), solver; saveat)` returns solution |
 | Separate fixed and free variants | Select a subset in a study specification |
-| Positional PE/MCMC/ABCDE routines | `prepare_fit` then `fit` |
-| Prior arrays indexed by kinetic block order | Named `BayesianSpec` or `ABCSpec` |
+| Positional PE/MCMC/ABCDE routines | `EstimationProblem` then `solve(problem, alg)` |
+| Prior arrays indexed by kinetic block order | Named `priors` of an `EstimationProblem` |
 | First concentration sample treated as C0 | Require mapped time-zero observations |
 | Missing likelihood variance gets a fallback | Supplied positive variance or an error loss |
 | Seed mesh rescaled to recover omitted mass | Checked support/domain and no silent rescaling |
@@ -29,10 +29,10 @@ replacements are:
 
 | Removed | Replacement |
 | --- | --- |
-| `PE_Routine`, `PE_Routine_Optimisation`, `MH_minimizer` | `fit(prepare_fit(model, experiments, OptimisationSpec(; bounds, algorithm)))`; the minimiser is `result.parameters` |
-| `batchLF_procSO`, `batchLF_procMO` | `loss(prepared_fit, values)` and `loss_terms(prepared_fit, values)` |
-| `MCMC_Routine`, positional `nuts_model(experiments, prior, nucl, ...)` | `fit(prepare_fit(model, experiments, BayesianSpec(; priors)))` |
-| `run_abc`, `ABCDE_Routine`, `ABCDE_Turner_Routine` | `fit(prepare_fit(model, experiments, ABCSpec(; priors, target, sampler)))` with `ABCDESampler()` or `ABCDETurnerSampler()` |
+| `PE_Routine`, `PE_Routine_Optimisation`, `MH_minimizer` | `solve(EstimationProblem(model, experiments; bounds), alg)`; the minimiser is `result.parameters` |
+| `batchLF_procSO`, `batchLF_procMO` | `loss(estimation_problem, values)` and `loss_terms(estimation_problem, values)` |
+| `MCMC_Routine`, positional `nuts_model(experiments, prior, nucl, ...)` | `solve(EstimationProblem(model, experiments; priors), NUTS(); n_samples, n_chains)` |
+| `run_abc`, `ABCDE_Routine`, `ABCDE_Turner_Routine` | `solve(EstimationProblem(model, experiments; priors, loss), ABCDE(); target)`, or `ABCDETurner()` |
 | `kinetic_parameter_symbols` | named paths in `result.samples.names` |
 | positional `run_ensemble(distribution or matrix, measurements, nucl, ...)`, `run_ensemble_fixed` | `predict(result)`, `predict(result, runs)` or `predict(model, runs, samples; solver)` |
 | `EnsembleMoMSolution`, `EnsembleFVSolution` | `PredictionResult` holding `PredictionEnsemble`s; summarise with `prediction_summary` |
@@ -48,7 +48,8 @@ replacements are:
 ## Run conditions, law binding and study settings
 
 A second cleanup moved run conditions out of problems and experiments and
-moved study settings into the specifications.
+moved study settings out of `fit` keywords. The *After* column shows the current
+estimation API (see *SciML-shaped estimation* below).
 
 | Before | After |
 | --- | --- |
@@ -61,12 +62,12 @@ moved study settings into the specifications.
 | `relaxation_initial = (...)` for steady fits | numeric values in the experiment's `RunConditions` |
 | `load_measurements(path; initial_from, seed_shape, operation, relaxation_initial)` | `load_measurements(path; conditions = (crystals = ..., operation = ...))` |
 | `expt.temperature`, `expt.initial_crystals` | `expt.conditions.temperature`, `expt.conditions.crystals` |
-| `fit(prepared; algorithm = DE(...), adtype, searchoptions)` | `OptimisationSpec(; bounds, algorithm = DE(...), adtype, searchoptions)`, then `fit(prepared)` |
-| `fit(prepared; sampler = NUTS(), n_samples, n_chains)` | `BayesianSpec(; priors, sampler = NUTS(), n_samples, n_chains)`; requires `using Turing` (a weak dependency; `sampler = nothing` means `NUTS()`) |
-| `fit(prepared; sampler, nparticles, generations, earlystop)` | `ABCSpec(; priors, target, sampler, n_particles, n_generations, early_stop)` |
-| `HPC = true` | `fit(prepared; parallel = EnsembleThreads())` |
-| `fit(prepared; threaded = true)` | `fit(prepared; parallel = EnsembleThreads())`; the specification picks candidate or experiment threading |
-| ABC target derived by a Wilks test from `confidenceinterval` | `ABCSpec(target = ...)` takes an explicit finite number |
+| `fit(prepared; algorithm = DE(...), adtype, searchoptions)` | `solve(EstimationProblem(model, experiments; bounds), DE(...))`; an Optimization.jl optimiser takes `adtype` and its options at `solve` |
+| `fit(prepared; sampler = NUTS(), n_samples, n_chains)` | `solve(EstimationProblem(model, experiments; priors), NUTS(); n_samples, n_chains)`; requires `using Turing` (a weak dependency) |
+| `fit(prepared; sampler, nparticles, generations, earlystop)` | `solve(problem, ABCDE(); target, n_particles, n_generations, early_stop)` |
+| `HPC = true` | `solve(problem, alg; parallel = EnsembleThreads())` |
+| `fit(prepared; threaded = true)` | `solve(problem, alg; parallel = EnsembleThreads())`; the algorithm picks candidate or experiment threading |
+| ABC target derived by a Wilks test from `confidenceinterval` | `solve(problem, ABCDE(); target = ...)` takes an explicit finite number |
 | `parameter_samples(posterior)` | `posterior.samples` |
 | `predict(model, runs, samples)` with a default solver | `predict(result)` or `predict(result, runs)` reuse the fit's solver, mode and options; `predict(model, runs, samples; solver)` requires `solver` |
 | `examples/model_helpers.jl` | removed; the tutorials use the package API directly |
@@ -79,10 +80,10 @@ their conditions must not contain placeholders.
 
 | Before | After |
 | --- | --- |
-| `prepare_fit(...; mode = :steady, steady_options = SteadyStateOptions(...))` | `prepare_fit(...; mode = SteadyMode(SteadyStateOptions(...)))` |
+| `prepare_fit(...; mode = :steady, steady_options = SteadyStateOptions(...))` | `EstimationProblem(...; mode = SteadyMode(SteadyStateOptions(...)))` |
 | `predict(model, runs, samples; solver, mode = :steady, steady_options)` | `predict(model, runs, samples; solver, mode = SteadyMode(...))` |
 | `mode = :transient` | `mode = TransientMode()` (the default) |
-| `loss(lf, problem, params, experiments)` on a template problem | `loss(prepare_fit(model, experiments, spec), values)` |
+| `loss(lf, problem, params, experiments)` on a template problem | `loss(EstimationProblem(model, experiments; bounds), values)` |
 | `logMLE().string`, `logMLE().symbols`, `mae().string` | removed |
 | `logMLE(weighting = [1.0, 1.0])` default | `weighting = (;)`: every observable weighs 1 |
 | `ensemble.concentration` on a `PredictionEnsemble` | `observable_values(ensemble, :concentration)` |
@@ -207,7 +208,7 @@ the algorithm is for an `ODEProblem`. There are no deprecation shims.
 | `simulate(problem; saveat)` | `solve(problem, solver; saveat)`; `saveat` is a step or a vector of times inside `tspan` |
 | `runsimulation(params, problem; save_idx)` | `solve(remake(problem; p = params), solver; saveat)` |
 | `runsimulation(problem; save_idx)` | `solve(problem, solver; saveat)` |
-| `algorithm = Tsit5()` on a direct simulation | `alg = Tsit5()` on `solve`; `prepare_fit` and `predict` keep `algorithm` |
+| `algorithm = Tsit5()` on a direct simulation | `alg = Tsit5()` on `solve`, `EstimationProblem` and `predict` |
 | `solution.time`, `ensemble.time` | `solution.t`, `ensemble.t` |
 | `solution.success` | `solution.retcode` (`ReturnCode.T`) or `successful_retcode(solution)` |
 | `observable_values(solution, :d43)` | also `solution[:d43]` (any named trajectory) |
@@ -221,3 +222,35 @@ the algorithm is for an `ODEProblem`. There are no deprecation shims.
 | `problem.solver`, `problem.initial_population`, `problem.temp_profile` | the solver is a `solve` argument; `problem.conditions` holds temperature, solvent values, seed and operation |
 | `rate(law, values, prob::CrystallisationProblem, state, t)` in custom laws | leave `prob` untyped: laws receive the internal solve-time problem, read with `supersaturation(prob, state, t)`, `solvent_state(prob, state)` and `prob.model` |
 | `CrystallisationProblem(...)` throwing on a seed outside the mesh or an unsupported solver/kinetics combination | the same `ArgumentError` from `solve` |
+
+## SciML-shaped estimation
+
+Estimation follows the same problem/solve pattern as simulation. An
+`EstimationProblem` replaces the study specifications and `prepare_fit`; it
+prepares the solve templates once at construction and subtypes
+`SciMLBase.AbstractSciMLProblem`. `solve(problem, alg)` replaces `fit` and
+dispatches on the algorithm. There are no deprecation shims.
+
+| Before | After |
+| --- | --- |
+| `prepare_fit(model, experiments, OptimisationSpec(; bounds, algorithm = DE(...)))` then `fit(prepared)` | `solve(EstimationProblem(model, experiments; bounds), DE(...))` |
+| `OptimisationSpec(; bounds, algorithm = LBFGS(), adtype, searchoptions = (maxiters = 50,))` | `solve(EstimationProblem(model, experiments; bounds), LBFGS(); adtype, maxiters = 50)` |
+| `BayesianSpec(; priors, sampler = NUTS(), n_samples, n_chains)` | `solve(EstimationProblem(model, experiments; priors), NUTS(); n_samples, n_chains)`; `fit(prepared; rng, progress)` keywords move to that `solve` |
+| `BayesianSpec(; sampler = nothing)` | pass the sampler explicitly: `solve(problem, NUTS())` |
+| `ABCSpec(; priors, target, sampler = ABCDESampler(), n_particles, n_generations, early_stop)` | `solve(EstimationProblem(model, experiments; priors, loss = MeanAbsoluteError()), ABCDE(); target, n_particles, n_generations, early_stop)` |
+| `ABCSpec`'s default `loss = MeanAbsoluteError()` | every `EstimationProblem` defaults to `loss = GaussianNLL()`; pass `loss = MeanAbsoluteError()` for an error discrepancy |
+| `ABCDESampler(α)`, `ABCDETurnerSampler(...)` | `ABCDE(; α)`, `ABCDETurner(...)` |
+| `prepare_fit(...; solver, mode, problem_options, observable_order, observable_projections, algorithm, solve_options, callback_factory)` | the same `EstimationProblem` keywords; the ODE algorithm is `alg` |
+| `prepare_fit(...; parallel = EnsembleThreads())`, `fit(prepared; parallel)` | `solve(problem, alg; parallel = EnsembleThreads())` |
+| `loss(prepared, values)`, `loss_terms(prepared, values)` | `loss(problem, values)`, `loss_terms(problem, values)` |
+| `nuts_model(prepared)` | `nuts_model(problem)` |
+| rebuilding a preparation with another loss or solver | `remake(problem; loss, solver, ...)` |
+| `result.preparation`, `result.preparation.specification` | `result.estimation_problem`; the algorithm is `result.alg` |
+| `predict(model, runs, samples; solver, algorithm)` | `predict(model, runs, samples; solver, alg)` |
+| `CriSTool.PreparedFit` | `EstimationProblem` |
+
+A prior-only problem cannot be optimised and a bounds-only problem cannot be
+sampled; give both, with the same names in the same order, to do both with one
+problem. Validation that belonged to a sampler specification (a likelihood loss
+for posterior sampling, positive counts, a finite ABC target) now happens when
+`solve` is called, before any sampling.

@@ -40,29 +40,31 @@ and `remake(problem; conditions, tspan, p)` changes the run.
 
 ```julia
 using Metaheuristics, Distributions
-using Turing: NUTS   # Turing is optional; loading it enables BayesianSpec fitting
+using Turing: NUTS   # Turing is optional; loading it enables solve(problem, NUTS())
 
 experiments = load_measurements("measurements.csv")  # each run starts from its time-zero data
-fit_spec = OptimisationSpec(bounds = (growth = (growth_coefficient = (1e-12, 1e-9),),),
-    algorithm = DE(N = 32))
-fitted = fit(prepare_fit(crystal_model, experiments, fit_spec; solver = QMOM()))
+estimation = EstimationProblem(crystal_model, experiments; solver = QMOM(),
+    bounds = (growth = (growth_coefficient = (1e-12, 1e-9),),),
+    priors = (growth = (growth_coefficient = Uniform(1e-12, 1e-9),),))
+fitted = solve(estimation, DE(N = 32))   # optimisers search inside the bounds
 fitted.parameters                        # (growth = (growth_coefficient = ...,),)
 
-bayes_spec = BayesianSpec(priors = (growth = (growth_coefficient = Uniform(1e-12, 1e-9),),),
-    n_samples = 500)
-posterior = fit(prepare_fit(crystal_model, experiments, bayes_spec; solver = QMOM()))
+posterior = solve(estimation, NUTS(); n_samples = 500)   # samplers draw under the priors
 predictions = predict(posterior)         # same runs, solver and settings as the fit
 bands = prediction_summary(predictions, :concentration)
 ```
 
-The specification selects which kinetic parameters vary; everything else stays
+The problem's bounds or priors select which kinetic parameters vary; everything else stays
 as bound in the model. Material properties, run conditions and supplied
 measurement noise are never fitted. Likelihood fitting requires supplied
 positive variances for scored measurements; MAE does not. Predictions describe
 physical trajectories; adding measurement noise is a separate, explicit step
 (`measurement_samples`).
 
-Turing is optional: `fit` on a `BayesianSpec` needs `using Turing`.
+As with simulation, the problem holds no algorithm: `solve(problem, alg)`
+takes a Metaheuristics algorithm, an Optimization.jl optimiser (`LBFGS()`),
+`NUTS()` or `ABCDE()`, and `remake(problem; loss, solver, ...)` changes the
+study. Turing is optional: `solve(problem, NUTS())` needs `using Turing`.
 
 Plotting is a package extension: run `using CairoMakie` to enable
 `plot_predictions` and `plot_chain_diagnostics`, and add `using PairPlots` for

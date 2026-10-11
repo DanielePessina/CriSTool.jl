@@ -1,17 +1,16 @@
 # ABC sampling
 
-ABCDE uses the same model, experiment preparation and selected kinetic paths as
-optimisation and Bayesian inference. Define explicit priors and an explicit
-acceptance threshold for the chosen discrepancy:
+ABCDE solves the same `EstimationProblem` as optimisation and Bayesian
+inference. Select parameters by explicit priors, choose the discrepancy as the
+problem's `loss`, and give an explicit acceptance threshold to `solve`:
 
 ```julia
 using CriSTool, Distributions
-abc_specification = ABCSpec(
+abc_problem = EstimationProblem(crystal_model, experiments;
     priors = (growth = (growth_coefficient = Uniform(1e-12, 1e-9),),),
-    loss = MeanAbsoluteError(), target = 0.1, sampler = ABCDESampler(),
-    n_particles = 128, n_generations = 100)
-abc_prepared = prepare_fit(crystal_model, experiments, abc_specification; solver = MoM())
-abc_posterior = fit(abc_prepared; parallel = EnsembleThreads())
+    loss = MeanAbsoluteError(), solver = MoM())
+abc_posterior = solve(abc_problem, ABCDE(); target = 0.1, n_particles = 128, n_generations = 100,
+    parallel = EnsembleThreads())
 abc_draws = abc_posterior.samples
 abc_predictions = predict(abc_posterior)
 ```
@@ -21,6 +20,7 @@ units/scale of the discrepancy and are a scientific choice; they are not
 inferred from an optimum or from a confidence interval. `early_stop=true` stops
 once the target is reached. `parallel = EnsembleThreads()` evaluates particles in parallel; the experiments
 of each discrepancy evaluation then run serially.
-`ABCDETurnerSampler` remains a distinct sampler option. Native posterior output
+`ABCDETurner()` is the Turner and Sederberg variant, with its migration and
+kernel settings as fields. Other samplers subtype `AbstractABCSampler`. Native posterior output
 is retained as `backend_result`; joint draws use the common prediction interface.
 The sampler implementation is vendored in `CriSTool.KissABC`.

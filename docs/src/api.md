@@ -20,8 +20,8 @@ changing or composing.
 Calling a law with all of its parameter names, e.g.
 `EmpiricalGrowth(growth_coefficient = 1e-9, growth_order = 2.0)`, returns a
 bound `KineticModel`; `KineticModel(law; parameters=(...))` is the long form.
-`OptimisationSpec.bounds`, `BayesianSpec.priors` and `ABCSpec.priors` select
-kinetic parameters using nested names such as `growth.growth_coefficient`.
+The `bounds` and `priors` of an `EstimationProblem` select kinetic parameters
+using nested names such as `growth.growth_coefficient`.
 Unselected values stay fixed. `ParameterSamples` uses those same paths for
 joint uncertainty draws.
 

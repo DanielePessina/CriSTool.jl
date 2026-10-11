@@ -2,6 +2,14 @@
 
 ## 0.1.0 — unreleased
 
+- Estimation follows the SciML problem/solve pattern: `EstimationProblem(model,
+  experiments; bounds, priors, loss, solver, ...)` replaces `OptimisationSpec`,
+  `BayesianSpec`, `ABCSpec` and `prepare_fit`, and `solve(problem, alg)` replaces
+  `fit`, dispatching on Metaheuristics algorithms, Optimization.jl optimisers,
+  Turing samplers (`NUTS()`) and `ABCDE()`/`ABCDETurner()` (renamed from
+  `ABCDESampler`/`ABCDETurnerSampler`). `parallel` is a `solve` keyword, results
+  record `alg` and `estimation_problem`, and the ODE algorithm keyword of
+  `EstimationProblem` and `predict` is `alg`. See the migration guide.
 - Opt-in `static` test group (`test_args = ["static"]`, also in `"all"`): asserts zero
   allocations per ODE right-hand-side call for Float64 and ForwardDiff dual state and
   parameters on every solver, plus JET optimisation analysis of those right-hand sides.
