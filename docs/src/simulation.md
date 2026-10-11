@@ -33,6 +33,32 @@ For another material, supply a `CrystallisationSystem(saturation_model=...,
 crystal_density=..., volume_shape_factor=...)`. Molecular volume may be `nothing`
 when unused; CNT requires it and fails explicitly if it is missing.
 
+## Inspecting objects
+
+Conditions, seeds, solvers, operations, models, solutions, fits, inference
+results and predictions print a short summary at the REPL. Containers and
+`repr` use a one-line form. Sizes are stored in metres and displayed in µm;
+`FromObservation` placeholders are shown as such, and failed solves say so.
+
+```text
+julia> batch_run
+RunConditions
+  temperature:   ConstantTemperature(293.15 K)
+  concentration: 18.0 kg/m³
+  crystals:      none
+  operation:     BatchOperation()
+
+julia> trajectory
+CrystallisationSolution{MomentPopulation} — moments µ0 … µ4, success
+  time:          0.0 … 28800.0 s (9 saves)
+  concentration: 18.0 → 7.8 kg/m³
+  d43:           ...
+  ODE:           ... RHS evaluations, ... accepted / ... rejected steps
+```
+
+A `FitResult` lists the fitted parameter paths and values with the loss and, for
+Optimization.jl solvers, whether the optimiser reported convergence.
+
 ## Seeds and distributions
 
 ```julia

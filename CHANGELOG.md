@@ -6,6 +6,11 @@
   allocations per ODE right-hand-side call for Float64 and ForwardDiff dual state and
   parameters on every solver, plus JET optimisation analysis of those right-hand sides.
   CI runs it as its own job and adds a non-blocking `JET.report_package` job.
+- REPL display: run conditions, seeds, solvers, operations and feeds, kinetic
+  and crystallisation models, solutions (transient and steady), fits,
+  inference results and predictions print a readable summary, with a compact
+  one-line form inside containers. Sizes are shown in µm; stored values are
+  unchanged.
 - Plotting moved to package extensions: `using CairoMakie` (or another Makie
   backend) enables `plot_predictions` and `ChainStatsPlots`; `PairPlots`
   additionally enables `plot_posterior_pairplot`. `using CriSTool` no longer
