@@ -416,6 +416,16 @@ end
         @test propertynames(threaded_ensemble) == propertynames(serial_ensemble)
         @test threaded_ensemble.predictions == serial_ensemble.predictions
     end
+    # A user-code exception surfaces unwrapped, with the type the serial loss raises.
+    raising_model = CrystallisationModel(fixture_system;
+        growth = CallableGrowth((rate_values, rate_context) ->
+            rate_values.speed < 0 ? throw(DomainError(rate_values.speed, "negative speed")) : rate_values.speed * 1e-6;
+            parameters = (speed = fitpredict_true_speed,)))
+    raising_specification = OptimisationSpec(bounds = fitpredict_bounds, algorithm = OptimizationOptimJL.LBFGS())
+    for raising_parallel in (EnsembleSerial(), EnsembleThreads())
+        raising_fit = prepare_fit(raising_model, parallel_experiments, raising_specification; parallel = raising_parallel)
+        @test_throws DomainError loss(raising_fit, [-0.01])
+    end
     @test_throws ArgumentError loss(prepare_fit(fitpredict_model, parallel_experiments, parallel_specification;
         parallel = CriSTool.SciMLBase.EnsembleDistributed()), [0.01])
 end

@@ -399,7 +399,7 @@ _pooled(::MeanAbsoluteError, objective_sum, observation_count::Int) =
 
 One solution per prepared run, in run order. `EnsembleSerial` returns a lazy
 generator, so a loss that stops at the first failed solve never pays for the
-remaining runs. `EnsembleThreads` solves every run in its own task; runs own
+remaining runs. `EnsembleThreads` solves the runs on a threaded loop; runs own
 distinct templates, so no task shares mutable solver state with another.
 Scoring then consumes the solutions in run order in both cases, which keeps
 threaded and serial losses bitwise identical.
@@ -408,23 +408,24 @@ _experiment_solutions(::EnsembleSerial, prepared_solves::PreparedSolves, params)
     (_solve_prepared(prepared_solves, prepared_run, params) for prepared_run in prepared_solves.runs)
 
 function _experiment_solutions(::EnsembleThreads, prepared_solves::PreparedSolves, params)
-    solve_tasks = [Threads.@spawn(_solve_prepared(prepared_solves, prepared_run, params))
-                   for prepared_run in prepared_solves.runs]
-    return [_fetch_unwrapped(solve_task) for solve_task in solve_tasks]
+    run_solutions = Vector{Any}(undef, length(prepared_solves.runs))
+    run_failures = Vector{Any}(nothing, length(prepared_solves.runs))
+    Threads.@threads for run_index in eachindex(prepared_solves.runs)
+        # Keep each run's exception so the first one in run order is rethrown as it is, not
+        # wrapped in a task failure; serial and threaded losses then raise the same error.
+        try
+            run_solutions[run_index] = _solve_prepared(prepared_solves, prepared_solves.runs[run_index], params)
+        catch run_failure
+            run_failures[run_index] = run_failure
+        end
+    end
+    first_failure = findfirst(!isnothing, run_failures)
+    first_failure === nothing || throw(run_failures[first_failure])
+    return run_solutions
 end
 
 _experiment_solutions(unsupported::SciMLBase.BasicEnsembleAlgorithm, prepared_solves, params) =
     throw(ArgumentError("parallel must be EnsembleSerial() or EnsembleThreads(), got $(typeof(unsupported))."))
-
-# Rethrow the original exception of a failed task, so threaded errors keep the serial error type.
-function _fetch_unwrapped(solve_task::Task)
-    try
-        return fetch(solve_task)
-    catch task_error
-        task_error isa TaskFailedException && throw(task_error.task.result)
-        rethrow()
-    end
-end
 
 """
     _loss_objectives(lf, setup, params) -> Vector
