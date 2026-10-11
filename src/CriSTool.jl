@@ -9,7 +9,6 @@ using Base.Threads
 using LinearAlgebra
 using Random
 using Statistics
-using Turing
 
 # Scientific Computing & Differential Equations
 # The solver defaults (Tsit5, SSPRK43) come from the OrdinaryDiffEq subpackages;

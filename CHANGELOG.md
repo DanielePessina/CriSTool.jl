@@ -6,6 +6,12 @@
   backend) enables `plot_predictions` and `ChainStatsPlots`; `PairPlots`
   additionally enables `plot_posterior_pairplot`. `using CriSTool` no longer
   loads Makie.
+- Turing is a weak dependency: `fit` on a `BayesianSpec` needs `using Turing`
+  (`CriSToolTuringExt`), and `BayesianSpec`'s default `sampler` is now `nothing`,
+  meaning `Turing.NUTS()`. `using CriSTool` no longer loads Turing, and
+  `CriSTool.predict` is no longer Turing's `predict`: import Turing selectively
+  (`using Turing: NUTS`) to avoid a name clash on `predict`. The AIS-versus-
+  DynamicPPL ambiguity guard moved into the extension.
 - Depend on `OrdinaryDiffEqTsit5`, `OrdinaryDiffEqSSPRK` and `SciMLBase` instead
   of the full `OrdinaryDiffEq`. Other time steppers come from the user's own
   environment (for example `OrdinaryDiffEqSDIRK` or `OrdinaryDiffEq`).

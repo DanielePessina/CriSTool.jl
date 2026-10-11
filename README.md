@@ -33,6 +33,7 @@ concentration, an optional seed and the reactor operation.
 
 ```julia
 using Metaheuristics, Distributions
+using Turing: NUTS   # Turing is optional; loading it enables BayesianSpec fitting
 
 experiments = load_measurements("measurements.csv")  # each run starts from its time-zero data
 fit_spec = OptimisationSpec(bounds = (growth = (growth_coefficient = (1e-12, 1e-9),),),
@@ -53,6 +54,9 @@ measurement noise are never fitted. Likelihood fitting requires supplied
 positive variances for scored measurements; MAE does not. Predictions describe
 physical trajectories; adding measurement noise is a separate, explicit step
 (`measurement_samples`).
+
+Turing is optional: `fit` on a `BayesianSpec` needs `using Turing` (`using Turing: NUTS`
+avoids a clash between Turing's and CriSTool's `predict`).
 
 Plotting is a package extension: run `using CairoMakie` to enable
 `plot_predictions` and `ChainStatsPlots`, and add `using PairPlots` for

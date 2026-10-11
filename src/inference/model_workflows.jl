@@ -1,5 +1,4 @@
 import Distributions: fit
-import Turing: predict
 
 """Declare whether a custom loss represents a supplied-noise negative log likelihood."""
 is_likelihood(::AbstractPELossFunction) = false
@@ -29,15 +28,16 @@ Base.@kwdef struct OptimisationSpec{Bounds <: NamedTuple, Algorithm, Loss, AD, S
 end
 
 """
-    BayesianSpec(; priors, sampler=NUTS(), n_samples=1000, n_chains=1, loss=GaussianNLL())
+    BayesianSpec(; priors, sampler=nothing, n_samples=1000, n_chains=1, loss=GaussianNLL())
 
 Select kinetic parameters by named univariate priors and sample their posterior
-with a Turing sampler. The likelihood uses supplied measurement variances; noise
+with a Turing sampler (`nothing` means `Turing.NUTS()`). Fitting requires
+`using Turing`, which loads the `CriSToolTuringExt` extension. The likelihood uses supplied measurement variances; noise
 is never fitted.
 """
 Base.@kwdef struct BayesianSpec{Priors <: NamedTuple, Sampler, Loss}
     priors::Priors
-    sampler::Sampler = Turing.NUTS()
+    sampler::Sampler = nothing
     n_samples::Int = 1000
     n_chains::Int = 1
     loss::Loss = GaussianNLL()
@@ -365,15 +365,6 @@ function _model_fit_result(prepared_fit, optimal_values, backend_result)
         loss_terms(prepared_fit, optimal_values), backend_result, prepared_fit)
 end
 
-"""Build a Turing model with explicit priors over selected kinetic parameters."""
-function nuts_model(prepared_fit::PreparedFit{<:Any, <:BayesianSpec})
-    prior_values = last.(_named_parameter_leaves(prepared_fit.specification.priors))
-    private_fit = _cristool_once_per_task(typeof(prepared_fit)) do
-        deepcopy(prepared_fit)
-    end
-    return _cristool_nuts_loss_model(prior_values, private_fit)
-end
-
 """Joint parameter draws: selected named paths in rows, common sample IDs in columns."""
 struct ParameterSamples{Values, Source}
     names::Vector{String}
@@ -415,13 +406,12 @@ end
 
 Sample the posterior with the specification's sampler and counts. `threaded`
 runs chains in parallel; other keywords go to `Turing.sample` (e.g. `progress`).
+Requires `using Turing`.
 """
 function fit(prepared_fit::PreparedFit{<:Any, <:BayesianSpec};
         rng = Random.default_rng(), threaded::Bool = false, kwargs...)
-    fit_specification = prepared_fit.specification
-    posterior_chain = Turing.sample(rng, nuts_model(prepared_fit), fit_specification.sampler,
-        threaded ? Turing.MCMCThreads() : Turing.MCMCSerial(),
-        fit_specification.n_samples, fit_specification.n_chains; kwargs...)
+    _require_turing_extension()
+    posterior_chain = _nuts_posterior_chain(prepared_fit, rng, threaded; kwargs...)
     posterior_chain = rename_chain(posterior_chain, Symbol.(prepared_fit.selection.names))
     posterior_draws = ParameterSamples(prepared_fit.selection.names,
         chains_to_matrix(posterior_chain; params = Symbol.(prepared_fit.selection.names)); source = :nuts)

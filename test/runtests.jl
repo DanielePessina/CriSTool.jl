@@ -3,6 +3,8 @@ using CriSTool
 using CriSTool: run_ensemble, prepare_loss, LossSetup
 using Test
 using Distributions
+# Loads CriSToolTuringExt (NUTS fitting); qualified use avoids clashing with CriSTool.predict.
+import Turing
 using DataFrames
 import DifferentiationInterface as DI
 import ForwardDiff

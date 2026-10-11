@@ -252,12 +252,26 @@ end
     @test loss(size_prepared, [0.01]) ≈ 0.5 * sum(log.(2π .* size_variances) .+ size_offsets .^ 2 ./ size_variances) rtol = 1e-6
 end
 
+@testset "Bayesian sampler default and Turing extension" begin
+    default_spec = BayesianSpec(priors = (growth = (speed = Uniform(0.001, 0.03),),))
+    @test default_spec.sampler === nothing
+    turing_extension = Base.get_extension(CriSTool, :CriSToolTuringExt)
+    @test turing_extension !== nothing
+    @test turing_extension._nuts_sampler(default_spec.sampler) isa Turing.NUTS
+    explicit_sampler = Turing.NUTS(7, 0.8)
+    @test turing_extension._nuts_sampler(explicit_sampler) === explicit_sampler
+    # The vendored AIS step must not dispatch ambiguously into DynamicPPL.
+    @test_throws ErrorException Turing.AbstractMCMC.step(Random.default_rng(),
+        CriSTool.nuts_model(prepare_fit(fitpredict_model, [fitpredict_experiment], default_spec)),
+        CriSTool.KissABC.AIS(25))
+end
+
 @testset "NUTS (2 threaded chains): posterior density and posterior predictions" begin
     bayesian_prepared = prepare_fit(fitpredict_model, [fitpredict_experiment], BayesianSpec(
-        priors = (growth = (speed = Uniform(0.001, 0.03),),), sampler = CriSTool.Turing.NUTS(5, 0.65),
+        priors = (growth = (speed = Uniform(0.001, 0.03),),), sampler = Turing.NUTS(5, 0.65),
         n_samples = 5, n_chains = 2))
     # log p(theta | data) = log prior - negative log likelihood.
-    @test CriSTool.Turing.DynamicPPL.logjoint(CriSTool.nuts_model(bayesian_prepared), (θ = [0.015],)) ≈
+    @test Turing.DynamicPPL.logjoint(CriSTool.nuts_model(bayesian_prepared), (θ = [0.015],)) ≈
           logpdf(Uniform(0.001, 0.03), 0.015) - loss(bayesian_prepared, [0.015]) rtol = 1e-10
     tiny_posterior = fit(bayesian_prepared; rng = MersenneTwister(72), threaded = true, progress = false)
     @test tiny_posterior.samples.names == ["growth.speed"]
