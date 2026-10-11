@@ -79,3 +79,9 @@ adapters and multidimensional/multivessel models remain outside this release.
 
 This version has not been registered, tagged or published. Release gates and
 the final tested commit must be accepted before publication.
+- `Compat.jl` is a dependency; supported but non-exported names
+  (`CRISTOOL_GAS_CONSTANT`, `CRISTOOL_BOLTZMANN_CONSTANT`,
+  `AbstractDiscretisedSolver`, `KissABC`) are marked `public` on Julia 1.11 and
+  later.
+- Added `CONTRIBUTING.md` and a CompatHelper workflow. The Distributions
+  compat range is now open-ended (`0.25.88`) instead of capped at `0.25.126`.

@@ -10,6 +10,7 @@ using LinearAlgebra
 using Random
 using Statistics
 using Turing
+import Compat
 
 # Scientific Computing & Differential Equations
 # The solver defaults (Tsit5, SSPRK43) come from the OrdinaryDiffEq subpackages;
@@ -121,6 +122,13 @@ export CrystallisationSystem, LysozymeSystem, KineticModel, CrystallisationModel
        AbstractSimulationMode, TransientMode, SteadyMode,
        ParameterSamples, parameter_samples, predict, PredictionResult, measurement_samples,
        DistributionInitialCrystals, number_weighted, seed_domain_diagnostics
+
+# Supported but not exported: documented in the guides and meant to be used
+# qualified (`CriSTool.CRISTOOL_GAS_CONSTANT`) or imported by name. `public`
+# is a no-op on Julia 1.10 and a real marker from 1.11 (`Base.ispublic`).
+# Underscore-prefixed names are internal and deliberately absent.
+Compat.@compat public CRISTOOL_GAS_CONSTANT, CRISTOOL_BOLTZMANN_CONSTANT,
+                      AbstractDiscretisedSolver, KissABC
 
 # Core types and public interfaces.
 include("core/solution_types.jl")

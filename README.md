@@ -65,5 +65,6 @@ the low-level interface for automatic differentiation and sensitivity work.
 
 Run tests with `julia --project=. -e 'using Pkg; Pkg.test()'`.
 Build docs with `julia --project=docs docs/make.jl` after instantiating `docs`.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, the testing standard and the release checklist.
 
 BSD-3-Clause; see [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
