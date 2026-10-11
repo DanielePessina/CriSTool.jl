@@ -1,27 +1,20 @@
 """Transport divergence, aggregation/breakage sources and solvent block of a WENO RHS."""
 @inline function _weno_divergence_sweep!(dstdt, st, p, t, flux_cache, CryProblem,
-                                         growth_rate)
+                                         growth_rate, aggregation_table)
     solid_volume_rate = _mesh_transport_divergence!(crystal_state(CryProblem, dstdt),
                                                     flux_cache, CryProblem.solver)
-    _weno_apply_sources!(dstdt, st, p, t, CryProblem)
+    _weno_apply_sources!(dstdt, st, p, t, CryProblem, aggregation_table)
     _write_mesh_solvent_derivatives!(dstdt, CryProblem, st, t, growth_rate,
                                      solid_volume_rate)
     return nothing
 end
 
-function _weno_apply_sources!(dstdt, st, p, t, CryProblem)
+function _weno_apply_sources!(dstdt, st, p, t, CryProblem, aggregation_table)
     dstdt_nd_view = crystal_state(CryProblem, dstdt)
-    agg_rate = aggregationrate(CryProblem.model.aggregation.law, p.agg,
-                               CryProblem, st, t)
-    br_rate = breakagerate(CryProblem.model.breakage.law, p.br,
-                           CryProblem, st, t)
-
-    if !(typeof(agg_rate) <: Real && agg_rate == 0.0)
-        dstdt_nd_view .+= agg_rate
-    end
-    if !(typeof(br_rate) <: Real && br_rate == 0.0)
-        dstdt_nd_view .+= br_rate
-    end
+    _add_aggregation_rate!(dstdt_nd_view, CryProblem.model.aggregation.law, p.agg,
+                           CryProblem, st, t, aggregation_table)
+    _add_breakage_rate!(dstdt_nd_view, CryProblem.model.breakage.law, p.br,
+                        CryProblem, st, t)
     return nothing
 end
 
@@ -400,7 +393,8 @@ end
 # `length_growth` is `Val(_is_length_law(growthfunction))`: scalar growth keeps
 # the positive-growth fast path, length growth fills a per-cell rate field.
 function _weno_rhs!(dstdt, st, p, t, CryProblem, growthfunction, length_growth::Val{false},
-                    flux_cache, ndens_pad_cache, growth_rate_cache)
+                    flux_cache, ndens_pad_cache, growth_rate_cache,
+                    aggregation_table)
     numberdensity = crystal_state(CryProblem, st)
     if _is_length_law(CryProblem.model.dissolution.law)
         net_growth_rates = get_tmp(growth_rate_cache, st)
@@ -420,7 +414,8 @@ function _weno_rhs!(dstdt, st, p, t, CryProblem, growthfunction, length_growth::
                                 net_growth_rates,
                                 inflowbc,
                                 ndens_pad_cache)
-        _weno_divergence_sweep!(dstdt, st, p, t, flux_cache, CryProblem, net_growth_rates)
+        _weno_divergence_sweep!(dstdt, st, p, t, flux_cache, CryProblem, net_growth_rates,
+                            aggregation_table)
         return nothing
     end
 
@@ -454,12 +449,14 @@ function _weno_rhs!(dstdt, st, p, t, CryProblem, growthfunction, length_growth::
         fill!(flux_cache, zero(scalar_growth_rate))
     end
 
-    _weno_divergence_sweep!(dstdt, st, p, t, flux_cache, CryProblem, scalar_growth_rate)
+    _weno_divergence_sweep!(dstdt, st, p, t, flux_cache, CryProblem, scalar_growth_rate,
+                            aggregation_table)
     return nothing
 end
 
 function _weno_rhs!(dstdt, st, p, t, CryProblem, growthfunction, length_growth::Val{true},
-                    flux_cache, ndens_pad_cache, growth_rate_cache)
+                    flux_cache, ndens_pad_cache, growth_rate_cache,
+                    aggregation_table)
     numberdensity = crystal_state(CryProblem, st)
     net_growth_rates = get_tmp(growth_rate_cache, st)
     net_growth_rate!(net_growth_rates,
@@ -484,7 +481,8 @@ function _weno_rhs!(dstdt, st, p, t, CryProblem, growthfunction, length_growth::
                             inflowbc,
                             ndens_pad_cache)
 
-    _weno_divergence_sweep!(dstdt, st, p, t, flux_cache, CryProblem, net_growth_rates)
+    _weno_divergence_sweep!(dstdt, st, p, t, flux_cache, CryProblem, net_growth_rates,
+                            aggregation_table)
     return nothing
 end
 
@@ -495,6 +493,8 @@ function crystallisation_odeproblem(solver::WENO, CryProblem::CrystallisationPro
     _growth_rate_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize))
     feed_population = _operation_feed_population(CryProblem)
     length_growth = Val(_is_length_law(CryProblem.model.growth.law))
+    aggregation_table = _mesh_aggregation_table(CryProblem.model.aggregation.law,
+                                                CryProblem.solver)
 
     function WENO_Model(dstdt, st, p, t)
         _weno_rhs!(dstdt,
@@ -506,7 +506,8 @@ function crystallisation_odeproblem(solver::WENO, CryProblem::CrystallisationPro
                    length_growth,
                    get_tmp(_flux_cache_dc, st),
                    get_tmp(_ndens_pad_cache_dc, st),
-                   _growth_rate_cache_dc)
+                   _growth_rate_cache_dc,
+                   aggregation_table)
         _add_operation_transport!(dstdt, st, CryProblem, t, feed_population)
         return nothing
     end

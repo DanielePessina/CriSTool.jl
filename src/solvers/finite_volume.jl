@@ -160,6 +160,8 @@ function _finite_volume_odeproblem(length_growth::Val{false},
     _flux_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 1))
     _growth_rate_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize))
     feed_population = _operation_feed_population(CryProblem)
+    aggregation_table = _mesh_aggregation_table(CryProblem.model.aggregation.law,
+                                                CryProblem.solver)
 
     function HRFV_FLWmodel(dstdt, st, p, t)
         # Get properly-typed cache based on state vector type
@@ -215,20 +217,10 @@ function _finite_volume_odeproblem(length_growth::Val{false},
         solid_volume_rate = _mesh_transport_divergence!(dstdt_nd_view, _flux_cache,
                                                         CryProblem.solver)
 
-        # Add aggregation and breakage terms
-        agg_rate = aggregationrate(CryProblem.model.aggregation.law,
-                                   p.agg,
-                                   CryProblem, st, t)
-        br_rate = breakagerate(CryProblem.model.breakage.law,
-                               p.br,
-                               CryProblem, st, t)
-
-        if !(typeof(agg_rate) <: Real && agg_rate == 0.0)
-            dstdt_nd_view .+= agg_rate
-        end
-        if !(typeof(br_rate) <: Real && br_rate == 0.0)
-            dstdt_nd_view .+= br_rate
-        end
+        _add_aggregation_rate!(dstdt_nd_view, CryProblem.model.aggregation.law, p.agg,
+                               CryProblem, st, t, aggregation_table)
+        _add_breakage_rate!(dstdt_nd_view, CryProblem.model.breakage.law, p.br,
+                            CryProblem, st, t)
 
         _write_mesh_solvent_derivatives!(dstdt, CryProblem, st, t, scalar_growth_rate,
                                          solid_volume_rate)
@@ -258,6 +250,8 @@ function _finite_volume_odeproblem(length_growth::Val{true},
     _flux_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 1))
     _growth_rate_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize))
     feed_population = _operation_feed_population(CryProblem)
+    aggregation_table = _mesh_aggregation_table(CryProblem.model.aggregation.law,
+                                                CryProblem.solver)
 
     function HRFV_FLWmodel(dstdt, st, p, t)
         # Get properly-typed cache based on state vector type
@@ -293,20 +287,10 @@ function _finite_volume_odeproblem(length_growth::Val{true},
         solid_volume_rate = _mesh_transport_divergence!(dstdt_nd_view, _flux_cache,
                                                         CryProblem.solver)
 
-        # Add aggregation and breakage terms
-        agg_rate = aggregationrate(CryProblem.model.aggregation.law,
-                                   p.agg,
-                                   CryProblem, st, t)
-        br_rate = breakagerate(CryProblem.model.breakage.law,
-                               p.br,
-                               CryProblem, st, t)
-
-        if !(typeof(agg_rate) <: Real && agg_rate == 0.0)
-            dstdt_nd_view .+= agg_rate
-        end
-        if !(typeof(br_rate) <: Real && br_rate == 0.0)
-            dstdt_nd_view .+= br_rate
-        end
+        _add_aggregation_rate!(dstdt_nd_view, CryProblem.model.aggregation.law, p.agg,
+                               CryProblem, st, t, aggregation_table)
+        _add_breakage_rate!(dstdt_nd_view, CryProblem.model.breakage.law, p.br,
+                            CryProblem, st, t)
 
         _write_mesh_solvent_derivatives!(dstdt, CryProblem, st, t, net_growth_rates,
                                          solid_volume_rate)
