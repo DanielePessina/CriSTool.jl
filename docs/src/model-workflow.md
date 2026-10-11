@@ -10,10 +10,11 @@ optional slots use no-op laws.
 
 `RunConditions` describe one run: temperature, initial concentration, extra
 solvent values, an optional seed and the reactor operation.
-`simulate(model, conditions; solver, saveat)` returns a physical solution.
-`CrystallisationProblem(model, conditions; solver)` builds the configured
-problem explicitly. Advanced callers can still obtain a generated SciML ODE,
-control callbacks and convert its solution using the solver interfaces.
+`CrystallisationProblem(model, conditions, tspan)` is one configured run, and
+`solve(problem, solver; saveat)` returns its physical solution, as for an
+`ODEProblem`: the solver is chosen at solve time and `remake(problem; conditions,
+tspan, p)` changes the run. Advanced callers can still obtain a generated SciML
+ODE, control callbacks and convert its solution using the solver interfaces.
 
 A `CrystallisationExperiment` stores measured observables and the
 `RunConditions` it was run under. A `FromObservation(:name)` placeholder in

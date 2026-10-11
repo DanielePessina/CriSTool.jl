@@ -8,10 +8,19 @@ crystal_model = CrystallisationModel(LysozymeSystem();
     growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
 
 batch_run = RunConditions(temperature = 293.15, concentration = 18.0)
-trajectory = simulate(crystal_model, batch_run; solver = MoM(), saveat = 0.0:3600.0:28800.0)
-trajectory.success
-trajectory.concentration[end]
-trajectory.d43[end]
+problem = CrystallisationProblem(crystal_model, batch_run, (0.0, 28_800.0))
+trajectory = solve(problem, MoM(); saveat = 3600.0)
+trajectory.t                      # saved times (s)
+trajectory.retcode                # ReturnCode.Success
+successful_retcode(trajectory)
+trajectory[:concentration][end]   # same as trajectory.concentration[end]
+trajectory[:d43][end]
+
+mesh_trajectory = solve(problem, FiniteVol(meshsize = 100, lmax = 100e-6);
+    saveat = 0.0:600.0:28_800.0)
+mesh_trajectory[:d50q][end]
+cooling_run = merge(batch_run; temperature = LinearTemperature(298.15, -1e-4))
+quadrature_trajectory = solve(remake(problem; conditions = cooling_run), QMOM(nquadrature = 3))
 ```
 
 A model contains the material system and the bound kinetic laws. A law called
@@ -25,9 +34,20 @@ values through `crystal_model.growth.parameters`.
 operation=BatchOperation())` holds everything else about one run. A numeric
 temperature is Kelvin and becomes a `ConstantTemperature`; any
 `AbstractTemperature` is accepted. `merge(conditions; concentration = 20.0)`
-returns a copy with the named settings replaced. `simulate` returns the solution
-without the input problem. Always inspect `trajectory.success` before
-interpreting outputs.
+returns a copy with the named settings replaced.
+
+`CrystallisationProblem(model, conditions, tspan)` is one run over
+`tspan = (t0, tf)` seconds. Like an `ODEProblem` it holds no numerical method:
+`solve(problem, solver; saveat)` picks the solver, so one problem can be solved
+with several. `saveat` is a save step (t0, every step and tf are saved) or a
+vector of times inside `tspan`; without it every accepted step is saved. There is
+no dense interpolation `sol(t)`; choose `saveat` instead.
+`remake(problem; model, conditions, tspan, p)` returns a validated copy.
+Always check `successful_retcode(trajectory)` (or `trajectory.retcode`) before
+interpreting outputs. `trajectory[:name]` returns any named trajectory, the same
+as `observable_values(trajectory, :name)`: `:concentration`, `:d43`, `:d50q`
+(mesh solvers), `:moments`, or a configured solvent name. Fields such as
+`trajectory.concentration` remain available.
 
 For another material, supply a `CrystallisationSystem(saturation_model=...,
 crystal_density=..., volume_shape_factor=...)`. Molecular volume may be `nothing`
@@ -49,8 +69,8 @@ RunConditions
   operation:     BatchOperation()
 
 julia> trajectory
-CrystallisationSolution{MomentPopulation} — moments µ0 … µ4, success
-  time:          0.0 … 28800.0 s (9 saves)
+CrystallisationSolution{MomentPopulation} — moments µ0 … µ4, retcode = Success
+  t:             0.0 … 28800.0 s (9 saves)
   concentration: 18.0 → 7.8 kg/m³
   d43:           ...
   ODE:           ... RHS evaluations, ... accepted / ... rejected steps
@@ -67,8 +87,8 @@ seed_population = DistributionInitialCrystals(
     LogNormal(log(12e-6), 0.2); mass_concentration = 0.25)
 seeded_run = RunConditions(temperature = 293.15, concentration = 18.0,
     crystals = seed_population)
-seeded_trajectory = simulate(crystal_model, seeded_run;
-    solver = FiniteVol(meshsize = 400, lmax = 100e-6), saveat = [0.0, 3600.0])
+seeded_trajectory = solve(CrystallisationProblem(crystal_model, seeded_run, (0.0, 3600.0)),
+    FiniteVol(meshsize = 400, lmax = 100e-6); saveat = [0.0, 3600.0])
 ```
 
 Lengths are metres; solid mass concentration is kg/m³. Number weighting
@@ -82,7 +102,7 @@ Measured characteristics remain supported: `LogNormalInitialCrystals` requires
 mass, d43 and geometric standard deviation; `GaussianInitialCrystals` requires
 mass, d43 and standard deviation. In the model workflow they enter the same
 checked distribution builder. Mesh seeds report omitted number/mass fractions
-through `seed_domain_diagnostics`, and fail above `mass_loss_tolerance` (default
+through `seed_domain_diagnostics(solver, seed)`, and fail at `solve` above `mass_loss_tolerance` (default
 1e-4). Cell populations are integrated without rescaling lost mass. Mesh moment
 accuracy remains a numerical resolution question.
 
@@ -90,33 +110,36 @@ accuracy remains a numerical resolution question.
 
 Use MoM for compact scalar-rate moments, QMOM for quadrature reconstruction,
 seeded DQMOM for node-dependent growth, or FiniteVol/WENO for a resolved PSD.
-Unsupported combinations fail; solvers are never changed automatically.
+Unsupported combinations fail when `solve` is called; solvers are never changed
+automatically.
 See [Solvers](solvers.md) for details and [Operations](operations.md) for batch,
 MSMPR and fed-batch contracts. Supply `operation` to `RunConditions`.
 
 ## Advanced numerical control
 
-`simulate(model, conditions; solver, saveat, algorithm, solve_options,
-callback_factory)` shares the validated numerical solve policy with prepared
-fitting. Custom callbacks are constructed once per solve and compose with
-package callbacks. `CrystallisationProblem(model, conditions; solver)` builds the
-configured problem explicitly; `simulate(problem; saveat)` solves it.
-`crystallisation_odeproblem` and `crystallisation_solution` expose the generated
+`solve(problem, solver; saveat, alg, solve_options, callback_factory)` shares
+the validated numerical solve policy with prepared fitting. `alg` replaces the
+solver's default OrdinaryDiffEq algorithm (for example `alg = Rodas5P()` from
+its subpackage). Custom callbacks are constructed once per solve and compose
+with package callbacks. `crystallisation_odeproblem(problem, solver)` and
+`crystallisation_solution(problem, solver, ode_solution)` expose the generated
 SciML problem and physical reconstruction. Internal DQMOM coordinates differ
 from public weights and nodes; preserve that contract when solving directly.
 
-`runsimulation` is the low-level interface for automatic differentiation and
-sensitivity work: it takes a flat or `ComponentArray` kinetic parameter vector
-and returns `(problem, solution)`. `kinetic_parameter_vector(problem)` is the
-model's bound vector on `paramaxis(problem)`, the default `runsimulation(problem)`
-uses. Use `simulate` for ordinary simulations.
+The kinetic values are the problem's `p`, a `ComponentArray` on
+`paramaxis(problem)` that defaults to the model's bound values
+(`kinetic_parameter_vector(problem)`). `solve(remake(problem; p = values), solver; saveat)`
+solves for other values, given as a flat or `ComponentArray` vector; their
+element type may be a ForwardDiff dual, so this is the interface for automatic
+differentiation and sensitivity work.
 
 A configured problem stores each value once: `problem.model` (material system
-and bound kinetic laws), `problem.temp_profile`, `problem.initial_solvent_state`
-(read the concentration with `initial_concentration(problem)`),
-`problem.initial_population` (the seeded solver population block, or `nothing`),
-`problem.operation`, `problem.solver`, `problem.solvent_dynamics` and
-`problem.solid_mass_concentration_threshold`. Material properties are read
+and bound kinetic laws), `problem.conditions` (temperature, initial solvent
+values — read the concentration with `initial_concentration(problem)` — seed
+and operation), `problem.tspan`, `problem.p`, `problem.solvent_dynamics` and
+`problem.solid_mass_concentration_threshold`. The seed becomes a solver
+population only at `solve` time; `initial_state_from_characteristics(problem,
+solver, seed)` returns that state. Material properties are read
 from the system, e.g. `problem.model.system.crystal_density`. The gas and
 Boltzmann constants are the module constants `CriSTool.CRISTOOL_GAS_CONSTANT`
 and `CriSTool.CRISTOOL_BOLTZMANN_CONSTANT`.

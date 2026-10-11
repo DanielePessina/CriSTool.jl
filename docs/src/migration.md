@@ -6,7 +6,7 @@ This redesign intentionally changes the recommended interface:
 | --- | --- |
 | Kinetic law plus an ordered flat vector | `law(name = value, ...)` binds a `KineticModel` |
 | Rebuild physical keyword settings in each routine | Reuse `CrystallisationModel` |
-| `runsimulation` returns problem and solution | `simulate(model, conditions; solver, saveat)` returns solution |
+| `runsimulation` returns problem and solution | `solve(CrystallisationProblem(model, conditions, tspan), solver; saveat)` returns solution |
 | Separate fixed and free variants | Select a subset in a study specification |
 | Positional PE/MCMC/ABCDE routines | `prepare_fit` then `fit` |
 | Prior arrays indexed by kinetic block order | Named `BayesianSpec` or `ABCSpec` |
@@ -16,8 +16,8 @@ This redesign intentionally changes the recommended interface:
 | Anonymous ensemble matrices | Named joint `ParameterSamples` with sample IDs |
 
 The numerical solver implementations and solution accessors remain reusable.
-`runsimulation` stays exported as the low-level interface for automatic
-differentiation and sensitivity work. The vector-assembly helpers
+`solve(remake(problem; p = values), solver)` is the low-level interface for
+automatic differentiation and sensitivity work. The vector-assembly helpers
 (`prepare_loss`, `LossSetup`, `run_ensemble`) are internal and no longer
 exported. Advanced configured solver and SciML interfaces retain their distinct
 capabilities.
@@ -40,7 +40,7 @@ replacements are:
 | `chains_to_matrix` (export) | `result.samples`; the chain stays in `result.backend_result` |
 | `plot_measurements_vs_ensemble`, `plot_ps_measurements_vs_ensemble`, `plot_measurements_vs_simulation`, `plot_ps_measurements_vs_simulation`, `ChainMeasurementPlots`, `ABCplot` | `plot_predictions(predictions, experiments)` |
 | `ChainPairPlots`, DataFrame `plot_posterior_pairplot` methods | `plot_posterior_pairplot(result)` or `plot_posterior_pairplot(samples; prior, reference)` |
-| `CriSTool.forwardsensitivity(problem, saveat)` (SciMLSensitivity `ODEForwardSensitivityProblem`, MoM and FiniteVol batch only) | `ForwardDiff.jacobian(θ -> last(runsimulation(θ, problem; save_idx = saveat)).concentration, θ)`, which covers every solver and operation; see [Sensitivity analysis](sensitivity.md) |
+| `CriSTool.forwardsensitivity(problem, saveat)` (SciMLSensitivity `ODEForwardSensitivityProblem`, MoM and FiniteVol batch only) | `ForwardDiff.jacobian(θ -> solve(remake(problem; p = θ), solver; saveat).concentration, θ)`, which covers every solver and operation; see [Sensitivity analysis](sensitivity.md) |
 | `CRISTOOL_PALETTE`, terminal start/end panels, `outputdir` persistence | removed; plotting functions return a `Makie.Figure`; save it with `save(path, figure)` |
 | `ChainStatsPlots(chain; burnin, title, show_title, saveplot, savestring, savedir, showplot)` | `plot_chain_diagnostics(chain; burnin, title)`; an empty `title` draws none |
 | `savename`, `savedir`, `showplot` keywords of `plot_predictions` and `plot_posterior_pairplot` | removed; the figure is returned, never saved or displayed: `save(path, figure)`, `display(figure)` |
@@ -54,8 +54,8 @@ moved study settings into the specifications.
 | --- | --- |
 | `CrystallisationModel(system = s, nucleation = ..., growth = ...)` | `CrystallisationModel(s; nucleation = ..., growth = ...)` |
 | `KineticModel(nucl_CNT(); parameters = (ln_nucleation_prefactor = 38.0, surface_energy = 6e-4))` | `CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4)` (the long form still works) |
-| `CrystallisationProblem(model; initial_conditions = (concentration = 18.0,), temperature = ConstantTemperature(293.15), initial_crystals = seed, operation = op, solver)` | `CrystallisationProblem(model, RunConditions(temperature = 293.15, concentration = 18.0, crystals = seed, operation = op); solver)` |
-| `simulate(problem; saveat)` | `simulate(model, conditions; solver, saveat)`; `simulate(problem; saveat)` still works |
+| `CrystallisationProblem(model; initial_conditions = (concentration = 18.0,), temperature = ConstantTemperature(293.15), initial_crystals = seed, operation = op, solver)` | `CrystallisationProblem(model, RunConditions(temperature = 293.15, concentration = 18.0, crystals = seed, operation = op), tspan)`; the solver goes to `solve` |
+| `simulate(problem; saveat)` | `solve(problem, solver; saveat)` |
 | `CrystallisationExperiment(...; temperature, initial_from = (concentration = :concentration,), seed_shape, operation, relaxation_initial)` | `CrystallisationExperiment(; observables, exp_id, conditions = RunConditions(...), metadata)` |
 | `initial_from = (crystals = (mass_concentration = :seed_mass, d43 = :d43),)` with `seed_shape = (family = :lognormal, geometric_std = 1.2)` | `crystals = LogNormalInitialCrystals(mass_concentration = FromObservation(:seed_mass), d43 = FromObservation(:d43), geometric_std = 1.2)` |
 | `relaxation_initial = (...)` for steady fits | numeric values in the experiment's `RunConditions` |
@@ -111,7 +111,7 @@ flags became values rather than symbols.
 | `CriSTool.OrdinaryDiffEq.Euler()` and other algorithms through CriSTool's `OrdinaryDiffEq` dependency | load the algorithm's subpackage yourself (for example `using OrdinaryDiffEqLowOrderRK: Euler`, or `using OrdinaryDiffEq`); CriSTool depends only on `OrdinaryDiffEqTsit5` and `OrdinaryDiffEqSSPRK` |
 | `tolerance_mode = :auto` (`:scalar`) | `auto_abstol = true` (`false`) |
 | `QMOM(inversion_algorithm = :wheeler)`, solver `string` fields | removed |
-| `runsimulation(params, nucl, gr, agg, br, c0; ...)`, `runsimulation(params; nucl, gr, ..., initial_crystals)` | `runsimulation(params, problem; save_idx)` or `simulate(model, conditions; solver, saveat)` |
+| `runsimulation(params, nucl, gr, agg, br, c0; ...)`, `runsimulation(params; nucl, gr, ..., initial_crystals)` | `solve(remake(problem; p = params), solver; saveat)` |
 | `DistributionInitialCrystals(...; weighting = :number)`, `weighting = :volume` | `weighting = NumberWeighted()` (default), `weighting = VolumeWeighted()`; the `weighting` field holds the singleton |
 
 Every seed description now passes through one resolution. Lognormal and
@@ -173,21 +173,51 @@ Other changes to kinetic laws:
 ## Configured problems: one source per value
 
 `CrystallisationProblem` now holds the `CrystallisationModel` and the run
-state instead of copies of their fields, and its only public constructor is
-`CrystallisationProblem(model, conditions; solver, solvent_dynamics,
-solid_mass_concentration_threshold)`.
+conditions instead of copies of their fields, and its only public constructor is
+`CrystallisationProblem(model, conditions, tspan, p; solvent_dynamics,
+solid_mass_concentration_threshold)`; *SciML-shaped simulation* below lists the
+latest changes.
 
 | Before | After |
 | --- | --- |
-| `CrystallisationProblem(; kinetics_nucleationfunction, parameterset_nucleation, crystal_density, initial_concentration, ...)` | `CrystallisationProblem(model, RunConditions(...); solver)`; bind kinetics in the `CrystallisationModel` |
+| `CrystallisationProblem(; kinetics_nucleationfunction, parameterset_nucleation, crystal_density, initial_concentration, ...)` | `CrystallisationProblem(model, RunConditions(...), tspan)`; bind kinetics in the `CrystallisationModel` |
 | `problem.kinetics_growthfunction` (and the other four slots) | `problem.model.growth.law` |
 | `problem.parameterset_growth` (and the other four slots) | `kinetic_parameter_vector(problem).gr`, or `problem.model.growth.parameters` for the named values |
 | `problem.crystal_density`, `.volume_shape_factor`, `.molecular_volume`, `.saturation_model`, `.material_system` | `problem.model.system.crystal_density` (etc.); `problem.model.system` |
-| `problem.initial_concentration` | `initial_concentration(problem)` (stored once in `problem.initial_solvent_state`) |
-| `problem.initial_state` (full state vector) | `problem.initial_population` (population block, or `nothing`); reactor and solvent initial values live in the operation and `initial_solvent_state` |
+| `problem.initial_concentration` | `initial_concentration(problem)` (stored once in `problem.conditions`) |
+| `problem.initial_state` (full state vector) | `initial_state_from_characteristics(problem, solver, seed)`; the seed in `problem.conditions` becomes a solver population at `solve` time |
 | `problem.R_gas_constant`, `problem.boltzmann_constant` | module constants `CriSTool.CRISTOOL_GAS_CONSTANT`, `CriSTool.CRISTOOL_BOLTZMANN_CONSTANT` |
-| `crystallisation_odeproblem(solver, problem, saveat)` solver method | `crystallisation_odeproblem(solver, problem, saveat, kinetic_values)`; the kinetic vector becomes the ODE parameter `p` |
+| `crystallisation_odeproblem(solver, problem, saveat)` solver method | `crystallisation_odeproblem(problem, solver)`; `problem.p` becomes the ODE parameter `p` |
 | `system.offset` for an entry of `CrystallisationSystem(properties = (offset = ...,))` | `system.properties.offset` (`system_properties(context).offset` in callable laws) |
 | `context.system` in callable laws (`KineticContext` field) | removed; `system_properties(context)` for extra properties, `context.problem.model.system` for the system |
 | `CallableNucleation((values, context) -> 0.0; parameters = (;))` to switch nucleation off | `NoNucleation()`, the default `nucleation` of `CrystallisationModel`; built in and time invariant, so steady solves need no `autonomous = true` for it |
 | Unknown `CrystallisationProblem` keywords copied onto the problem | `ArgumentError` naming the unsupported settings |
+
+## SciML-shaped simulation
+
+Simulation now follows the SciML problem/solve pattern. A
+`CrystallisationProblem` no longer stores the solver; it gains a time span and
+the kinetic values `p`, and the solver is the second argument of `solve`, as
+the algorithm is for an `ODEProblem`. There are no deprecation shims.
+
+| Before | After |
+| --- | --- |
+| `simulate(model, conditions; solver, saveat)` | `solve(CrystallisationProblem(model, conditions, tspan), solver; saveat)` |
+| `CrystallisationProblem(model, conditions; solver)` | `CrystallisationProblem(model, conditions, tspan)`; pass the solver to `solve(problem, solver)` |
+| `simulate(problem; saveat)` | `solve(problem, solver; saveat)`; `saveat` is a step or a vector of times inside `tspan` |
+| `runsimulation(params, problem; save_idx)` | `solve(remake(problem; p = params), solver; saveat)` |
+| `runsimulation(problem; save_idx)` | `solve(problem, solver; saveat)` |
+| `algorithm = Tsit5()` on a direct simulation | `alg = Tsit5()` on `solve`; `prepare_fit` and `predict` keep `algorithm` |
+| `solution.time`, `ensemble.time` | `solution.t`, `ensemble.t` |
+| `solution.success` | `solution.retcode` (`ReturnCode.T`) or `successful_retcode(solution)` |
+| `observable_values(solution, :d43)` | also `solution[:d43]` (any named trajectory) |
+| `solve_steadystate(problem; options, initial_guess, algorithm)` | `solve(CrystallisationSteadyStateProblem(problem; options, u0), solver; alg)` |
+| `steady.success` | `steady.retcode` (`Success`, `MaxIters`, `Failure` or the ODE code) or `successful_retcode(steady)`; the ODE code is `steady.diagnostics.ode_retcode` |
+| `steady.equilibrium.time` | `steady.equilibrium.t` |
+| `crystallisation_odeproblem(problem, saveat, values)` | `crystallisation_odeproblem(remake(problem; p = values), solver)` |
+| `crystallisation_solution(problem, ode_solution)` | `crystallisation_solution(problem, solver, ode_solution)` |
+| `initial_state_from_characteristics(problem, seed)` | `initial_state_from_characteristics(problem, solver, seed)` |
+| `seed_domain_diagnostics(problem, seed)` | `seed_domain_diagnostics(solver, seed)` |
+| `problem.solver`, `problem.initial_population`, `problem.temp_profile` | the solver is a `solve` argument; `problem.conditions` holds temperature, solvent values, seed and operation |
+| `rate(law, values, prob::CrystallisationProblem, state, t)` in custom laws | leave `prob` untyped: laws receive the internal solve-time problem, read with `supersaturation(prob, state, t)`, `solvent_state(prob, state)` and `prob.model` |
+| `CrystallisationProblem(...)` throwing on a seed outside the mesh or an unsupported solver/kinetics combination | the same `ArgumentError` from `solve` |

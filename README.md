@@ -21,15 +21,20 @@ crystal_model = CrystallisationModel(LysozymeSystem();
     growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
 
 batch_run = RunConditions(temperature = 293.15, concentration = 18.0)
-trajectory = simulate(crystal_model, batch_run; solver = MoM(), saveat = 0.0:3600.0:28800.0)
-trajectory.concentration[end]
-trajectory.d43[end]
+problem = CrystallisationProblem(crystal_model, batch_run, (0.0, 28_800.0))
+trajectory = solve(problem, MoM(); saveat = 3600.0)
+successful_retcode(trajectory)
+trajectory[:concentration][end]
+trajectory[:d43][end]
 ```
 
 A model is a material system plus kinetic laws bound to named values. Calling a
 law with its parameter names binds them; `CNTNucleation()` alone is the unbound law.
 `RunConditions` hold everything else about a run: temperature, initial
-concentration, an optional seed and the reactor operation.
+concentration, an optional seed and the reactor operation. As with an
+`ODEProblem`, the problem holds no numerical method: the solver (`MoM()`,
+`QMOM()`, `DQMOM()`, `FiniteVol()`, `WENO()`) is the second argument of `solve`,
+and `remake(problem; conditions, tspan, p)` changes the run.
 
 ## Fit and predict
 
@@ -65,8 +70,8 @@ Plotting is a package extension: run `using CairoMakie` to enable
 
 Read the [development documentation](https://danielepessina.github.io/CriSTool.jl/dev/),
 the [model workflow guide](docs/src/model-workflow.md), and the
-[migration guide](docs/src/migration.md). `runsimulation` remains available as
-the low-level interface for automatic differentiation and sensitivity work.
+[migration guide](docs/src/migration.md). `solve(remake(problem; p = values), solver)`
+is the differentiable interface for automatic differentiation and sensitivity work.
 
 Run tests with `julia --project=. -e 'using Pkg; Pkg.test()'`.
 Build docs with `julia --project=docs docs/make.jl` after instantiating `docs`.

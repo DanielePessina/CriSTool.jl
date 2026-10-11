@@ -16,9 +16,9 @@ Key ideas:
   parameters: their names, order and count. It powers named fields such as
   `p.ln_nucleation_prefactor` and `p.surface_energy` in rate functions.
 - Model users bind values by name and never assemble vectors. The low-level
-  `runsimulation` interface (for automatic differentiation and sensitivity
-  work) builds a `ComponentArray` view over a flat parameter vector in the
-  order `[nucl; gr; diss; agg; br]`.
+  `remake(problem; p = values)` interface (for automatic differentiation and
+  sensitivity work) builds a `ComponentArray` view over a flat parameter vector
+  in the order `[nucl; gr; diss; agg; br]`.
 - To add a new model: subtype the right `Abstract*Function`, declare
   `paramaxis`, and implement the corresponding rate method.
 
@@ -137,7 +137,7 @@ using CriSTool, ComponentArrays
 
 paramaxis(model)                    # single-law axis, e.g. Axis(ln_nucleation_prefactor=1, surface_energy=2)
 paramaxis(nucl, gr, diss, agg, br)  # composite axis with one block per slot
-paramaxis(prob)                     # composite axis read off a CrystallisationProblem
+paramaxis(prob)                     # composite axis of a CrystallisationProblem (the layout of prob.p)
 ```
 
 Use the composite form to wrap a flat parameter vector with named slices:
@@ -178,8 +178,7 @@ struct CustomNucleation <: AbstractNucleationFunction end
 
 paramaxis(::CustomNucleation) = ComponentArrays.Axis(ln_prefactor = 1, nucleation_order = 2)
 
-function nucleationrate(nf::CustomNucleation, parameters,
-                        prob::CrystallisationProblem, state, t)
+function nucleationrate(nf::CustomNucleation, parameters, prob, state, t)
     p = named_parameters(nf, parameters)
     S = supersaturation(prob, state, t)
     return S > 1.001 ? exp(p.ln_prefactor) * (S - 1)^p.nucleation_order : 0.0
@@ -190,8 +189,7 @@ struct CustomGrowth <: AbstractScalarGrowthFunction end
 
 paramaxis(::CustomGrowth) = ComponentArrays.Axis(growth_coefficient = 1, growth_order = 2)
 
-function growthrate(gf::CustomGrowth, parameters,
-                    prob::CrystallisationProblem, state, t)
+function growthrate(gf::CustomGrowth, parameters, prob, state, t)
     p = named_parameters(gf, parameters)
     S = supersaturation(prob, state, t)
     return S > 1.001 ? p.growth_coefficient * (S - 1)^p.growth_order : 0.0
@@ -206,9 +204,15 @@ custom_model = CrystallisationModel(LysozymeSystem();
         ln_prefactor = 38.0, nucleation_order = 2.0)),
     growth = KineticModel(CustomGrowth(); parameters = (
         growth_coefficient = 1e-9 / 60, growth_order = 3.0)))
-solution = simulate(custom_model, RunConditions(temperature = 293.15, concentration = 18.0);
-    solver = MoM(), saveat = 0.0:3600.0:28800.0)
+custom_problem = CrystallisationProblem(custom_model,
+    RunConditions(temperature = 293.15, concentration = 18.0), (0.0, 28_800.0))
+solution = solve(custom_problem, MoM(); saveat = 3600.0)
 ```
+
+Rate methods receive the solve-time problem, whose state layout depends on the
+solver, so leave its argument untyped. Read it through
+`supersaturation(prob, state, t)`, `solvent_state(prob, state)`,
+`temperature(prob.temp_profile, t)` and `prob.model`.
 
 ## Aggregation and breakage
 

@@ -34,7 +34,8 @@ feed  = CrystallisationFeed(concentration = 2.0)                  # kg/m³, clea
 msmpr = MSMPROperation(volume = 2.0, inflow = 0.5, feed = feed)   # m³, m³/s
 msmpr_run = RunConditions(temperature = 293.15, concentration = 8.0, operation = msmpr)
 
-trajectory = simulate(msmpr_model, msmpr_run; solver = MoM(), saveat = 0.0:3600.0:21600.0)
+msmpr_problem = CrystallisationProblem(msmpr_model, msmpr_run, (0.0, 21_600.0))
+trajectory = solve(msmpr_problem, MoM(); saveat = 3600.0)
 ```
 
 The default `BatchOperation()` keeps the concentration-based batch equations;
@@ -94,20 +95,23 @@ at equilibrium.
 
 For an **autonomous fixed-flow MSMPR** (constant `volume`, constant `inflow`,
 constant feed concentration, and time-invariant kinetics), use the explicit
-steady-state runner on a problem built from the model and run:
+steady-state counterpart of the transient problem:
 
 ```julia
-msmpr_problem = CrystallisationProblem(msmpr_model, msmpr_run; solver = MoM())
-steady = solve_steadystate(msmpr_problem;
+steady_problem = CrystallisationSteadyStateProblem(msmpr_problem;
     options = SteadyStateOptions(relaxation_horizon = 400.0))
+steady = solve(steady_problem, MoM())
+steady.retcode                       # ReturnCode.Success
 steady.equilibrium.concentration     # scalar kg/m³
 steady.equilibrium.d43               # scalar m
 steady.product.dissolved_solute_flow  # kg/s leaving in the liquid
 steady.diagnostics.converged
 ```
 
-`solve_steadystate` relaxes the generated dynamics until the scaled full-state
-RHS residual is within tolerance. `steady.equilibrium` holds the
+`solve(steady_problem, solver)` relaxes the generated dynamics until the scaled
+full-state RHS residual is within tolerance; the problem's `tspan` is not used.
+SciMLBase's `SteadyStateProblem` wraps an `ODEFunction` and an initial state,
+both of which depend on the solver here, so CriSTool owns the steady type. `steady.equilibrium` holds the
 equilibrium as plain values (`.concentration`, `.d43`); `.moments` is one
 vector. Product
 flows sit in `steady.product` (`dissolved_solute_flow`, `solid_mass_flow`), the
@@ -115,11 +119,15 @@ hydraulics in `steady.hydraulics`, and convergence, residual norms and balance
 checks in `steady.diagnostics`; `steady.solution` is the endpoint as a
 one-point solution. If a finite relaxation horizon ends before convergence or a
 physical/balance check fails, the call throws `SteadyStateConvergenceError`,
-which carries the unsuccessful result in its `solution` field
-(`success = false`). `SteadyStateOptions` holds `relaxation_horizon`,
+which carries the unsuccessful result in its `solution` field. Its `retcode`
+says why: `MaxIters` when the horizon ran out before the residual converged,
+`Failure` for an invalid physical state or flow balance, or the ODE code when
+the integration failed (`steady.diagnostics.ode_retcode` keeps the raw ODE
+code). `SteadyStateOptions` holds `relaxation_horizon`,
 `minimum_relaxation`, `residual_reltol`, `residual_abstol`, `residual_scales`,
-`autonomous` and `balance_reltol`; `initial_guess` is a keyword of
-`solve_steadystate`. The default relaxation horizon is `100 × residence time`
+`autonomous` and `balance_reltol`; an initial guess is the `u0` keyword of
+`CrystallisationSteadyStateProblem`, a complete state in the solver's layout.
+The default relaxation horizon is `100 × residence time`
 for direct solving and prepared steady inference; residual tolerances default
 to `1e-10`/`1e-12`.
 
@@ -134,7 +142,7 @@ and retains the reason in prediction diagnostics.
 Opaque time profiles and user-defined kinetics require
 `SteadyStateOptions(autonomous = true)` as an explicit declaration that they are
 time invariant; the declaration is the caller's responsibility. Batch and
-fed-batch runs are transient: use `simulate`. See
+fed-batch runs are transient: use `solve(problem, solver)`. See
 [Tutorial 9](https://github.com/DanielePessina/CriSTool.jl/blob/main/examples/Tutorial%209%20MSMPR%20Dynamic%20versus%20Steady%20State.jl)
 for a dynamic-vs-steady comparison, and the [API reference](api/simulation.md)
 for the result type.

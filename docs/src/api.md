@@ -6,7 +6,7 @@ changing or composing.
 
 | Need | Reference |
 | --- | --- |
-| build a model, set run conditions, simulate, inspect results | [Simulation and results](api/simulation.md) |
+| build a model, set run conditions, solve, inspect results | [Simulation and results](api/simulation.md) |
 | relax a constant autonomous MSMPR to steady state | [Simulation and results](api/simulation.md) |
 | set temperature or solubility | [Process conditions](api/conditions.md) |
 | choose or extend kinetic models | [Kinetic models and rates](api/kinetics.md) |
@@ -28,8 +28,10 @@ joint uncertainty draws.
 ## Cross-cutting contracts
 
 - Numeric SI: seconds, Kelvin, kg/m³, metres, rates in m/s.
-- `simulate(model, conditions; solver, saveat)` returns the physical solution;
-  `runsimulation` is the low-level interface for autodiff and sensitivity work.
+- `solve(CrystallisationProblem(model, conditions, tspan), solver; saveat)`
+  returns the physical solution with `t`, `retcode` and named access
+  `sol[:concentration]`; `solve(remake(problem; p = values), solver)` is the
+  interface for autodiff and sensitivity work.
 - `RunConditions` hold temperature, initial concentration and solvent values,
   the seed and the operation; `FromObservation` reads a value from time-zero data.
 - `Observable` is a time series, including one-point measurements.

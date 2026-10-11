@@ -2,9 +2,9 @@
 
 Sensitivity analysis evaluates how changes in kinetic parameters affect a
 chosen simulation output. The package supplies the forward model through
-`runsimulation(parameters, problem)`, the low-level flat-vector interface
-intended for automatic differentiation and sensitivity work (use `simulate`
-with a `CrystallisationModel` for ordinary runs); the sampling and sensitivity estimators come from
+`solve(remake(problem; p = parameters), solver)`, which replaces the problem's
+kinetic values with a flat vector and accepts dual numbers for automatic
+differentiation; the sampling and sensitivity estimators come from
 GlobalSensitivity.jl and QuasiMonteCarlo.jl.
 
 Local (forward) sensitivities are ForwardDiff derivatives of the same map;
@@ -31,12 +31,12 @@ using Distributions
 baseline_model = CrystallisationModel(LysozymeSystem();
     nucleation = CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 0.0007),
     growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
-problem = CrystallisationProblem(baseline_model,
-    RunConditions(temperature = 293.15, concentration = 18.0); solver = MoM())
 save_grid = 0.0:360.0:21600.0
+problem = CrystallisationProblem(baseline_model,
+    RunConditions(temperature = 293.15, concentration = 18.0), (0.0, last(save_grid)))
 
 simulate_terminal_concentration = function (parameters)
-    _, solution = runsimulation(parameters, problem; save_idx = save_grid)
+    solution = solve(remake(problem; p = parameters), MoM(); saveat = save_grid)
     return solution.concentration[end]
 end
 ```
@@ -44,17 +44,17 @@ end
 ## Local sensitivities
 
 Differentiate
-`runsimulation(parameters, problem)` with ForwardDiff to get, for example, the
-sensitivity of the concentration at every save time to every kinetic parameter.
-This works for every solver, operation and kinetic law that `runsimulation`
-supports:
+`solve(remake(problem; p = parameters), solver)` with ForwardDiff to get, for
+example, the sensitivity of the concentration at every save time to every
+kinetic parameter. This works for every solver, operation and kinetic law that
+`solve` supports:
 
 ```julia
 import ForwardDiff
 
 save_times = [0.0, 3600.0, 7200.0, 10800.0]
 concentration_of(parameters) =
-    last(runsimulation(parameters, problem; save_idx = save_times)).concentration
+    solve(remake(problem; p = parameters), MoM(); saveat = save_times).concentration
 # Row i, column j is dC(save_times[i]) / d parameters[j].
 local_sensitivities = ForwardDiff.jacobian(concentration_of,
     collect(kinetic_parameter_vector(problem)))

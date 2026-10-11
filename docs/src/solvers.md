@@ -17,10 +17,13 @@ quadrature output.
 
 ## Outputs by solver
 
-Every solver returns a `CrystallisationSolution`. The shared fields are
-`time`, `concentration`, `solvent_state`, `reactor_state`, the moment-derived
-sizes `d10`, `d32`, `d43`, `moment2`, `final_state`, `ode_stats` and
-`success`. The solver-specific data live in `solution.population`:
+Every solver returns a `CrystallisationSolution` from
+`solve(problem, solver; saveat)`. The shared fields are `t`, `concentration`,
+`solvent_state`, `reactor_state`, the moment-derived sizes `d10`, `d32`, `d43`,
+`moment2`, `final_state`, `ode_stats` and `retcode` (check it with
+`successful_retcode(solution)`). `solution[:name]` reads any named trajectory
+without depending on the solver. The solver-specific data live in
+`solution.population`:
 
 - **MoM**: `MomentPopulation` with the raw `moments` (`µ0..µ_nmoments`).
 - **QMOM**: `QuadraturePopulation` with the raw `moments`, the reconstructed
@@ -143,8 +146,8 @@ seeded_run = RunConditions(temperature = 293.15, concentration = 20.0,
     crystals = LogNormalInitialCrystals(
         mass_concentration = 0.25, d43 = 12e-6, geometric_std = 1.25))
 
-solution = simulate(growth_only_model, seeded_run;
-    solver = DQMOM(nquadrature = 3), saveat = 0.0:3600.0:14400.0)
+seeded_problem = CrystallisationProblem(growth_only_model, seeded_run, (0.0, 14_400.0))
+solution = solve(seeded_problem, DQMOM(nquadrature = 3); saveat = 3600.0)
 
 solution.population.nodes[:, end]
 solution.population.weights[:, end]
@@ -161,26 +164,24 @@ crystal_model = CrystallisationModel(LysozymeSystem();
     growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
 batch_run = RunConditions(temperature = 293.15, concentration = 18.0)
 
-solution = simulate(crystal_model, batch_run;
-    solver = QMOM(nquadrature = 3), saveat = 0.0:3600.0:28800.0)
+batch_problem = CrystallisationProblem(crystal_model, batch_run, (0.0, 28_800.0))
+solution = solve(batch_problem, QMOM(nquadrature = 3); saveat = 3600.0)
 
 @show solution.population.moments[:, end]
-@show quadrature(solution, length(solution.time)).nodes
+@show quadrature(solution, length(solution.t)).nodes
 @show solution.d43[end]
 ```
 
 ## Example: choosing solvers
 
-The model and conditions stay the same; only the `solver` keyword changes.
+The problem stays the same; only the solver passed to `solve` changes.
 
 ```julia
 save_grid = 0.0:3600.0:28800.0
 
-sol_mom  = simulate(crystal_model, batch_run; solver = MoM(), saveat = save_grid)
-sol_fv   = simulate(crystal_model, batch_run;
-    solver = FiniteVol(meshsize = 100, lmax = 50e-6), saveat = save_grid)
-sol_weno = simulate(crystal_model, batch_run;
-    solver = WENO(meshsize = 100, lmax = 50e-6), saveat = save_grid)
+sol_mom  = solve(batch_problem, MoM(); saveat = save_grid)
+sol_fv   = solve(batch_problem, FiniteVol(meshsize = 100, lmax = 50e-6); saveat = save_grid)
+sol_weno = solve(batch_problem, WENO(meshsize = 100, lmax = 50e-6); saveat = save_grid)
 ```
 
 ## Overriding the time-stepper
@@ -188,8 +189,8 @@ sol_weno = simulate(crystal_model, batch_run;
 Override the ODE time-stepping algorithm by setting the solver's
 `timestepping_algorithm` field to an OrdinaryDiffEq algorithm instance, such
 as `Tsit5()`, `SSPRK43()`, `Kvaerno5()` or `KenCarp4()`. The default
-`nothing` selects the solver-specific algorithm. A per-call `algorithm`
-keyword of `simulate` takes precedence over both.
+`nothing` selects the solver-specific algorithm. The per-call `alg` keyword of
+`solve` takes precedence over both.
 
 CriSTool depends only on the OrdinaryDiffEq subpackages that hold its defaults
 (`OrdinaryDiffEqTsit5`, `OrdinaryDiffEqSSPRK`). To use another algorithm, add
@@ -200,8 +201,10 @@ the subpackage that defines it to your environment, for example
 ```julia
 using OrdinaryDiffEqSSPRK: SSPRK43
 
-sol = simulate(crystal_model, batch_run;
-    solver = FiniteVol(meshsize = 200, lmax = 50e-6,
-                       timestepping_algorithm = SSPRK43()),
-    saveat = 0.0:3600.0:28800.0)
+sol = solve(batch_problem,
+    FiniteVol(meshsize = 200, lmax = 50e-6, timestepping_algorithm = SSPRK43());
+    saveat = 3600.0)
+# equivalently, per call:
+sol = solve(batch_problem, FiniteVol(meshsize = 200, lmax = 50e-6); saveat = 3600.0,
+    alg = SSPRK43())
 ```

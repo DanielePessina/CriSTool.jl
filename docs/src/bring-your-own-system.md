@@ -43,7 +43,7 @@ takes an additional length in metres and fills solver-owned buffers internally.
 Custom types and `paramaxis`/rate dispatch remain available for specialised laws.
 
 Additional solvent variables use `RunConditions(solvent = (pH = 7.0,))` and a
-custom `solvent_dynamics` callable, passed to `CrystallisationProblem` or to
+custom `solvent_dynamics` callable, passed as a `CrystallisationProblem` keyword or to
 `prepare_fit` through `problem_options = (solvent_dynamics = ...,)`. Experiments
 read those initial values from time-zero data with `solvent = (pH =
 FromObservation(:pH),)`. Custom observables use local `observable_projections`
