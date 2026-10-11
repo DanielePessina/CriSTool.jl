@@ -148,20 +148,19 @@ function _solve_ensemble!(::EnsembleSerial, sample_solutions, parameter_samples,
 end
 
 function _solve_ensemble!(::EnsembleThreads, sample_solutions, parameter_samples, prepared_solves)
-    private_solves = _cristool_once_per_task(typeof(prepared_solves)) do
-        deepcopy(prepared_solves)
-    end
+    private_solves = _private_copy_pool(prepared_solves, min(Threads.nthreads(), length(sample_solutions)))
+    solution_indices = CartesianIndices(sample_solutions)
     Threads.@threads for flat_index in eachindex(sample_solutions)
-        run_index, sample_index = Tuple(CartesianIndices(sample_solutions)[flat_index])
-        task_solves = private_solves()
-        sample_solutions[run_index, sample_index] = _solve_prepared(task_solves,
-            task_solves.runs[run_index], collect(view(parameter_samples, :, sample_index)))
+        run_index, sample_index = Tuple(solution_indices[flat_index])
+        sample_solutions[run_index, sample_index] = _with_private_copy(private_solves) do task_solves
+            _solve_prepared(task_solves, task_solves.runs[run_index],
+                collect(view(parameter_samples, :, sample_index)))
+        end
     end
     return sample_solutions
 end
 
-_solve_ensemble!(unsupported::SciMLBase.BasicEnsembleAlgorithm, args...) =
-    throw(ArgumentError("parallel must be EnsembleSerial() or EnsembleThreads(), got $(typeof(unsupported))."))
+_solve_ensemble!(unsupported::SciMLBase.BasicEnsembleAlgorithm, args...) = _unsupported_parallel(unsupported)
 
 function _prediction_ensemble(simulation_mode::AbstractSimulationMode, prepared_run::PreparedRun,
                               run_solutions::AbstractVector, observables)

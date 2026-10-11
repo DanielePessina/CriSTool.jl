@@ -1,7 +1,9 @@
 """
 Approximate Bayesian computation samplers used by `fit(::PreparedFit{<:Any, <:ABCSpec})`.
 To add a sampler, define a new `<:AbstractABCSampler` struct and a `_runsampler`
-method returning `(result, reached_target)`; `result.P` must hold the particles.
+method returning the result; `result.P` must hold the particles. The runner receives
+`reference_loss`, a zero-argument function evaluating the loss at the model's current
+values, so samplers that do not need it never pay for the solve.
 """
 
 function _abc_particles_matrix(particles)
@@ -53,23 +55,22 @@ Base.@kwdef struct ABCDETurnerSampler <: AbstractABCSampler
     burnin_frac::Float64 = 0.3
 end
 
-# Sampler-specific call into KissABC. Returns (res, reached_ϵ).
-function _runsampler(s::ABCDESampler, prior, lossfn, target, optimallossfunction;
+# Sampler-specific call into KissABC. Returns the sampler result.
+function _runsampler(s::ABCDESampler, prior, lossfn, target, reference_loss;
                      nparticles, generations, HPC, earlystop)
-    res = ABCDE(prior, lossfn, target;
-                nparticles = nparticles, generations = generations,
-                α = s.α, HPC = HPC, earlystop = earlystop)
-    return res, res.reached_ϵ
+    return ABCDE(prior, lossfn, target;
+                 nparticles = nparticles, generations = generations,
+                 α = s.α, HPC = HPC, earlystop = earlystop)
 end
 
-function _runsampler(s::ABCDETurnerSampler, prior, lossfn, target, optimallossfunction;
+function _runsampler(s::ABCDETurnerSampler, prior, lossfn, target, reference_loss;
                      nparticles, generations, HPC, earlystop)
+    optimallossfunction = reference_loss()
     δ_derived = max(target - optimallossfunction, eps())
-    res = ABCDE_Turner(prior, lossfn, target;
+    return ABCDE_Turner(prior, lossfn, target;
                        nparticles = nparticles, generations = generations,
                        K = s.K, p_migration = s.p_migration, p_crossover = s.p_crossover,
                        κ = s.κ, γ2_burnin = s.γ2_burnin, kernel = s.kernel,
                        δ = δ_derived, best_cost = optimallossfunction,
                        burnin_frac = s.burnin_frac, earlystop = earlystop, HPC = HPC)
-    return res, res.reached_ϵ
 end

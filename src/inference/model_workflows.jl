@@ -132,6 +132,9 @@ function _kinetic_selection(crystal_model::CrystallisationModel, selected_names:
     return KineticSelection(collect(String, selected_names), selected_indices, first(getaxes(model_values)), collect(model_values))
 end
 
+"""The model's current values of the selected parameters."""
+_selected_baseline(kinetic_selection::KineticSelection) = kinetic_selection.baseline[kinetic_selection.indices]
+
 function _expanded_parameters(kinetic_selection::KineticSelection, selected_values::AbstractVector)
     length(selected_values) == length(kinetic_selection.indices) || throw(DimensionMismatch("Selected parameter count mismatch."))
     scalar_type = promote_type(eltype(selected_values), eltype(kinetic_selection.baseline))
@@ -290,7 +293,7 @@ function fit(supplied_fit::PreparedFit{<:Any, <:OptimisationSpec}; threaded::Boo
     prepared_fit = _with_parallel(supplied_fit, parallel)
     bound_pairs = last.(_named_parameter_leaves(prepared_fit.specification.bounds))
     lower_bounds, upper_bounds = first.(bound_pairs), last.(bound_pairs)
-    starting_values = prepared_fit.selection.baseline[prepared_fit.selection.indices]
+    starting_values = _selected_baseline(prepared_fit.selection)
     all(lower_bounds .<= starting_values .<= upper_bounds) || throw(ArgumentError("Current selected values must lie within bounds."))
     return _optimise(prepared_fit.specification.algorithm, prepared_fit, lower_bounds, upper_bounds,
         starting_values; threaded)
@@ -328,20 +331,18 @@ end
 function _optimise(supplied_algorithm::Metaheuristics.Algorithm, prepared_fit, lower_bounds, upper_bounds,
                    starting_values; threaded::Bool)
     private_algorithm = _configured_mh_algorithm(supplied_algorithm; parallel_evaluation = threaded)
-    private_fit = _cristool_once_per_task(typeof(prepared_fit)) do
-        deepcopy(prepared_fit)
-    end
-    candidate_objective = _MetaheuristicsObjective(private_algorithm.parameters, prepared_fit, private_fit)
+    private_fits = _private_copy_pool(prepared_fit, threaded ? Threads.nthreads() : 0)
+    candidate_objective = _MetaheuristicsObjective(private_algorithm.parameters, prepared_fit, private_fits)
     final_state = Metaheuristics.optimize(candidate_objective,
         Metaheuristics.boxconstraints(lower_bounds, upper_bounds), private_algorithm)
     return _metaheuristics_fit_results(private_algorithm.parameters, prepared_fit, final_state)
 end
 
-"""Metaheuristics objective: one candidate serially, or a population in parallel on per-task copies."""
-struct _MetaheuristicsObjective{Parameters, Fit, PrivateFit}
+"""Metaheuristics objective: one candidate serially, or a population in parallel on pooled private copies."""
+struct _MetaheuristicsObjective{Parameters, Fit}
     parameters::Parameters
     prepared_fit::Fit
-    private_fit::PrivateFit
+    private_fits::Channel{Fit}
 end
 
 # Metaheuristics requires a method accepting `Any`; the argument shape then selects the evaluation.
@@ -354,8 +355,10 @@ _evaluate_candidates(candidate_objective::_MetaheuristicsObjective, candidate_va
 function _evaluate_candidates(candidate_objective::_MetaheuristicsObjective, candidate_values::AbstractMatrix)
     candidate_scores = Vector{_candidate_score_type(candidate_objective.parameters)}(undef, size(candidate_values, 1))
     Threads.@threads for candidate_index in axes(candidate_values, 1)
-        candidate_scores[candidate_index] = _candidate_score(candidate_objective.parameters,
-            candidate_objective.private_fit(), collect(view(candidate_values, candidate_index, :)))
+        candidate_scores[candidate_index] = _with_private_copy(candidate_objective.private_fits) do private_fit
+            _candidate_score(candidate_objective.parameters, private_fit,
+                collect(view(candidate_values, candidate_index, :)))
+        end
     end
     return _population_scores(candidate_objective.parameters, candidate_scores)
 end
@@ -377,14 +380,23 @@ _population_scores(::Metaheuristics.NSGA2, candidate_scores) =
 _metaheuristics_fit_results(::Metaheuristics.AbstractParameters, prepared_fit, final_state) =
     _model_fit_result(prepared_fit, Metaheuristics.minimizer(final_state), final_state)
 function _metaheuristics_fit_results(::Metaheuristics.NSGA2, prepared_fit, final_state)
-    pareto_values = Metaheuristics.positions(Metaheuristics.get_non_dominated_solutions(final_state.population))
-    return [_model_fit_result(prepared_fit, collect(candidate_row), final_state) for candidate_row in eachrow(pareto_values)]
+    pareto_solutions = Metaheuristics.get_non_dominated_solutions(final_state.population)
+    pareto_values = Metaheuristics.positions(pareto_solutions)
+    # The stored objective rows are the `loss_terms` scored for these exact candidates.
+    pareto_objectives = Metaheuristics.fvals(pareto_solutions)
+    objective_names = Tuple(prepared_fit.setup.observable_names)
+    return [_model_fit_result(prepared_fit, collect(candidate_values),
+                NamedTuple{objective_names}(Tuple(candidate_objectives)), final_state)
+            for (candidate_values, candidate_objectives) in zip(eachrow(pareto_values), eachrow(pareto_objectives))]
 end
 
-function _model_fit_result(prepared_fit, optimal_values, backend_result)
+_model_fit_result(prepared_fit, optimal_values, backend_result) =
+    _model_fit_result(prepared_fit, optimal_values, loss_terms(prepared_fit, optimal_values), backend_result)
+
+function _model_fit_result(prepared_fit, optimal_values, objective_terms, backend_result)
     fitted_model = _selected_model(prepared_fit.model, prepared_fit.selection, optimal_values)
     return FitResult(fitted_model, _selected_named_values(prepared_fit.selection, optimal_values),
-        loss_terms(prepared_fit, optimal_values), backend_result, prepared_fit)
+        objective_terms, backend_result, prepared_fit)
 end
 
 """Joint parameter draws: selected named paths in rows, common sample IDs in columns."""
@@ -458,10 +470,10 @@ function fit(supplied_fit::PreparedFit{<:Any, <:ABCSpec}; threaded::Bool = false
     prepared_fit = _with_parallel(supplied_fit, parallel)
     fit_specification = prepared_fit.specification
     joint_prior = product_distribution(last.(_named_parameter_leaves(fit_specification.priors)))
-    reference_values = prepared_fit.selection.baseline[prepared_fit.selection.indices]
-    abc_result, reached_target = _runsampler(fit_specification.sampler, joint_prior,
+    reference_values = _selected_baseline(prepared_fit.selection)
+    abc_result = _runsampler(fit_specification.sampler, joint_prior,
         candidate_values -> loss(prepared_fit, collect(candidate_values)), fit_specification.target,
-        loss(prepared_fit, reference_values); nparticles = fit_specification.n_particles,
+        () -> loss(prepared_fit, reference_values); nparticles = fit_specification.n_particles,
         generations = fit_specification.n_generations, HPC = threaded, earlystop = fit_specification.early_stop)
     sample_matrix = _abc_particles_matrix(abc_result.P)
     sample_matrix === nothing && throw(ArgumentError("ABC returned no posterior particles."))

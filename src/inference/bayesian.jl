@@ -23,6 +23,25 @@ function _cristool_once_per_task(initializer, ::Type{T}) where {T}
     return _CristoolOncePerTask{T, typeof(initializer)}(initializer)
 end
 
+"""A bounded pool of `copy_count` (at least one) private deep copies of `template`."""
+function _private_copy_pool(template::T, copy_count::Integer) where {T}
+    pool = Channel{T}(max(copy_count, 1))
+    for _ in 1:copy_count
+        put!(pool, deepcopy(template))
+    end
+    return pool
+end
+
+"""Run `evaluate(private_copy)` on a copy borrowed from `pool`, returning it afterwards."""
+function _with_private_copy(evaluate, pool::Channel)
+    private_copy = take!(pool)
+    try
+        return evaluate(private_copy)
+    finally
+        put!(pool, private_copy)
+    end
+end
+
 """Task-local memoized initializer, ported from `Base.OncePerTask` (1.12+)."""
 struct _CristoolOncePerTask{T, F}
     initializer::F
@@ -31,7 +50,8 @@ end
     get!(_opt.initializer, task_local_storage(), _opt)::T
 end
 
-"""Build the Turing model with explicit priors for a Bayesian prepared fit.
+"""Build the Turing model with explicit priors for a Bayesian prepared fit; an optional
+second argument selects the chain ensemble (`MCMCSerial()` or `MCMCThreads()`).
 
 Methods are provided by the `CriSToolTuringExt` package extension; load it with
 `using Turing`.

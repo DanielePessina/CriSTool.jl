@@ -55,20 +55,32 @@ end
 _nuts_sampler(::Nothing) = Turing.NUTS()
 _nuts_sampler(sampler) = sampler
 
-function CriSTool.nuts_model(prepared_fit::PreparedFit{<:Any, <:BayesianSpec})
-    prior_values = last.(_named_parameter_leaves(prepared_fit.specification.priors))
-    private_fit = _cristool_once_per_task(typeof(prepared_fit)) do
+# Serial sampling evaluates on the caller's task, so the fit is used directly and no
+# copy stays pinned in the caller's task-local storage. Threaded chains each take a
+# private per-task copy of the mutable solve templates.
+_fit_per_task(prepared_fit, ::Turing.MCMCSerial) = Base.Returns(prepared_fit)
+_fit_per_task(prepared_fit, ::Turing.MCMCThreads) =
+    _cristool_once_per_task(typeof(prepared_fit)) do
         deepcopy(prepared_fit)
     end
-    return _cristool_nuts_loss_model(prior_values, private_fit)
+
+_chain_ensemble(threaded::Bool) = threaded ? Turing.MCMCThreads() : Turing.MCMCSerial()
+
+CriSTool.nuts_model(prepared_fit::PreparedFit{<:Any, <:BayesianSpec}) =
+    nuts_model(prepared_fit, Turing.MCMCSerial())
+
+function CriSTool.nuts_model(prepared_fit::PreparedFit{<:Any, <:BayesianSpec},
+        ensemble::Union{Turing.MCMCSerial, Turing.MCMCThreads})
+    prior_values = last.(_named_parameter_leaves(prepared_fit.specification.priors))
+    return _cristool_nuts_loss_model(prior_values, _fit_per_task(prepared_fit, ensemble))
 end
 
 function CriSTool._nuts_posterior_chain(prepared_fit::PreparedFit{<:Any, <:BayesianSpec},
         rng::Random.AbstractRNG, threaded::Bool; kwargs...)
     fit_specification = prepared_fit.specification
-    return Turing.sample(rng, nuts_model(prepared_fit), _nuts_sampler(fit_specification.sampler),
-        threaded ? Turing.MCMCThreads() : Turing.MCMCSerial(),
-        fit_specification.n_samples, fit_specification.n_chains; kwargs...)
+    ensemble = _chain_ensemble(threaded)
+    return Turing.sample(rng, nuts_model(prepared_fit, ensemble), _nuts_sampler(fit_specification.sampler),
+        ensemble, fit_specification.n_samples, fit_specification.n_chains; kwargs...)
 end
 
 # Resolve the method ambiguity between the vendored AIS step and DynamicPPL's

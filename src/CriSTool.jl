@@ -52,10 +52,6 @@ const CRISTOOL_DISSOLUTION_EQUILIBRIUM_TOLERANCE = 1e-3
 const CRISTOOL_DISSOLUTION_LREF = 1e-6
 const CRISTOOL_FAILED_SIMULATION_PENALTY = 1e6
 const CRISTOOL_MAX_SOLVER_ITERS = 1e8
-const CRISTOOL_MAX_PREPARED_SOLVER_ITERS = 1_000
-const CRISTOOL_MAX_PREPARED_DISCRETIZED_SOLVER_ITERS = 10_000
-const CRISTOOL_MAX_PREPARED_SOLVER_SECONDS = 5.0
-const CRISTOOL_MAX_OPTIMISER_CALLS = 1e18
 const CRISTOOL_PRIOR_PLOT_SAMPLES = 2^18
 
 # Universal physical constants (SI).
@@ -172,7 +168,6 @@ include("solvers/steady_state.jl")
 
 include("vendor/KissABC.jl")
 using .KissABC
-using .KissABC: ABCDE, smc, AIS, ApproxPosterior, ApproxKernelizedPosterior
 
 # Inference and posterior utilities.
 include("inference/parameter_estimation.jl")

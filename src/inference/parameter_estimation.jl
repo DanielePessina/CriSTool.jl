@@ -245,7 +245,6 @@ function _checked_weight(weight)
     return Float64(weight)
 end
 
-_kinetic_parameter_count(configured_problem::CrystallisationProblem) = _parameter_count(configured_problem)
 _kinetic_parameter_count(prepared_run::PreparedRun) = ComponentArrays.last_index(prepared_run.parameter_axis)
 _kinetic_parameter_count(prepared_solves::PreparedSolves) = _kinetic_parameter_count(first(prepared_solves.runs))
 _kinetic_parameter_count(setup::LossSetup) = _kinetic_parameter_count(setup.solves)
@@ -408,7 +407,7 @@ _experiment_solutions(::EnsembleSerial, prepared_solves::PreparedSolves, params)
     (_solve_prepared(prepared_solves, prepared_run, params) for prepared_run in prepared_solves.runs)
 
 function _experiment_solutions(::EnsembleThreads, prepared_solves::PreparedSolves, params)
-    run_solutions = Vector{Any}(undef, length(prepared_solves.runs))
+    run_solutions = Vector{AbstractSolution}(undef, length(prepared_solves.runs))
     run_failures = Vector{Any}(nothing, length(prepared_solves.runs))
     Threads.@threads for run_index in eachindex(prepared_solves.runs)
         # Keep each run's exception so the first one in run order is rethrown as it is, not
@@ -425,6 +424,10 @@ function _experiment_solutions(::EnsembleThreads, prepared_solves::PreparedSolve
 end
 
 _experiment_solutions(unsupported::SciMLBase.BasicEnsembleAlgorithm, prepared_solves, params) =
+    _unsupported_parallel(unsupported)
+
+"""Reject an ensemble algorithm other than `EnsembleSerial()` or `EnsembleThreads()`."""
+_unsupported_parallel(unsupported::SciMLBase.BasicEnsembleAlgorithm) =
     throw(ArgumentError("parallel must be EnsembleSerial() or EnsembleThreads(), got $(typeof(unsupported))."))
 
 """
@@ -497,35 +500,3 @@ exceptions propagate to the caller.
 """
 loss(lossfunction::Union{MeanAbsoluteError, GaussianNLL}, setup::LossSetup, params) =
     sum(_loss_objectives(lossfunction, setup, params))
-
-# Preserve caller configuration while isolating mutable status, parameters and RNG.
-function _configured_mh_algorithm(supplied_algorithm;
-                                  nparticles = nothing, generations = nothing,
-                                  parallel_evaluation = nothing, verbosity = nothing,
-                                  HPC = false)
-    run_algorithm = if supplied_algorithm === nothing
-        Metaheuristics.DE(; N = 128, strategy = :best1,
-            options = Metaheuristics.Options(; iterations = 128,
-                parallel_evaluation = true,
-                f_calls_limit = CRISTOOL_MAX_OPTIMISER_CALLS))
-    else
-        deepcopy(supplied_algorithm)
-    end
-    run_algorithm.status = Metaheuristics.State(nothing, [])
-    if nparticles !== nothing
-        nparticles > 0 || throw(ArgumentError("nparticles must be positive"))
-        run_algorithm.parameters.N = nparticles
-    end
-    if generations !== nothing
-        generations > 0 || throw(ArgumentError("generations must be positive"))
-        run_algorithm.options.iterations = generations
-    end
-    if parallel_evaluation !== nothing
-        run_algorithm.options.parallel_evaluation = parallel_evaluation
-    end
-    if verbosity !== nothing
-        run_algorithm.options.verbose = verbosity > 1
-    end
-    HPC && (run_algorithm.options.verbose = false)
-    return run_algorithm
-end

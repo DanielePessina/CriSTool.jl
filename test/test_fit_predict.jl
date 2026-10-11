@@ -30,8 +30,8 @@ end
 function CriSTool._runsampler(target_sampler::FitPredictTargetSampler, prior, candidate_loss,
         target, reference_loss; kwargs...)
     target_sampler.received_target[] = target
-    target_sampler.received_reference_loss[] = reference_loss
-    return (P = [0.4 0.6],), true
+    target_sampler.received_reference_loss[] = reference_loss()
+    return (P = [0.4 0.6],)
 end
 
 # Draws a known sequence of unit uniforms for inverse-CDF sampling checks.
@@ -305,10 +305,10 @@ end
     tiny_abc = fit(abc_prepared; threaded = true)
     @test vec(tiny_abc.samples.values) == collect(tiny_abc.backend_result.P.particles)
     @test all(0.005 .<= tiny_abc.samples.values .<= 0.02)
-    _, unreachable_target_reached = CriSTool._runsampler(ABCDESampler(),
-        product_distribution([Uniform(0.0, 1.0)]), candidate -> 100.0, 0.0, 100.0;
+    unreachable_result = CriSTool._runsampler(ABCDESampler(),
+        product_distribution([Uniform(0.0, 1.0)]), candidate -> 100.0, 0.0, () -> 100.0;
         nparticles = 8, generations = 1, HPC = false, earlystop = false)
-    @test !unreachable_target_reached
+    @test !unreachable_result.reached_ϵ
 
     @test CriSTool.KissABC.logsumexp_stable([1.0, 2.0, 3.0]) ≈ log(exp(1.0) + exp(2.0) + exp(3.0))
     @test CriSTool.KissABC.logsumexp_stable([-1000.0, -1000.0]) ≈ -1000.0 + log(2.0)
