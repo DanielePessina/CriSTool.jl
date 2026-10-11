@@ -43,6 +43,7 @@ steady_transient_problem(model, conditions) = CrystallisationProblem(model, cond
     @test washout[:concentration] == observable_values(washout, :concentration)
     @test washout.equilibrium.t >= 250.0
     @test washout.hydraulics == (; volume = 2.0, inflow = 0.2, outflow = 0.2, residence_time = 10.0)
+    @test operation_flows(washout_problem, 0.0) == (; inflow = 0.2, outflow = 0.2)
     @test washout.product.dissolved_solute_flow ≈ 0.4 rtol = 1e-8
     @test washout.product.solid_mass_flow == 0.0
 

@@ -18,6 +18,8 @@ _reactor_volume(operation::FedBatchOperation, problem, state) =
 """Named inlet/outlet volumetric flows (m³/s) for an operation at time (s)."""
 operation_flows(problem::DiscretisedProblem, simulation_time) =
     operation_flows(problem.operation, simulation_time)
+operation_flows(problem::CrystallisationProblem, simulation_time) =
+    operation_flows(problem.conditions.operation, simulation_time)
 operation_flows(operation::BatchOperation, simulation_time) =
     (; inflow = zero(operation.volume), outflow = zero(operation.volume))
 function operation_flows(operation::MSMPROperation, simulation_time)
