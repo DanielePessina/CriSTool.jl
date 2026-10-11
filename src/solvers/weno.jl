@@ -1,4 +1,44 @@
 """
+    _weno5_trace(y₋₂, y₋₁, y₀, y₊₁, y₊₂)
+
+Fifth-order Jiang--Shu WENO trace at the face immediately to the right of
+`y₀` from the five-point stencil. Calling it with the stencil reversed gives
+the mirrored (right) trace at the face to the left of `y₀`. Scalar arguments
+only, so it is allocation free (including ForwardDiff evaluations).
+"""
+@inline function _weno5_trace(y₋₂::T, y₋₁::T, y₀::T, y₊₁::T, y₊₂::T) where {T <: Real}
+    ε = T(CRISTOOL_WENO_EPSILON)
+    # Linear weights for the left, centred, and right candidate stencils.
+    γ₀, γ₁, γ₂ = T(0.1), T(0.6), T(0.3)
+    c13_12 = T(13 / 12)
+    c1_4 = T(1 / 4)
+
+    q₀ = muladd(T(1 / 3), y₋₂,
+                muladd(-T(7 / 6), y₋₁, T(11 / 6) * y₀))
+    q₁ = muladd(-T(1 / 6), y₋₁,
+                muladd(T(5 / 6), y₀, T(1 / 3) * y₊₁))
+    q₂ = muladd(T(1 / 3), y₀,
+                muladd(T(5 / 6), y₊₁, -T(1 / 6) * y₊₂))
+
+    β₀ = muladd(c13_12, (y₋₂ - 2y₋₁ + y₀)^2,
+                c1_4 * (y₋₂ - 4y₋₁ + 3y₀)^2)
+    β₁ = muladd(c13_12, (y₋₁ - 2y₀ + y₊₁)^2,
+                c1_4 * (y₋₁ - y₊₁)^2)
+    β₂ = muladd(c13_12, (y₀ - 2y₊₁ + y₊₂)^2,
+                c1_4 * (3y₀ - 4y₊₁ + y₊₂)^2)
+
+    α₀ = γ₀ / (ε + β₀)^2
+    α₁ = γ₁ / (ε + β₁)^2
+    α₂ = γ₂ / (ε + β₂)^2
+    α_sum_inv = 1 / (α₀ + α₁ + α₂)
+    ω₀ = α₀ * α_sum_inv
+    ω₁ = α₁ * α_sum_inv
+    ω₂ = α₂ * α_sum_inv
+
+    return muladd(ω₀, q₀, muladd(ω₁, q₁, ω₂ * q₂))
+end
+
+"""
     _weno_flux_left(numberdensity, left_cell_index)
 
 Reconstruct the left trace at the face immediately to the right of
@@ -7,98 +47,29 @@ the WENO solver so the FV implementation and its established limiter remain
 unchanged.
 """
 @inline function _weno_flux_left(y::AbstractArray{T}, left_cell_index::Integer) where {T <: Real}
-    ε = T(CRISTOOL_WENO_EPSILON)
-    # Linear weights for the left, centred, and right candidate stencils.
-    γ₀, γ₁, γ₂ = T(0.1), T(0.6), T(0.3)
-    c13_12 = T(13 / 12)
-    c1_4 = T(1 / 4)
-
-    @inbounds begin
-        y₋₂ = y[left_cell_index - 2]
-        y₋₁ = y[left_cell_index - 1]
-        y₀ = y[left_cell_index]
-        y₊₁ = y[left_cell_index + 1]
-        y₊₂ = y[left_cell_index + 2]
-
-        q₀ = muladd(T(1 / 3), y₋₂,
-                    muladd(-T(7 / 6), y₋₁, T(11 / 6) * y₀))
-        q₁ = muladd(-T(1 / 6), y₋₁,
-                    muladd(T(5 / 6), y₀, T(1 / 3) * y₊₁))
-        q₂ = muladd(T(1 / 3), y₀,
-                    muladd(T(5 / 6), y₊₁, -T(1 / 6) * y₊₂))
-
-        β₀ = muladd(c13_12, (y₋₂ - 2y₋₁ + y₀)^2,
-                    c1_4 * (y₋₂ - 4y₋₁ + 3y₀)^2)
-        β₁ = muladd(c13_12, (y₋₁ - 2y₀ + y₊₁)^2,
-                    c1_4 * (y₋₁ - y₊₁)^2)
-        β₂ = muladd(c13_12, (y₀ - 2y₊₁ + y₊₂)^2,
-                    c1_4 * (3y₀ - 4y₊₁ + y₊₂)^2)
-
-        α₀ = γ₀ / (ε + β₀)^2
-        α₁ = γ₁ / (ε + β₁)^2
-        α₂ = γ₂ / (ε + β₂)^2
-        α_sum_inv = 1 / (α₀ + α₁ + α₂)
-        ω₀ = α₀ * α_sum_inv
-        ω₁ = α₁ * α_sum_inv
-        ω₂ = α₂ * α_sum_inv
-
-        return muladd(ω₀, q₀, muladd(ω₁, q₁, ω₂ * q₂))
-    end
+    @inbounds return _weno5_trace(y[left_cell_index - 2], y[left_cell_index - 1],
+                                  y[left_cell_index], y[left_cell_index + 1],
+                                  y[left_cell_index + 2])
 end
 
 """
     _weno_flux_right(numberdensity, right_cell_index)
 
 Reconstruct the right trace at the face immediately to the left of
-`right_cell_index` with the mirror image of [`weno_flux`](@ref).  The
-positive-growth WENO flux is a left trace (information travels towards
-increasing crystal length); a negative growth rate needs the right trace.
+`right_cell_index`: the mirror image of [`_weno_flux_left`](@ref), obtained by
+reversing the stencil. The positive-growth WENO flux is a left trace
+(information travels towards increasing crystal length); a negative growth
+rate needs the right trace.
 
 The padded array contains two ghost entries on either side of the physical
-mesh.  Keeping the implementation index based, instead of reversing a
-temporary array, is important because this function is called from the ODE
-RHS and must remain allocation free (including ForwardDiff evaluations).
+mesh.  Reading the stencil by index, instead of reversing a temporary array,
+is important because this function is called from the ODE RHS and must remain
+allocation free (including ForwardDiff evaluations).
 """
 @inline function _weno_flux_right(y::AbstractArray{T}, right_cell_index::Integer) where {T <: Real}
-    ε = T(CRISTOOL_WENO_EPSILON)
-    γ₀, γ₁, γ₂ = T(0.1), T(0.6), T(0.3)
-    c13_12 = T(13 / 12)
-    c1_4 = T(1 / 4)
-
-    @inbounds begin
-        y₋₂ = y[right_cell_index - 2]
-        y₋₁ = y[right_cell_index - 1]
-        y₀ = y[right_cell_index]
-        y₊₁ = y[right_cell_index + 1]
-        y₊₂ = y[right_cell_index + 2]
-
-        # Candidate right traces are the mirror image of the left traces.
-        # q₀ is the right-most stencil, q₁ the centred stencil, and q₂ the
-        # left-most stencil at the face immediately before y₀.
-        q₀ = muladd(T(1 / 3), y₊₂,
-                    muladd(-T(7 / 6), y₊₁, T(11 / 6) * y₀))
-        q₁ = muladd(-T(1 / 6), y₊₁,
-                    muladd(T(5 / 6), y₀, T(1 / 3) * y₋₁))
-        q₂ = muladd(T(1 / 3), y₀,
-                    muladd(T(5 / 6), y₋₁, -T(1 / 6) * y₋₂))
-
-        β₀ = muladd(c13_12, (y₊₂ - 2y₊₁ + y₀)^2,
-                    c1_4 * (y₊₂ - 4y₊₁ + 3y₀)^2)
-        β₁ = muladd(c13_12, (y₊₁ - 2y₀ + y₋₁)^2,
-                    c1_4 * (y₊₁ - y₋₁)^2)
-        β₂ = muladd(c13_12, (y₀ - 2y₋₁ + y₋₂)^2,
-                    c1_4 * (3y₀ - 4y₋₁ + y₋₂)^2)
-
-        α₀ = γ₀ / (ε + β₀)^2
-        α₁ = γ₁ / (ε + β₁)^2
-        α₂ = γ₂ / (ε + β₂)^2
-        α_sum_inv = 1 / (α₀ + α₁ + α₂)
-        ω₀ = α₀ * α_sum_inv
-        ω₁ = α₁ * α_sum_inv
-        ω₂ = α₂ * α_sum_inv
-
-        return muladd(ω₀, q₀, muladd(ω₁, q₁, ω₂ * q₂))
-    end
+    @inbounds return _weno5_trace(y[right_cell_index + 2], y[right_cell_index + 1],
+                                  y[right_cell_index], y[right_cell_index - 1],
+                                  y[right_cell_index - 2])
 end
 
 """
@@ -131,6 +102,44 @@ already nonnegative and never clips or changes the signed growth rate.
     return zero(high_order_state + upwind_state)
 end
 
+"""
+    _fill_weno_padding!(padding, numberdensity, lower_ghost)
+
+Copy `numberdensity` into the interior of the two-ghost-cell `padding` buffer.
+Both lower ghosts take `lower_ghost`; both upper ghosts are zero (no incoming
+population at lmax).
+"""
+@inline function _fill_weno_padding!(padding::AbstractVector, numberdensity::AbstractVector,
+                                     lower_ghost)
+    n_cells = length(numberdensity)
+    @inbounds begin
+        padding[1] = lower_ghost
+        padding[2] = lower_ghost
+        padding[3:(n_cells + 2)] .= numberdensity
+        padding[n_cells + 3] = zero(eltype(padding))
+        padding[n_cells + 4] = zero(eltype(padding))
+    end
+    return padding
+end
+
+"""Signed lower-face flux: nucleation inflow for growth, outflow `rate * n` for dissolution."""
+@inline _weno_signed_lower_flux(growth_rate, nucleation_rate, lowest_density) =
+    growth_rate > zero(growth_rate) ? nucleation_rate :
+    growth_rate < zero(growth_rate) ? growth_rate * lowest_density : zero(growth_rate)
+
+"""
+    _weno_upper_outflow_flux(numberdensity, upper_growth_rate)
+
+Second-order outflow extrapolation of the number flux at lmax, with the same
+nonnegative trace correction as the interior WENO faces.
+"""
+@inline function _weno_upper_outflow_flux(numberdensity, upper_growth_rate)
+    upwind_state = last(numberdensity)
+    high_order_state = length(numberdensity) == 1 ? upwind_state :
+                       upwind_state + 0.5 * (upwind_state - numberdensity[end - 1])
+    return upper_growth_rate * _weno_nonnegative_state(high_order_state, upwind_state)
+end
+
 """Fill WENO fluxes for a scalar negative signed growth rate."""
 function _fill_signed_weno_flux!(flux::AbstractVector,
                                  numberdensity::AbstractVector,
@@ -146,13 +155,8 @@ function _fill_signed_weno_flux!(flux::AbstractVector,
     # Zero-gradient lower ghost cells provide the one-sided stencil just
     # inside the outflow boundary.  Zero upper ghosts enforce no inflow at
     # lmax for dissolution.
+    _fill_weno_padding!(ndens_pad_cache, numberdensity, numberdensity[1])
     @inbounds begin
-        ndens_pad_cache[1] = numberdensity[1]
-        ndens_pad_cache[2] = numberdensity[1]
-        ndens_pad_cache[3:(n_cells + 2)] .= numberdensity
-        ndens_pad_cache[n_cells + 3] = zero(eltype(ndens_pad_cache))
-        ndens_pad_cache[n_cells + 4] = zero(eltype(ndens_pad_cache))
-
         flux[1] = scalar_growth_rate * numberdensity[1]
         for face_index in 2:n_cells
             # The right cell of face i+1/2 is at padded index i+2.
@@ -183,17 +187,10 @@ function _fill_signed_weno_flux!(flux::AbstractVector,
     # One-sided, zero-gradient lower padding is used for positive and
     # negative interior traces.  The upper padding is zero because the
     # physical boundary has no incoming population for negative growth.
+    _fill_weno_padding!(ndens_pad_cache, numberdensity, numberdensity[1])
     @inbounds begin
-        ndens_pad_cache[1] = numberdensity[1]
-        ndens_pad_cache[2] = numberdensity[1]
-        ndens_pad_cache[3:(n_cells + 2)] .= numberdensity
-        ndens_pad_cache[n_cells + 3] = zero(eltype(ndens_pad_cache))
-        ndens_pad_cache[n_cells + 4] = zero(eltype(ndens_pad_cache))
-
-        lower_growth_rate = net_growth_rates[1]
-        flux[1] = lower_growth_rate > zero(lower_growth_rate) ? nucleation_rate :
-                   lower_growth_rate < zero(lower_growth_rate) ?
-                   lower_growth_rate * numberdensity[1] : zero(lower_growth_rate)
+        flux[1] = _weno_signed_lower_flux(net_growth_rates[1], nucleation_rate,
+                                          numberdensity[1])
 
         for face_index in 2:n_cells
             face_growth_rate = 0.5 * (net_growth_rates[face_index - 1] +
@@ -218,20 +215,9 @@ function _fill_signed_weno_flux!(flux::AbstractVector,
         end
 
         upper_growth_rate = net_growth_rates[n_cells]
-        if upper_growth_rate > zero(upper_growth_rate)
-            # Retain the established second-order outflow extrapolation at
-            # lmax, with the same nonnegative trace correction as the
-            # interior WENO faces.
-            upwind_state = numberdensity[n_cells]
-            high_order_state = n_cells == 1 ? upwind_state :
-                               upwind_state + 0.5 * (upwind_state -
-                                                     numberdensity[n_cells - 1])
-            flux[n_cells + 1] = upper_growth_rate *
-                               _weno_nonnegative_state(high_order_state,
-                                                       upwind_state)
-        else
-            flux[n_cells + 1] = zero(upper_growth_rate)
-        end
+        flux[n_cells + 1] = upper_growth_rate > zero(upper_growth_rate) ?
+                            _weno_upper_outflow_flux(numberdensity, upper_growth_rate) :
+                            zero(upper_growth_rate)
     end
     return flux
 end
@@ -252,14 +238,9 @@ end
                                            scalar_growth_rate,
                                            nucleation_rate,
                                            ndens_pad_cache::AbstractVector)
+    # Boundary flux B=G*n has density B/G, not the units of B itself.
+    _fill_weno_padding!(ndens_pad_cache, numberdensity, nucleation_rate / scalar_growth_rate)
     @inbounds begin
-        # Boundary flux B=G*n has density B/G, not the units of B itself.
-        ndens_pad_cache[1] = nucleation_rate / scalar_growth_rate
-        ndens_pad_cache[2] = nucleation_rate / scalar_growth_rate
-        ndens_pad_cache[3:(end - 2)] .= numberdensity
-        ndens_pad_cache[end - 1] = zero(eltype(ndens_pad_cache))
-        ndens_pad_cache[end] = zero(eltype(ndens_pad_cache))
-
         flux[1] = nucleation_rate
         flux[2] = scalar_growth_rate *
                   _weno_nonempty_left_state(ndens_pad_cache, 3, numberdensity[1])
@@ -268,10 +249,7 @@ end
                 _weno_nonempty_left_state(ndens_pad_cache, cell_index + 1,
                                          numberdensity[cell_index - 1])
         end
-        high_order_state = numberdensity[end] +
-                           0.5 * (numberdensity[end] - numberdensity[end - 1])
-        flux[end] = scalar_growth_rate *
-            _weno_nonnegative_state(high_order_state, numberdensity[end])
+        flux[end] = _weno_upper_outflow_flux(numberdensity, scalar_growth_rate)
     end
     return flux
 end
@@ -318,12 +296,8 @@ without reconstructing the interior faces.
 """
 function _weno_boundary_fluxes(numberdensity, scalar_growth_rate::Number, nucleation_rate)
     if scalar_growth_rate > zero(scalar_growth_rate)
-        # The positive scalar path's lower flux is the nucleation inflow, and
-        # its upper flux uses the second-order outflow trace.
-        upwind_state = numberdensity[end]
-        high_order_state = upwind_state + 0.5 * (upwind_state - numberdensity[end - 1])
-        return nucleation_rate,
-               scalar_growth_rate * _weno_nonnegative_state(high_order_state, upwind_state)
+        # The positive scalar path's lower flux is the nucleation inflow.
+        return nucleation_rate, _weno_upper_outflow_flux(numberdensity, scalar_growth_rate)
     elseif scalar_growth_rate < zero(scalar_growth_rate)
         # Signed scalar dissolution exits through lmin and has no incoming
         # population at lmax.
@@ -334,101 +308,30 @@ end
 
 function _weno_boundary_fluxes(numberdensity, net_growth_rates::AbstractVector,
                                nucleation_rate)
-    lower_growth_rate = first(net_growth_rates)
-    lower_boundary_flux = lower_growth_rate > zero(lower_growth_rate) ? nucleation_rate :
-                          lower_growth_rate < zero(lower_growth_rate) ?
-                          lower_growth_rate * first(numberdensity) : zero(lower_growth_rate)
     upper_growth_rate = last(net_growth_rates)
-    upper_growth_rate > zero(upper_growth_rate) ||
-        return lower_boundary_flux, zero(upper_growth_rate)
-    upwind_state = last(numberdensity)
-    high_order_state = length(numberdensity) == 1 ? upwind_state :
-                       upwind_state + 0.5 * (upwind_state - numberdensity[end - 1])
-    return lower_boundary_flux,
-           upper_growth_rate * _weno_nonnegative_state(high_order_state, upwind_state)
+    lower_boundary_flux = _weno_signed_lower_flux(first(net_growth_rates), nucleation_rate,
+                                                  first(numberdensity))
+    upper_boundary_flux = upper_growth_rate > zero(upper_growth_rate) ?
+                          _weno_upper_outflow_flux(numberdensity, upper_growth_rate) :
+                          zero(upper_growth_rate)
+    return lower_boundary_flux, upper_boundary_flux
 end
 
-"""Boundary solid-mass flow samples using the exact WENO boundary fluxes.
+_mesh_boundary_fluxes(::WENO, flux_cache, numberdensity, net_growth, nucleation_rate) =
+    _weno_boundary_fluxes(numberdensity, net_growth, nucleation_rate)
 
-The signed lower and upper flows are positive out of the size domain and use
-kg/s. Batch operation volume is the explicit reactor volume; the default
-1 m³ value is its documented unit-volume reference.
-"""
-function _mesh_boundary_flow_state(solver::WENO, problem, ode_solution)
-    saved_times = ode_solution.t
-    sample_state = first(ode_solution.u)
-    lower_mass_flow = Vector{typeof(zero(eltype(sample_state)))}(undef, length(saved_times))
-    upper_mass_flow = similar(lower_mass_flow)
-    # Length-dependent laws get the full mesh, state and time context; custom
-    # laws need not support pointwise endpoint calls.
-    growth_rate_cache = similar(sample_state, solver.meshsize)
-    growth_layout = _mesh_growth_layout(problem)
-    # Prepared inference remakes p without replacing the physical template.
-    parameters = ode_solution.prob.p
-    lower_length = first(solver.cell_face)
-    upper_length = last(solver.cell_face)
-    mass_scale = problem.model.system.crystal_density * problem.model.system.volume_shape_factor
+_mesh_solver_cache(::WENO, problem) = DiffCache(zeros(problem.solver.meshsize + 4))
 
-    for time_index in eachindex(saved_times)
-        numerical_state = ode_solution.u[time_index]
-        simulation_time = saved_times[time_index]
-        nucleation_rate_value = nucleationrate(problem.model.nucleation.law,
-                                               parameters.nucl, problem,
-                                               numerical_state, simulation_time)
-        net_growth = _mesh_net_growth(growth_layout, growth_rate_cache, parameters,
-                                      problem, numerical_state, simulation_time)
-        lower_boundary_flux, upper_boundary_flux =
-            _weno_boundary_fluxes(crystal_state(problem, numerical_state), net_growth,
-                                  nucleation_rate_value)
-
-        reactor_volume_value = reactor_volume(problem, numerical_state)
-        # The RHS flux buffer holds face values at the state element type;
-        # convert before applying the physical mass-flow scaling.
-        lower_boundary_flux = convert(eltype(sample_state), lower_boundary_flux)
-        upper_boundary_flux = convert(eltype(sample_state), upper_boundary_flux)
-        lower_mass_flow[time_index] = -lower_boundary_flux * lower_length^3 *
-                                      mass_scale * reactor_volume_value
-        upper_mass_flow[time_index] = upper_boundary_flux * upper_length^3 *
-                                      mass_scale * reactor_volume_value
-    end
-
-    return (; size_boundary_lower_solid_mass_flow = lower_mass_flow,
-              size_boundary_upper_solid_mass_flow = upper_mass_flow)
-end
+@inline _fill_mesh_flux!(::WENO, padding, face_flux, numberdensity, net_growth,
+                         nucleation_rate) =
+    _fill_weno_flux!(face_flux, numberdensity, net_growth, nucleation_rate, padding)
 
 function crystallisation_odeproblem(solver::WENO, CryProblem::CrystallisationProblem, saveat, kinetic_values)
-    # DiffCache buffers retype themselves for ForwardDiff dual states.
     flux_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 1))
-    ndens_pad_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 4))
     growth_rate_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize))
-    feed_population = _operation_feed_population(CryProblem)
-    aggregation_table = _mesh_aggregation_table(CryProblem.model.aggregation.law,
-                                                CryProblem.solver)
     growth_layout = _mesh_growth_layout(CryProblem)
-    cell_centre_cubed = CryProblem.solver.cell_centre .^ 3
-
-    function weno_rhs!(dstdt, st, p, t)
-        face_flux = get_tmp(flux_cache_dc, st)
-        net_growth = _mesh_net_growth(growth_layout, growth_rate_cache_dc, p,
-                                      CryProblem, st, t)
-        _fill_weno_flux!(face_flux, crystal_state(CryProblem, st), net_growth,
-                         nucleationrate(CryProblem.model.nucleation.law, p.nucl,
-                                        CryProblem, st, t),
-                         get_tmp(ndens_pad_cache_dc, st))
-
-        population_derivative = crystal_state(CryProblem, dstdt)
-        solid_volume_rate = _mesh_transport_divergence!(population_derivative, face_flux,
-                                                        CryProblem.solver, cell_centre_cubed)
-        _add_aggregation_rate!(population_derivative, CryProblem.model.aggregation.law, p.agg,
-                               CryProblem, st, t, aggregation_table)
-        _add_breakage_rate!(population_derivative, CryProblem.model.breakage.law, p.br,
-                            CryProblem, st, t)
-
-        _write_mesh_solvent_derivatives!(dstdt, CryProblem, st, t, net_growth,
-                                         solid_volume_rate)
-        _add_operation_transport!(dstdt, st, CryProblem, t, feed_population)
-        return nothing
-    end
+    weno_rhs! = _mesh_population_rhs(CryProblem, flux_cache_dc, growth_rate_cache_dc,
+                                     _mesh_solver_cache(solver, CryProblem))
 
     utyped = eltype(kinetic_values).(_get_initial_state(CryProblem))
     weno_cfl_bound(numerical_state, kinetic_parameters, simulation_time) =

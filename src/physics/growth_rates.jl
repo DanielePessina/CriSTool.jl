@@ -61,27 +61,32 @@ end
     return named_parameters, driving_force
 end
 
-@inline function _length_dissolution_prefactor(named_parameters,
-                                               driving_force,
-                                               problem::CrystallisationProblem,
-                                               time)
-    temperature_value = temperature(problem.temp_profile, time)
-    return -named_parameters.dissolution_coefficient *
-           exp(-named_parameters.activation_energy /
-               (CRISTOOL_GAS_CONSTANT * temperature_value)) *
-           driving_force^named_parameters.dissolution_order
-end
+@inline _length_dissolution_prefactor(named_parameters, driving_force,
+                                      problem::CrystallisationProblem, time) =
+    _dissolution_prefactor(named_parameters.dissolution_coefficient,
+                           named_parameters.activation_energy,
+                           named_parameters.dissolution_order, driving_force,
+                           temperature(problem.temp_profile, time),
+                           CRISTOOL_GAS_CONSTANT)
 
-@inline function _length_dissolution_size_factor_base(
-    dissolutionfunction::ArrheniusLengthDissolution,
+"""
+    _length_size_factor_base(law, named_parameters, crystal_length)
+
+Base `1 + size_dependence_coefficient * crystal_length / Lref` of the
+length-dependent multiplier shared by `EmpiricalLengthGrowth` and
+`ArrheniusLengthDissolution`. It must stay positive so non-integer exponents
+remain real-valued.
+"""
+@inline function _length_size_factor_base(
+    law::Union{EmpiricalLengthGrowth, ArrheniusLengthDissolution},
     named_parameters,
     crystal_length::Real)
     size_factor_base = one(crystal_length) +
                        named_parameters.size_dependence_coefficient *
-                       (crystal_length / dissolutionfunction.Lref)
+                       (crystal_length / law.Lref)
     size_factor_base > zero(size_factor_base) ||
         throw(DomainError(size_factor_base,
-                          "ArrheniusLengthDissolution size factor must be positive."))
+                          "$(nameof(typeof(law))) size factor must be positive."))
     return size_factor_base
 end
 
@@ -90,19 +95,19 @@ end
     named_parameters,
     dissolution_prefactor,
     crystal_length::Real)
-    size_factor_base = _length_dissolution_size_factor_base(
+    size_factor_base = _length_size_factor_base(
         dissolutionfunction, named_parameters, crystal_length)
     return dissolution_prefactor *
            size_factor_base^named_parameters.size_dependence_exponent
 end
 
-function _add_length_dissolution_rates!(destination::AbstractVector,
-                                        dissolutionfunction::ArrheniusLengthDissolution,
-                                        parameters,
-                                        problem::CrystallisationProblem,
-                                        state,
-                                        time,
-                                        mesh::AbstractVector)
+function _add_dissolution_rates!(destination::AbstractVector,
+                                 dissolutionfunction::ArrheniusLengthDissolution,
+                                 parameters,
+                                 problem::CrystallisationProblem,
+                                 state,
+                                 time,
+                                 mesh::AbstractVector)
     named_parameters, driving_force = _length_dissolution_context(
         dissolutionfunction, parameters, problem, state, time)
     driving_force == zero(driving_force) && return destination
@@ -117,13 +122,13 @@ function _add_length_dissolution_rates!(destination::AbstractVector,
     return destination
 end
 
-function _add_length_dissolution_rates!(destination::AbstractVector,
-                                        dissolutionfunction::AbstractLengthDissolutionFunction,
-                                        parameters,
-                                        problem::CrystallisationProblem,
-                                        state,
-                                        time,
-                                        mesh::AbstractVector)
+function _add_dissolution_rates!(destination::AbstractVector,
+                                 dissolutionfunction::AbstractLengthDissolutionFunction,
+                                 parameters,
+                                 problem::CrystallisationProblem,
+                                 state,
+                                 time,
+                                 mesh::AbstractVector)
     @inbounds for mesh_index in eachindex(destination, mesh)
         destination[mesh_index] += dissolutionrate_at_length(
             dissolutionfunction, parameters, problem, state, time,
@@ -132,15 +137,38 @@ function _add_length_dissolution_rates!(destination::AbstractVector,
     return destination
 end
 
+# Scalar dissolution adds one value to every mesh point.
+function _add_dissolution_rates!(destination::AbstractVector,
+                                 dissolutionfunction::AbstractDissolutionFunction,
+                                 parameters,
+                                 problem::CrystallisationProblem,
+                                 state,
+                                 time,
+                                 mesh::AbstractVector)
+    dissolution_value = dissolutionrate(dissolutionfunction, parameters, problem,
+                                        state, time)
+    @inbounds for mesh_index in eachindex(destination)
+        destination[mesh_index] += dissolution_value
+    end
+    return destination
+end
+
+@inline _dissolution_prefactor(dissolution_coefficient, activation_energy,
+                               dissolution_order, driving_force, temperature,
+                               gas_constant) =
+    -dissolution_coefficient *
+    exp(-activation_energy / (gas_constant * temperature)) *
+    driving_force^dissolution_order
+
 @inline function _dissolution_rate(dissolution_coefficient, activation_energy,
                                    dissolution_order, supersaturation_ratio,
                                    temperature, gas_constant)
     driving_force = _dissolution_drive(supersaturation_ratio)
     return driving_force == zero(driving_force) ?
            zero(driving_force) :
-           -dissolution_coefficient *
-           exp(-activation_energy / (gas_constant * temperature)) *
-           driving_force^dissolution_order
+           _dissolution_prefactor(dissolution_coefficient, activation_energy,
+                                  dissolution_order, driving_force, temperature,
+                                  gas_constant)
 end
 
 @inline _dissolution_zero(parameters, state) =
@@ -236,6 +264,16 @@ dissolution laws."""
                            problem, state, time)
 end
 
+"""Without a dissolution law the net rate is the growth rate itself."""
+@inline net_growth_rate(growthfunction::AbstractGrowthFunction,
+                        growth_parameters,
+                        ::NoDissolution,
+                        dissolution_parameters,
+                        problem::CrystallisationProblem,
+                        state,
+                        time) =
+    growthrate(growthfunction, growth_parameters, problem, state, time)
+
 """Evaluate the net crystal growth rate at one physical crystal length."""
 @inline function net_growth_rate_at_length(
     growthfunction::AbstractGrowthFunction,
@@ -270,27 +308,10 @@ function net_growth_rate!(destination::AbstractVector,
     length(destination) == length(mesh) ||
         throw(ArgumentError("growth-rate destination and mesh must have the same length."))
 
-    if _is_length_law(growthfunction)
-        growthrate!(destination, growthfunction, growth_parameters, problem,
-                    state, time, mesh)
-    else
-        growth_value = growthrate(growthfunction, growth_parameters, problem,
-                                  state, time)
-        fill!(destination, growth_value)
-    end
-
-    if _is_length_law(dissolutionfunction)
-        _add_length_dissolution_rates!(destination, dissolutionfunction,
-                                       dissolution_parameters, problem, state,
-                                       time, mesh)
-    else
-        dissolution_value = dissolutionrate(dissolutionfunction,
-                                            dissolution_parameters, problem,
-                                            state, time)
-        @inbounds for mesh_index in eachindex(destination)
-            destination[mesh_index] += dissolution_value
-        end
-    end
+    growthrate!(destination, growthfunction, growth_parameters, problem,
+                state, time, mesh)
+    _add_dissolution_rates!(destination, dissolutionfunction,
+                            dissolution_parameters, problem, state, time, mesh)
     return destination
 end
 
@@ -311,11 +332,7 @@ function _validate_dissolution_parameters(model::ArrheniusDissolution,
                                           parameters,
                                           problem::CrystallisationProblem)
     _validate_dissolution_scalar_parameters(model, parameters)
-    p = _named_params(model, parameters)
-    p.dissolution_coefficient >= 0.0 ||
-        throw(ArgumentError("dissolution_coefficient must be nonnegative."))
-    p.dissolution_order > 0.0 ||
-        throw(ArgumentError("dissolution_order must be strictly positive."))
+    _validate_arrhenius_dissolution_terms(_named_params(model, parameters))
     return nothing
 end
 
@@ -325,20 +342,33 @@ function _validate_dissolution_parameters(model::ArrheniusLengthDissolution,
     _validate_dissolution_scalar_parameters(model, parameters)
     isfinite(model.Lref) && model.Lref > 0.0 ||
         throw(ArgumentError("ArrheniusLengthDissolution Lref must be finite and strictly positive."))
-    p = _named_params(model, parameters)
-    p.dissolution_coefficient >= 0.0 ||
-        throw(ArgumentError("dissolution_coefficient must be nonnegative."))
-    p.dissolution_order > 0.0 ||
-        throw(ArgumentError("dissolution_order must be strictly positive."))
-    if problem.solver isa AbstractDiscretisedSolver
-        lower_base = 1.0 + p.size_dependence_coefficient * problem.solver.lmin / model.Lref
-        upper_base = 1.0 + p.size_dependence_coefficient * problem.solver.lmax / model.Lref
-        lower_base > 0.0 && upper_base > 0.0 ||
-            throw(ArgumentError("ArrheniusLengthDissolution size factor must stay positive " *
-                                "over the configured mesh."))
-    end
+    named_parameters = _named_params(model, parameters)
+    _validate_arrhenius_dissolution_terms(named_parameters)
+    _validate_mesh_size_factor(problem.solver, model, named_parameters)
     return nothing
 end
+
+"""Coefficient and order checks shared by the Arrhenius dissolution laws."""
+function _validate_arrhenius_dissolution_terms(named_parameters)
+    named_parameters.dissolution_coefficient >= 0.0 ||
+        throw(ArgumentError("dissolution_coefficient must be nonnegative."))
+    named_parameters.dissolution_order > 0.0 ||
+        throw(ArgumentError("dissolution_order must be strictly positive."))
+    return nothing
+end
+
+"""The length-dependent size factor must stay positive over a discretised mesh."""
+function _validate_mesh_size_factor(solver::AbstractDiscretisedSolver,
+                                    model::ArrheniusLengthDissolution,
+                                    named_parameters)
+    lower_base = 1.0 + named_parameters.size_dependence_coefficient * solver.lmin / model.Lref
+    upper_base = 1.0 + named_parameters.size_dependence_coefficient * solver.lmax / model.Lref
+    lower_base > 0.0 && upper_base > 0.0 ||
+        throw(ArgumentError("ArrheniusLengthDissolution size factor must stay positive " *
+                            "over the configured mesh."))
+    return nothing
+end
+_validate_mesh_size_factor(solver::AbstractSolver, model, named_parameters) = nothing
 
 function _validate_growth_parameters(model::EmpiricalLengthGrowth,
                                      parameters,
@@ -377,19 +407,6 @@ function growthrate(gf::EmpiricalGrowth, parameters::T, prob::CrystallisationPro
     return S > 1.001 ? p.growth_coefficient * (S - 1)^p.growth_order : _inactive_rate(parameters, S, temp)
 end
 
-@inline function _growth_empirical_length_size_factor_base(
-    growthfunction::EmpiricalLengthGrowth,
-    named_parameters,
-    crystal_length::Real)
-    size_factor_base = one(crystal_length) +
-                       named_parameters.size_dependence_coefficient *
-                       (crystal_length / growthfunction.Lref)
-    size_factor_base > zero(size_factor_base) ||
-        throw(DomainError(size_factor_base,
-                          "EmpiricalLengthGrowth size factor must be positive."))
-    return size_factor_base
-end
-
 """
     growthrate_at_length(gf::EmpiricalLengthGrowth, parameters,
                          problem, state, time, crystal_length)
@@ -415,7 +432,7 @@ positive so non-integer exponents remain real-valued.
                        CRISTOOL_DISSOLUTION_EQUILIBRIUM_TOLERANCE
     supersaturation_ratio > growth_threshold || return zero(zero_type)
 
-    size_factor_base = _growth_empirical_length_size_factor_base(
+    size_factor_base = _length_size_factor_base(
         gf, named_parameters, crystal_length)
     return named_parameters.growth_coefficient *
            (supersaturation_ratio - one(supersaturation_ratio)) ^
@@ -453,7 +470,7 @@ function growthrate!(destination::AbstractVector,
                        (supersaturation_ratio - one(supersaturation_ratio)) ^
                        named_parameters.growth_order
     @inbounds for mesh_index in eachindex(destination, mesh)
-        size_factor_base = _growth_empirical_length_size_factor_base(
+        size_factor_base = _length_size_factor_base(
             gf, named_parameters, mesh[mesh_index])
         destination[mesh_index] = growth_prefactor *
                                   size_factor_base ^
@@ -582,20 +599,8 @@ function dissolutionrate!(destination::AbstractVector,
     length(destination) == length(mesh) ||
         throw(ArgumentError("growthrate! destination and mesh must have the same length."))
 
-    named_parameters, driving_force = _length_dissolution_context(
-        gf, parameters, prob, state, t)
-    if driving_force == zero(driving_force)
-        fill!(destination, zero(driving_force))
-        return destination
-    end
-
-    dissolution_prefactor = _length_dissolution_prefactor(
-        named_parameters, driving_force, prob, t)
-    @inbounds for index in eachindex(destination, mesh)
-        destination[index] = _length_dissolution_rate_from_context(
-            gf, named_parameters, dissolution_prefactor, mesh[index])
-    end
-    return destination
+    fill!(destination, 0)
+    return _add_dissolution_rates!(destination, gf, parameters, prob, state, t, mesh)
 end
 
 """

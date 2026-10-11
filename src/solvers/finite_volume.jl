@@ -1,29 +1,3 @@
-@inline _mesh_scalar_net_growth_rate(growthfunction,
-                                     growth_parameters,
-                                     ::NoDissolution,
-                                     dissolution_parameters,
-                                     problem,
-                                     state,
-                                     time) = growthrate(growthfunction,
-                                                        growth_parameters,
-                                                        problem,
-                                                        state,
-                                                        time)
-
-@inline _mesh_scalar_net_growth_rate(growthfunction,
-                                     growth_parameters,
-                                     dissolutionfunction::AbstractDissolutionFunction,
-                                     dissolution_parameters,
-                                     problem,
-                                     state,
-                                     time) = net_growth_rate(growthfunction,
-                                                             growth_parameters,
-                                                             dissolutionfunction,
-                                                             dissolution_parameters,
-                                                             problem,
-                                                             state,
-                                                             time)
-
 """
     _mesh_growth_layout(problem) -> Val{Bool}
 
@@ -42,9 +16,9 @@ plain vector) for `Val(true)`. Without a dissolution law the scalar path calls `
 directly.
 """
 @inline _mesh_net_growth(::Val{false}, growth_rate_cache, parameters, problem, state, time) =
-    _mesh_scalar_net_growth_rate(problem.model.growth.law, parameters.gr,
-                                 problem.model.dissolution.law, parameters.diss,
-                                 problem, state, time)
+    net_growth_rate(problem.model.growth.law, parameters.gr,
+                    problem.model.dissolution.law, parameters.diss,
+                    problem, state, time)
 
 @inline _mesh_net_growth(::Val{true}, growth_rate_cache, parameters, problem, state, time) =
     net_growth_rate!(get_tmp(growth_rate_cache, state), problem.model.growth.law, parameters.gr,
@@ -106,18 +80,34 @@ for a scalar rate, first-order signed upwinding for a per-cell rate field.
 @inline _fill_fv_flux!(flux, numberdensity, net_growth_rates::AbstractVector, nucleation_rate) =
     _fill_signed_first_order_flux!(flux, numberdensity, net_growth_rates, nucleation_rate)
 
-"""Boundary solid-mass flow samples using the exact FV face fluxes.
+"""
+    _mesh_boundary_fluxes(solver, flux_cache, numberdensity, net_growth, nucleation_rate)
+        -> (lower, upper)
+
+Lower- and upper-face number fluxes that the solver's RHS produces. The FV
+flux is filled into `flux_cache` and read at both ends; WENO evaluates the two
+boundary faces without reconstructing the interior (`flux_cache` unused).
+"""
+function _mesh_boundary_fluxes(solver::FiniteVol, flux_cache, numberdensity, net_growth,
+                               nucleation_rate)
+    _fill_fv_flux!(flux_cache, numberdensity, net_growth, nucleation_rate)
+    return first(flux_cache), last(flux_cache)
+end
+
+"""Boundary solid-mass flow samples using the exact boundary fluxes of the RHS.
 
 The signed lower and upper flows are positive out of the size domain and use
 kg/s. Batch operation volume is the explicit reactor volume; the default
 1 m³ value is its documented unit-volume reference.
 """
-function _mesh_boundary_flow_state(solver::FiniteVol, problem, ode_solution)
+function _mesh_boundary_flow_state(solver::AbstractDiscretisedSolver, problem, ode_solution)
     saved_times = ode_solution.t
     sample_state = first(ode_solution.u)
     lower_mass_flow = Vector{typeof(zero(eltype(sample_state)))}(undef, length(saved_times))
     upper_mass_flow = similar(lower_mass_flow)
     flux_cache = similar(sample_state, solver.meshsize + 1)
+    # Length-dependent laws get the full mesh, state and time context; custom
+    # laws need not support pointwise endpoint calls.
     growth_rate_cache = similar(sample_state, solver.meshsize)
     growth_layout = _mesh_growth_layout(problem)
     # Prepared inference remakes p without replacing the physical template.
@@ -134,13 +124,18 @@ function _mesh_boundary_flow_state(solver::FiniteVol, problem, ode_solution)
                                                numerical_state, simulation_time)
         net_growth = _mesh_net_growth(growth_layout, growth_rate_cache, parameters,
                                       problem, numerical_state, simulation_time)
-        _fill_fv_flux!(flux_cache, crystal_state(problem, numerical_state), net_growth,
-                       nucleation_rate_value)
+        lower_boundary_flux, upper_boundary_flux =
+            _mesh_boundary_fluxes(solver, flux_cache, crystal_state(problem, numerical_state),
+                                  net_growth, nucleation_rate_value)
 
         reactor_volume_value = reactor_volume(problem, numerical_state)
-        lower_mass_flow[time_index] = -flux_cache[1] * lower_length^3 *
+        # The RHS flux buffer holds face values at the state element type;
+        # convert before applying the physical mass-flow scaling.
+        lower_boundary_flux = convert(eltype(sample_state), lower_boundary_flux)
+        upper_boundary_flux = convert(eltype(sample_state), upper_boundary_flux)
+        lower_mass_flow[time_index] = -lower_boundary_flux * lower_length^3 *
                                       mass_scale * reactor_volume_value
-        upper_mass_flow[time_index] = flux_cache[end] * upper_length^3 *
+        upper_mass_flow[time_index] = upper_boundary_flux * upper_length^3 *
                                       mass_scale * reactor_volume_value
     end
 
@@ -167,35 +162,50 @@ function _wrap_solution(solver::AbstractDiscretisedSolver, problem::Crystallisat
 end
 
 """
-    crystallisation_odeproblem(solver::FiniteVol, problem, saveat, kinetic_values)
+    _fill_mesh_flux!(solver, solver_cache, face_flux, numberdensity, net_growth, nucleation_rate)
 
-High-resolution (OSPRE-limited) transport for a scalar net growth rate,
-first-order signed upwinding when growth or dissolution depends on length
-(see `_fill_fv_flux!`). The default time stepper is `Tsit5` for
-scalar growth laws and `SSPRK43` for length-dependent growth laws.
+Fill the face fluxes of the solver's transport scheme; `solver_cache` is the
+solver's extra per-state scratch (see `_mesh_solver_cache`).
 """
-function crystallisation_odeproblem(solver::FiniteVol, CryProblem::CrystallisationProblem,
-                                    saveat, kinetic_values)
-    # DiffCache buffers retype themselves for ForwardDiff dual states.
-    flux_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 1))
-    growth_rate_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize))
-    feed_population = _operation_feed_population(CryProblem)
-    aggregation_table = _mesh_aggregation_table(CryProblem.model.aggregation.law,
-                                                CryProblem.solver)
-    growth_layout = _mesh_growth_layout(CryProblem)
-    cell_centre_cubed = CryProblem.solver.cell_centre .^ 3
+@inline _fill_mesh_flux!(::FiniteVol, ::Nothing, face_flux, numberdensity, net_growth,
+                         nucleation_rate) =
+    _fill_fv_flux!(face_flux, numberdensity, net_growth, nucleation_rate)
 
-    function finite_volume_rhs!(dstdt, st, p, t)
+"""Extra `DiffCache` scratch a mesh solver needs beside the flux and growth buffers."""
+_mesh_solver_cache(::FiniteVol, problem) = nothing
+
+@inline _mesh_solver_cache_view(::Nothing, state) = nothing
+@inline _mesh_solver_cache_view(solver_cache_dc::DiffCache, state) =
+    get_tmp(solver_cache_dc, state)
+
+"""
+    _mesh_population_rhs(problem, flux_cache_dc, growth_rate_cache_dc, solver_cache_dc)
+
+In-place ODE right-hand side shared by the `FiniteVol` and `WENO` solvers:
+net growth, face flux (`_fill_mesh_flux!`), transport divergence, aggregation,
+breakage, solvent and operation terms. The caches are `DiffCache` buffers so
+ForwardDiff dual states retype them.
+"""
+function _mesh_population_rhs(CryProblem::CrystallisationProblem, flux_cache_dc,
+                              growth_rate_cache_dc, solver_cache_dc)
+    solver = CryProblem.solver
+    feed_population = _operation_feed_population(CryProblem)
+    aggregation_table = _mesh_aggregation_table(CryProblem.model.aggregation.law, solver)
+    growth_layout = _mesh_growth_layout(CryProblem)
+    cell_centre_cubed = solver.cell_centre .^ 3
+
+    function mesh_rhs!(dstdt, st, p, t)
         face_flux = get_tmp(flux_cache_dc, st)
         net_growth = _mesh_net_growth(growth_layout, growth_rate_cache_dc, p,
                                       CryProblem, st, t)
-        _fill_fv_flux!(face_flux, crystal_state(CryProblem, st), net_growth,
-                       nucleationrate(CryProblem.model.nucleation.law, p.nucl,
-                                      CryProblem, st, t))
+        _fill_mesh_flux!(solver, _mesh_solver_cache_view(solver_cache_dc, st), face_flux,
+                         crystal_state(CryProblem, st), net_growth,
+                         nucleationrate(CryProblem.model.nucleation.law, p.nucl,
+                                        CryProblem, st, t))
 
         population_derivative = crystal_state(CryProblem, dstdt)
         solid_volume_rate = _mesh_transport_divergence!(population_derivative, face_flux,
-                                                        CryProblem.solver, cell_centre_cubed)
+                                                        solver, cell_centre_cubed)
         _add_aggregation_rate!(population_derivative, CryProblem.model.aggregation.law, p.agg,
                                CryProblem, st, t, aggregation_table)
         _add_breakage_rate!(population_derivative, CryProblem.model.breakage.law, p.br,
@@ -206,6 +216,23 @@ function crystallisation_odeproblem(solver::FiniteVol, CryProblem::Crystallisati
         _add_operation_transport!(dstdt, st, CryProblem, t, feed_population)
         return nothing
     end
+    return mesh_rhs!
+end
+
+"""
+    crystallisation_odeproblem(solver::FiniteVol, problem, saveat, kinetic_values)
+
+High-resolution (OSPRE-limited) transport for a scalar net growth rate,
+first-order signed upwinding when growth or dissolution depends on length
+(see `_fill_fv_flux!`). The default time stepper is `Tsit5` for
+scalar growth laws and `SSPRK43` for length-dependent growth laws.
+"""
+function crystallisation_odeproblem(solver::FiniteVol, CryProblem::CrystallisationProblem,
+                                    saveat, kinetic_values)
+    flux_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 1))
+    growth_rate_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize))
+    finite_volume_rhs! = _mesh_population_rhs(CryProblem, flux_cache_dc, growth_rate_cache_dc,
+                                              _mesh_solver_cache(solver, CryProblem))
 
     # Plain state at the parameter element type (do NOT convert to the
     # ComponentArray parameter container).
