@@ -113,6 +113,11 @@ end
     @test_throws ArgumentError invert_moments([1.0, NaN, 0.0, 0.0, 0.0, 0.0], qmom_solver)
     @test_throws ArgumentError invert_moments([1.0, -0.5e-6, 0.25e-12, -0.125e-18, 0.0625e-24, -0.03125e-30], qmom_solver)
     @test_throws ArgumentError invert_moments(zeros(5), qmom_solver)
+    # QL rotation radius: a 3-4-5 triangle in range and past both ends of the
+    # Float64 range, where squaring would overflow or underflow.
+    @test CriSTool._givens_radius(3.0, 4.0) == 5.0
+    @test CriSTool._givens_radius(3e200, 4e200) ≈ 5e200 rtol = 1e-15
+    @test CriSTool._givens_radius(3e-200, 4e-200) ≈ 5e-200 rtol = 1e-15
 end
 
 @testset "Moment sources on quadratures" begin
