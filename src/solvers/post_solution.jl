@@ -52,7 +52,9 @@ end
 Compute volume-weighted density distribution.
 """
 function volumeweighteddensity(mesh::AbstractVector, numberdensity::AbstractVecOrMat, shape_factor)
-    shape_factor .* (numberdensity .* (mesh .^ 3.0))
+    # Integer literal powers lower to multiplications; a Float64 exponent calls `pow`
+    # once per cell and saved time.
+    shape_factor .* (numberdensity .* (mesh .^ 3))
 end
 
 """
@@ -61,7 +63,7 @@ end
 Compute surface-weighted density distribution.
 """
 function surfaceweighteddensity(mesh::AbstractVector, numberdensity::AbstractVector, shape_factor)
-    shape_factor .* (numberdensity .* mesh .^ 2.0)
+    shape_factor .* (numberdensity .* mesh .^ 2)
 end
 
 """

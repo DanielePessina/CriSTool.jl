@@ -37,14 +37,17 @@ SteadyMode(; steady_settings...) = SteadyMode(SteadyStateOptions(; steady_settin
     PreparedRun
 
 One configured `CrystallisationProblem` with its `ODEProblem` template, resolved
-ODE algorithm and save times. The template is built once and reused across
-parameter vectors with `remake`, so the estimation loop never reconstructs it.
+ODE algorithm, save times and composite kinetic `paramaxis`. The template and
+axis are built once and reused across parameter vectors with `remake`, so the
+estimation loop never reconstructs them (a callable law rebuilds its axis from
+its schema on every `paramaxis` call).
 """
-struct PreparedRun{Problem <: CrystallisationProblem, Template, Algorithm}
+struct PreparedRun{Problem <: CrystallisationProblem, Template, Algorithm, ParameterAxis}
     problem::Problem
     odeproblem::Template
     algorithm::Algorithm
     saveat::Vector{Float64}
+    parameter_axis::ParameterAxis
 end
 
 """
@@ -145,7 +148,8 @@ function _prepare_solves(configured_problems::AbstractVector{<:CrystallisationPr
         integration_times = _integration_times(simulation_mode, configured, save_times)
         _validate_save_times(integration_times)
         odeproblem, default_algorithm = crystallisation_odeproblem(configured, integration_times)
-        PreparedRun(configured, odeproblem, something(algorithm, default_algorithm), save_times)
+        PreparedRun(configured, odeproblem, something(algorithm, default_algorithm), save_times,
+                    parameter_axis)
     end
     return PreparedSolves(prepared_runs, simulation_mode, algorithm, solve_options, callback_factory)
 end
@@ -239,8 +243,8 @@ function _checked_weight(weight)
 end
 
 _kinetic_parameter_count(configured_problem::CrystallisationProblem) = _parameter_count(configured_problem)
-_kinetic_parameter_count(prepared_solves::PreparedSolves) =
-    _kinetic_parameter_count(first(prepared_solves.runs).problem)
+_kinetic_parameter_count(prepared_run::PreparedRun) = ComponentArrays.last_index(prepared_run.parameter_axis)
+_kinetic_parameter_count(prepared_solves::PreparedSolves) = _kinetic_parameter_count(first(prepared_solves.runs))
 _kinetic_parameter_count(setup::LossSetup) = _kinetic_parameter_count(setup.solves)
 
 """
@@ -252,15 +256,18 @@ ODE right-hand sides. The compatibility order is
 block is empty; the canonical order with independent dissolution is
 `[p_nucleation; p_growth; p_dissolution; p_aggregation; p_breakage]`.
 """
-function _params_to_p(prob::CrystallisationProblem, params)
+_params_to_p(prob::CrystallisationProblem, params) = _kinetic_values_on_axis(paramaxis(prob), params)
+_params_to_p(prepared_run::PreparedRun, params) = _kinetic_values_on_axis(prepared_run.parameter_axis, params)
+
+function _kinetic_values_on_axis(parameter_axis, params)
     params isa AbstractVector || throw(ArgumentError("Kinetic parameters must be a vector."))
-    expected_parameters = _kinetic_parameter_count(prob)
+    expected_parameters = ComponentArrays.last_index(parameter_axis)
     length(params) == expected_parameters ||
         throw(ArgumentError("Expected $expected_parameters kinetic parameters, received $(length(params))."))
     # ComponentArray with the composite kinetic axis: `p.nucl`/`p.gr` are
     # views, so the rate functions' `_named_params` short-circuits without
     # rebuilding the parameter container on every ODE step.
-    return ComponentArray(params isa ComponentArray ? getdata(params) : params, paramaxis(prob))
+    return ComponentArray(params isa ComponentArray ? getdata(params) : params, parameter_axis)
 end
 
 """
@@ -271,7 +278,7 @@ named parameter container and solve it in the prepared simulation mode.
 """
 _solve_prepared(prepared_solves::PreparedSolves, prepared_run::PreparedRun, params) =
     _solve_prepared(prepared_solves.mode, prepared_run,
-        remake(prepared_run.odeproblem; p = _params_to_p(prepared_run.problem, params)),
+        remake(prepared_run.odeproblem; p = _params_to_p(prepared_run, params)),
         prepared_solves.solve_options, prepared_solves.callback_factory)
 
 function _solve_prepared(steady_mode::SteadyMode, prepared_run::PreparedRun, remade_problem,
@@ -405,24 +412,42 @@ function _loss_objectives(lossfunction::Union{GaussianNLL, MeanAbsoluteError}, s
         # kinetics and custom observables propagate, including DomainError.
         solution.success || return [zero(eltype(params)) + observable_weight * CRISTOOL_FAILED_SIMULATION_PENALTY
                                     for observable_weight in observable_weights]
-        for (objective_index, name) in enumerate(setup.observable_names)
-            hasproperty(expt.observables, name) || continue
-            iszero(observable_weights[objective_index]) && continue
-            included_indices = setup.included_observations[experiment_index][name]
-            isempty(included_indices) && continue
-            measured = getproperty(expt.observables, name)
-            predicted = _predicted_series(prepared_solves.mode, setup.observable_projections,
-                solution, name, measured.time)
-            for measurement_index in included_indices
-                residual = predicted[measurement_index] - measured.mean[measurement_index]
-                objective_sums[objective_index] += _residual_term(lossfunction, measured, measurement_index, residual)
-                observation_counts[objective_index] += 1
-            end
-        end
+        _accumulate_experiment_objectives!(objective_sums, observation_counts, lossfunction,
+                                           setup, experiment_index, expt, solution)
     end
     return [observable_weights[objective_index] *
             _pooled(lossfunction, objective_sums[objective_index], observation_counts[objective_index])
             for objective_index in eachindex(setup.observable_names)]
+end
+
+"""
+    _accumulate_experiment_objectives!(objective_sums, observation_counts, lf, setup,
+                                       experiment_index, expt, solution)
+
+Add the scored residual terms of one experiment to the per-observable sums.
+The solver result type is only known at run time, so this function barrier
+lets each solution type compile its own observable lookups.
+"""
+function _accumulate_experiment_objectives!(objective_sums, observation_counts, lossfunction,
+                                            setup::LossSetup, experiment_index::Int,
+                                            expt::CrystallisationExperiment, solution::AbstractSolution)
+    observable_weights = setup.observable_weights
+    prepared_solves = setup.solves
+    for (objective_index, name) in enumerate(setup.observable_names)
+        hasproperty(expt.observables, name) || continue
+        iszero(observable_weights[objective_index]) && continue
+        included_indices = setup.included_observations[experiment_index][name]
+        isempty(included_indices) && continue
+        measured = getproperty(expt.observables, name)
+        predicted = _predicted_series(prepared_solves.mode, setup.observable_projections,
+            solution, name, measured.time)
+        for measurement_index in included_indices
+            residual = predicted[measurement_index] - measured.mean[measurement_index]
+            objective_sums[objective_index] += _residual_term(lossfunction, measured, measurement_index, residual)
+            observation_counts[objective_index] += 1
+        end
+    end
+    return objective_sums
 end
 
 """

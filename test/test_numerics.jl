@@ -232,6 +232,15 @@ end
     @test bound_combination.parameters ==
           (primary = (ln_nucleation_prefactor = 38.0, surface_energy = 6e-4),
            secondary = (log10_nucleation_prefactor = 9.0, nucleation_order = 1.0))
+    # Bound values flatten depth-first in slot and field order onto paramaxis(problem).
+    combined_problem = CrystallisationProblem(CrystallisationModel(LysozymeSystem();
+            nucleation = bound_combination,
+            growth = EmpiricalGrowth(growth_coefficient = 2e-11, growth_order = 3.0)),
+        RunConditions(temperature = 293.15, concentration = 18.0))
+    combined_values = kinetic_parameter_vector(combined_problem)
+    @test collect(combined_values) == [38.0, 6e-4, 9.0, 1.0, 2e-11, 3.0]
+    @test combined_values.nucl.secondary.nucleation_order == 1.0
+    @test combined_values.gr.growth_coefficient == 2e-11
     # Partial or misspelled keywords name both the missing and unknown entries.
     partial_binding_error = try
         CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energi = 6e-4)

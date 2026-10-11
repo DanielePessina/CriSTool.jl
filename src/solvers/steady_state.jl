@@ -245,15 +245,50 @@ function _steady_scaled_residual(problem, ode_problem, state, parameters,
     residual = _steady_rhs(ode_problem, state, parameters, simulation_time)
     scaled = similar(residual)
     population_range = _population_state_range(problem)
-    population_scale = shared_population_scale ?
-        max(maximum(abs, view(state, population_range)),
-            maximum(view(reference_scales, population_range)), floatmin(Float64)) : zero(eltype(reference_scales))
+    population_scale = _steady_population_scale(problem, state, reference_scales,
+                                                 shared_population_scale)
     @inbounds for state_index in eachindex(residual, state, reference_scales)
-        scale = shared_population_scale && state_index in population_range ? population_scale :
-            max(abs(state[state_index]), reference_scales[state_index], floatmin(Float64))
-        scaled[state_index] = abs(residual[state_index]) * residence_time / scale
+        scaled[state_index] = _steady_scaled_component(residual, state, reference_scales,
+            state_index, population_range, population_scale, shared_population_scale,
+            residence_time)
     end
     return residual, scaled
+end
+
+"""Shared residual scale of a mesh population block; zero when components scale individually."""
+_steady_population_scale(problem, state, reference_scales, shared_population_scale::Bool) =
+    shared_population_scale ?
+        max(maximum(abs, view(state, _population_state_range(problem))),
+            maximum(view(reference_scales, _population_state_range(problem))), floatmin(Float64)) :
+        zero(eltype(reference_scales))
+
+"""`|residual[i]|` times the residence time over the state scale of component `i`."""
+@inline function _steady_scaled_component(residual, state, reference_scales, state_index,
+                                          population_range, population_scale,
+                                          shared_population_scale::Bool, residence_time)
+    scale = shared_population_scale && state_index in population_range ? population_scale :
+        max(abs(state[state_index]), reference_scales[state_index], floatmin(Float64))
+    return abs(residual[state_index]) * residence_time / scale
+end
+
+"""
+    _steady_rhs_buffer(ode_problem)
+
+Right-hand-side buffer reused by the per-step convergence check: a vector at
+the solve's scalar type (Dual when the parameters are) for an in-place ODE,
+`nothing` for an out-of-place one.
+"""
+function _steady_rhs_buffer(ode_problem)
+    OrdinaryDiffEq.SciMLBase.isinplace(ode_problem) || return nothing
+    scalar_type = promote_type(eltype(ode_problem.u0), _parameter_eltype(ode_problem.p))
+    return similar(ode_problem.u0, scalar_type)
+end
+_steady_rhs!(::Nothing, ode_problem, state, parameters, simulation_time) =
+    ode_problem.f(state, parameters, simulation_time)
+function _steady_rhs!(derivative_buffer::AbstractVector, ode_problem, state, parameters,
+                      simulation_time)
+    ode_problem.f(derivative_buffer, state, parameters, simulation_time)
+    return derivative_buffer
 end
 
 function _steady_autostop_callback(problem, ode_problem, reference_scales,
@@ -262,13 +297,24 @@ function _steady_autostop_callback(problem, ode_problem, reference_scales,
                                    shared_population_scale::Bool = false)
     start_time = ode_problem.tspan[1]
     tolerance = residual_reltol + residual_abstol
+    population_range = _population_state_range(problem)
+    derivative_buffer = _steady_rhs_buffer(ode_problem)
+    # Checked after every accepted step: every scaled component must be finite
+    # and within tolerance, evaluated without allocating.
     condition = (state, simulation_time, integrator) -> begin
         simulation_time - start_time >= minimum_relaxation || return false
         simulation_time > start_time || return false
-        _, scaled = _steady_scaled_residual(problem, ode_problem, state,
-                                            integrator.p, simulation_time,
-                                            residence_time, reference_scales; shared_population_scale)
-        return all(isfinite, scaled) && maximum(scaled) <= tolerance
+        residual = _steady_rhs!(derivative_buffer, ode_problem, state, integrator.p,
+                                simulation_time)
+        population_scale = _steady_population_scale(problem, state, reference_scales,
+                                                    shared_population_scale)
+        for state_index in eachindex(residual, state, reference_scales)
+            scaled_component = _steady_scaled_component(residual, state, reference_scales,
+                state_index, population_range, population_scale, shared_population_scale,
+                residence_time)
+            isfinite(scaled_component) && scaled_component <= tolerance || return false
+        end
+        return true
     end
     return DiscreteCallback(condition,
                             integrator -> SciMLBase.terminate!(integrator);
@@ -404,7 +450,9 @@ Internal prepared-loss entry point. `ode_problem` is authoritative: in
 particular, its `p` may be a candidate-specific `ComponentArray` with Dual
 values. Without an explicit `relaxation_horizon` the ODE span is the horizon.
 The returned result records failure in `success` and `diagnostics` instead of
-discarding the solver retcode.
+discarding the solver retcode. Callers validate `problem` with
+`_validate_steadystate_problem` once: `solve_steadystate` per call, prepared
+inference when it builds the run template.
 """
 function _solve_steadystate_ode(problem::CrystallisationProblem, ode_problem,
                                 algorithm;
@@ -413,8 +461,6 @@ function _solve_steadystate_ode(problem::CrystallisationProblem, ode_problem,
                                 callback_factory = nothing,
                                 reconstruction_failure_handler = nothing)
     options = steady_options
-    _validate_steadystate_problem(problem; autonomous = options.autonomous)
-
     start_time, original_end_time = ode_problem.tspan
     horizon = something(options.relaxation_horizon, original_end_time - start_time)
     options.minimum_relaxation <= horizon ||
