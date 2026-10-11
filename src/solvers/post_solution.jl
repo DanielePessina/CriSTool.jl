@@ -162,10 +162,8 @@ matrix, computed once when a mesh solution is assembled.
 function _momentsizes(mesh::AbstractVector, numberdensity::AbstractMatrix)
     step_size = Base.step(mesh)
     n_columns = size(numberdensity, 2)
-    d10 = Vector{eltype(numberdensity)}(undef, n_columns)
-    d32 = similar(d10)
-    d43 = similar(d10)
-    moment2 = similar(d10)
+    density_type = eltype(numberdensity)
+    moment_matrix = Matrix{density_type}(undef, 5, n_columns)
 
     # The mesh is shared by every saved time.  Hoist its powers once, then
     # traverse each contiguous density column once to accumulate μ₀…μ₄.
@@ -179,7 +177,6 @@ function _momentsizes(mesh::AbstractVector, numberdensity::AbstractMatrix)
         mesh_fourth[mesh_slot] = mesh_value^4
     end
 
-    density_type = eltype(numberdensity)
     @inbounds for column_index in 1:n_columns
         mu0 = zero(density_type)
         mu1 = zero(density_type)
@@ -197,13 +194,13 @@ function _momentsizes(mesh::AbstractVector, numberdensity::AbstractMatrix)
             mu4 += weighted_density * mesh_fourth[mesh_slot]
             mesh_slot += 1
         end
-
-        moment2[column_index] = mu2
-        d10[column_index] = _safe_moment_size_ratio(mu1, mu0, mu0)
-        d32[column_index] = _safe_moment_size_ratio(mu3, mu2, mu0)
-        d43[column_index] = _safe_moment_size_ratio(mu4, mu3, mu0)
+        moment_matrix[1, column_index] = mu0
+        moment_matrix[2, column_index] = mu1
+        moment_matrix[3, column_index] = mu2
+        moment_matrix[4, column_index] = mu3
+        moment_matrix[5, column_index] = mu4
     end
-    return (; d10, d32, d43, moment2)
+    return _raw_moment_size_metrics(moment_matrix)
 end
 
 """

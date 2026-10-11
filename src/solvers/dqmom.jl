@@ -12,18 +12,20 @@ include("dqmom_operations.jl")
 @inline function _validate_dqmom_solver(solver::DQMOM)
     solver.nquadrature >= 2 ||
         throw(ArgumentError("DQMOM requires nquadrature >= 2."))
-    isfinite(solver.coordinate_scale) && solver.coordinate_scale > 0.0 ||
-        throw(ArgumentError("DQMOM coordinate_scale must be finite and strictly positive."))
     isfinite(solver.weight_scale) && solver.weight_scale > 0.0 ||
         throw(ArgumentError("DQMOM weight_scale must be finite and strictly positive."))
-    isfinite(solver.realizability_tolerance) && solver.realizability_tolerance >= 0.0 ||
-        throw(ArgumentError("DQMOM realizability_tolerance must be finite and nonnegative."))
-    isfinite(solver.node_coalescence_tolerance) &&
-        solver.node_coalescence_tolerance >= 0.0 ||
-        throw(ArgumentError("DQMOM node_coalescence_tolerance must be finite and nonnegative."))
-    isfinite(solver.minimum_size) && solver.minimum_size >= 0.0 ||
-        throw(ArgumentError("DQMOM minimum_size must be finite and nonnegative."))
-    return solver
+    return _validate_quadrature_solver(solver)
+end
+
+"""Smallest pairwise distance between the entries of `nodes` (`typemax` for fewer than two)."""
+function _dqmom_minimum_node_gap(nodes::AbstractVector{T}) where {T}
+    minimum_gap = typemax(T)
+    @inbounds for first_index in 1:(length(nodes) - 1)
+        for second_index in (first_index + 1):length(nodes)
+            minimum_gap = min(minimum_gap, abs(nodes[first_index] - nodes[second_index]))
+        end
+    end
+    return minimum_gap
 end
 
 function _validate_dqmom_public_state(problem::CrystallisationProblem)
@@ -37,7 +39,7 @@ function _validate_dqmom_public_state(problem::CrystallisationProblem)
     nquadrature = solver.nquadrature
     n_solvent = length(propertynames(problem.initial_solvent_state))
     n_reactor = _operation_state_count(problem.operation)
-    expected_length = 2 * nquadrature + n_reactor + n_solvent
+    expected_length = last(_solvent_state_range(problem))
     length(direct_state) == expected_length ||
         throw(ArgumentError("DQMOM initial_state must contain $nquadrature weights, " *
                             "$nquadrature physical nodes, $n_reactor reactor values, " *
@@ -51,13 +53,9 @@ function _validate_dqmom_public_state(problem::CrystallisationProblem)
         throw(ArgumentError("DQMOM requires initial nodes strictly above minimum_size."))
 
     separation_tolerance = solver.node_coalescence_tolerance * solver.coordinate_scale
-    @inbounds for first_index in 1:(nquadrature - 1)
-        for second_index in (first_index + 1):nquadrature
-            abs(nodes[first_index] - nodes[second_index]) > separation_tolerance ||
-                throw(ArgumentError("DQMOM initial nodes must be pairwise distinct and " *
-                                    "separated by more than $separation_tolerance m."))
-        end
-    end
+    _dqmom_minimum_node_gap(nodes) > separation_tolerance ||
+        throw(ArgumentError("DQMOM initial nodes must be pairwise distinct and " *
+                            "separated by more than $separation_tolerance m."))
     return problem
 end
 
@@ -104,13 +102,10 @@ function _dqmom_direct_state(problem::CrystallisationProblem)
     solver = problem.solver
     public_state = _get_initial_state(problem)
     nquadrature = solver.nquadrature
-    n_solvent = length(propertynames(problem.initial_solvent_state))
-    n_reactor = _operation_state_count(problem.operation)
     element_type = promote_type(eltype(public_state),
                                 typeof(solver.coordinate_scale),
                                 typeof(solver.weight_scale))
-    internal_state = Vector{element_type}(undef,
-                                         2 * nquadrature + n_reactor + n_solvent)
+    internal_state = Vector{element_type}(undef, last(_solvent_state_range(problem)))
     @inbounds for node_index in 1:nquadrature
         weight = public_state[node_index]
         physical_node = public_state[nquadrature + node_index]
@@ -119,16 +114,10 @@ function _dqmom_direct_state(problem::CrystallisationProblem)
         internal_state[node_index] = scaled_weight
         internal_state[nquadrature + node_index] = scaled_weight * scaled_node
     end
-    first_reactor = 2 * nquadrature + 1
-    @inbounds for reactor_index in 1:n_reactor
-        internal_state[first_reactor + reactor_index - 1] =
-            public_state[first_reactor + reactor_index - 1]
-    end
-    first_solvent = first(_solvent_state_range(problem))
-    @inbounds for solvent_index in 1:n_solvent
-        internal_state[first_solvent + solvent_index - 1] =
-            public_state[first_solvent + solvent_index - 1]
-    end
+    # The reactor and solvent blocks follow the population contiguously and are
+    # not rescaled.
+    tail_range = (2 * nquadrature + 1):length(internal_state)
+    internal_state[tail_range] = @view public_state[tail_range]
     return internal_state
 end
 
@@ -185,38 +174,24 @@ function _dqmom_moment_source(problem::CrystallisationProblem,
     end)
 end
 
-"""Solvent derivatives with the exact DQMOM volume-rate concentration coupling."""
-function _dqmom_solvent_derivatives(problem::CrystallisationProblem,
-                                    solvent_dynamics::DefaultSolventDynamics,
-                                    state, parameters, time, growth_rates,
-                                    volume_moment_rate)
-    concentration_rate = _quadrature_concentration_rate(problem, volume_moment_rate)
-    concentration_position = _quadrature_concentration_position(problem)
-    return ntuple(index -> index == concentration_position ? concentration_rate :
-                  zero(concentration_rate),
-                  Val(length(propertynames(problem.initial_solvent_state))))
-end
+"""
+Growth argument handed to custom solvent dynamics: length-dependent growth
+hands them the node rates, scalar growth the scalar net rate.  The built-in
+dynamics need none, so nothing is computed for them.
+"""
+_dqmom_growth_context(::DefaultSolventDynamics, problem::CrystallisationProblem,
+                      state, parameters, time, growth_rates) = nothing
 
-function _dqmom_solvent_derivatives(problem::CrystallisationProblem,
-                                    solvent_dynamics,
-                                    state, parameters, time, growth_rates,
-                                    volume_moment_rate)
-    concentration_rate = _quadrature_concentration_rate(problem, volume_moment_rate)
-    concentration_position = _quadrature_concentration_position(problem)
-    # Length-dependent growth hands custom dynamics the node rates; scalar
-    # growth hands them the scalar net rate.
-    growth_context = _is_length_law(problem.model.growth.law) ? growth_rates :
-                     net_growth_rate(problem.model.growth.law,
-                                     parameters.gr,
-                                     problem.model.dissolution.law,
-                                     parameters.diss,
-                                     problem,
-                                     state,
-                                     time)
-    base_rates = _solvent_derivatives(problem, state, time, growth_context, solvent_dynamics)
-    return ntuple(index -> index == concentration_position ? concentration_rate :
-                  base_rates[index],
-                  Val(length(propertynames(problem.initial_solvent_state))))
+function _dqmom_growth_context(solvent_dynamics, problem::CrystallisationProblem,
+                               state, parameters, time, growth_rates)
+    return _is_length_law(problem.model.growth.law) ? growth_rates :
+           net_growth_rate(problem.model.growth.law,
+                           parameters.gr,
+                           problem.model.dissolution.law,
+                           parameters.diss,
+                           problem,
+                           state,
+                           time)
 end
 
 """DQMOM RHS on the static normalized weighted-node state; `Val(N)` is the node count."""
@@ -253,9 +228,11 @@ function _dqmom_rhs(problem::CrystallisationProblem, state::SVector{S}, paramete
     # must not be interpreted as crystal growth or dissolution.
     physical_volume_rate = solver.weight_scale * solver.coordinate_scale^3 *
                            kinetic_source[4]
-    solvent_rates = _dqmom_solvent_derivatives(problem, problem.solvent_dynamics, state,
-                                               parameters, time, growth_rates,
-                                               physical_volume_rate)
+    growth_context = _dqmom_growth_context(problem.solvent_dynamics, problem, state,
+                                           parameters, time, growth_rates)
+    solvent_rates = _quadrature_solvent_derivatives(problem, problem.solvent_dynamics, state,
+                                                    time, growth_context,
+                                                    physical_volume_rate)
     reactor_count = _operation_state_count(problem.operation)
     internal_rates = SVector(ntuple(Val(S)) do state_index
         state_index <= 2 * N ? direct_rates[state_index] :
@@ -321,8 +298,6 @@ end
 function _wrap_solution(solver::DQMOM, problem::CrystallisationProblem, solution,
                         boundary_flow_state::NamedTuple)
     nquadrature = solver.nquadrature
-    n_solvent = length(propertynames(problem.initial_solvent_state))
-    n_reactor = _operation_state_count(problem.operation)
     internal_matrix = Array(solution)
     n_time_points = length(solution.t)
     element_type = eltype(internal_matrix)
@@ -353,23 +328,10 @@ function _wrap_solution(solver::DQMOM, problem::CrystallisationProblem, solution
                                                            Val(nquadrature))
 
     reactor_solution_state = _reactor_solution_state(problem, solution)
-    solvent_final = Vector{element_type}(undef, n_solvent)
-    first_solvent = first(_solvent_state_range(problem))
-    @inbounds for solvent_index in 1:n_solvent
-        solvent_final[solvent_index] = internal_matrix[
-            first_solvent + solvent_index - 1, n_time_points]
-    end
-    reactor_final = if n_reactor == 0
-        Vector{element_type}()
-    else
-        reactor_range = _reactor_state_range(problem)
-        collect(@view internal_matrix[first(reactor_range):last(reactor_range),
-                                      n_time_points])
-    end
+    # Reactor and solvent values follow the population and are not rescaled.
     final_state = vcat(collect(view(weight_matrix, :, n_time_points)),
                        collect(view(node_matrix, :, n_time_points)),
-                       reactor_final,
-                       solvent_final)
+                       internal_matrix[(2 * nquadrature + 1):end, n_time_points])
     if element_type <: AbstractFloat
         all(node -> node > solver.minimum_size, node_matrix) ||
             throw(DomainError(minimum(node_matrix),
@@ -405,13 +367,7 @@ function _dqmom_projection_diagnostics(node_matrix::AbstractMatrix{T}, weight_ma
     @inbounds for time_index in 1:n_time_points
         scaled_nodes = SVector(ntuple(node_index -> node_matrix[node_index, time_index] /
                                                     solver.coordinate_scale, Val(N)))
-        minimum_gap = typemax(T)
-        for first_index in 1:(N - 1)
-            for second_index in (first_index + 1):N
-                minimum_gap = min(minimum_gap,
-                                  abs(scaled_nodes[first_index] - scaled_nodes[second_index]))
-            end
-        end
+        minimum_gap = _dqmom_minimum_node_gap(scaled_nodes)
         physical_minimum_gap = solver.coordinate_scale * minimum_gap
         physical_minimum_gap > solver.node_coalescence_tolerance * solver.coordinate_scale ||
             throw(DomainError(physical_minimum_gap,

@@ -8,20 +8,26 @@ tested against known atomic measures before it is used in an ODE right-hand
 side.
 """
 
+"""Settings that QMOM and DQMOM share: scales, realizability and node tolerances."""
+@inline function _validate_quadrature_solver(solver::Union{QMOM, DQMOM})
+    solver_name = nameof(typeof(solver))
+    isfinite(solver.coordinate_scale) && solver.coordinate_scale > 0.0 ||
+        throw(ArgumentError("$solver_name coordinate_scale must be finite and strictly positive."))
+    isfinite(solver.realizability_tolerance) && solver.realizability_tolerance >= 0.0 ||
+        throw(ArgumentError("$solver_name realizability_tolerance must be finite and nonnegative."))
+    isfinite(solver.node_coalescence_tolerance) && solver.node_coalescence_tolerance >= 0.0 ||
+        throw(ArgumentError("$solver_name node_coalescence_tolerance must be finite and nonnegative."))
+    isfinite(solver.minimum_size) && solver.minimum_size >= 0.0 ||
+        throw(ArgumentError("$solver_name minimum_size must be finite and nonnegative."))
+    return solver
+end
+
 @inline function _validate_qmom_solver(solver::QMOM)
     solver.nquadrature >= 2 ||
         throw(ArgumentError("QMOM requires nquadrature >= 2 for the M₂ concentration closure."))
-    isfinite(solver.coordinate_scale) && solver.coordinate_scale > 0.0 ||
-        throw(ArgumentError("QMOM coordinate_scale must be finite and strictly positive."))
-    isfinite(solver.realizability_tolerance) && solver.realizability_tolerance >= 0.0 ||
-        throw(ArgumentError("QMOM realizability_tolerance must be finite and nonnegative."))
     isfinite(solver.empty_population_tolerance) && solver.empty_population_tolerance >= 0.0 ||
         throw(ArgumentError("QMOM empty_population_tolerance must be finite and nonnegative."))
-    isfinite(solver.node_coalescence_tolerance) && solver.node_coalescence_tolerance >= 0.0 ||
-        throw(ArgumentError("QMOM node_coalescence_tolerance must be finite and nonnegative."))
-    isfinite(solver.minimum_size) && solver.minimum_size >= 0.0 ||
-        throw(ArgumentError("QMOM minimum_size must be finite and nonnegative."))
-    return solver
+    return _validate_quadrature_solver(solver)
 end
 
 """Scalar type of a rule reconstructed from `moment_values` (at least `Float64`)."""
@@ -578,17 +584,9 @@ function aggregation_moment_source(aggregationfunction::AbstractAggregationFunct
                                       maximum_order; shape_factor = shape_factor)
 end
 
-aggregation_moment_source(aggregationfunction::AbstractAggregationFunction,
-                          parameters,
-                          quadrature::QMOMQuadrature,
-                          maximum_order::Integer,
-                          problem::CrystallisationProblem) =
-    aggregation_moment_source(aggregationfunction, parameters, quadrature,
-                              maximum_order; shape_factor = problem.model.system.volume_shape_factor)
-
 """
     _breakage_moment_source(breakagefunction, parameters,
-                            nodes, weights, maximum_order; weight_scale=1)
+                            nodes, weights, maximum_order)
 
 Evaluate the exact raw-moment source of the existing uniform-in-volume
 binary daughter law on a QMOM rule.  A parent of length `L` contributes
@@ -601,19 +599,17 @@ function _breakage_moment_source(breakagefunction::AbstractBreakageFunction,
                                  parameters,
                                  nodes::AbstractVector,
                                  weights::AbstractVector,
-                                 maximum_order::Integer;
-                                 weight_scale = 1.0)
+                                 maximum_order::Integer)
     maximum_order >= 0 || throw(ArgumentError("maximum_order must be nonnegative."))
     return Vector(_breakage_moment_source(breakagefunction, parameters, nodes, weights,
-                                          Val(maximum_order + 1); weight_scale))
+                                          Val(maximum_order + 1)))
 end
 
 function _breakage_moment_source(breakagefunction::AbstractBreakageFunction,
                                  parameters,
                                  nodes::AbstractVector,
                                  weights::AbstractVector,
-                                 ::Val{K};
-                                 weight_scale = 1.0) where {K}
+                                 ::Val{K}) where {K}
     length(nodes) == length(weights) ||
         throw(ArgumentError("Breakage nodes and weights must have the same length."))
     _has_moment_closure(breakagefunction) ||
@@ -621,14 +617,14 @@ function _breakage_moment_source(breakagefunction::AbstractBreakageFunction,
                             "has no validated QMOM moment closure."))
 
     source_type = promote_type(eltype(nodes), eltype(weights), eltype(parameters),
-                               typeof(weight_scale))
+                               Float64)
     source = zero(SVector{K, source_type})
     _is_null_kinetic(breakagefunction) && return source
 
     named_parameters = _named_params(breakagefunction, parameters)
     @inbounds for node_index in eachindex(nodes, weights)
         crystal_length = nodes[node_index]
-        event_rate = weight_scale * weights[node_index] *
+        event_rate = weights[node_index] *
                      _breakage_frequency(breakagefunction,
                                          named_parameters,
                                          crystal_length)
@@ -729,72 +725,73 @@ end
     return 3 * volume_rate
 end
 
-"""Solvent coupling for a QMOM volume-rate closure.
+"""Solvent coupling for a quadrature volume-rate closure (QMOM and DQMOM).
 
-Custom solvent dynamics continue to receive the scalar net growth rate so
-existing user-defined auxiliary-state laws remain source-compatible.  The
-concentration component is replaced with the exact quadrature volume rate;
-the built-in dynamics use the same expression directly.
+Custom solvent dynamics receive `growth_context` (the scalar net growth rate,
+or the node rates for length-dependent DQMOM growth) so existing user-defined
+auxiliary-state laws remain source-compatible.  The concentration component is
+replaced with the exact quadrature volume rate; the built-in dynamics use the
+same expression directly.
 """
-function _qmom_solvent_derivatives(problem::CrystallisationProblem,
-                                   solvent_dynamics::DefaultSolventDynamics,
-                                   state,
-                                   time,
-                                   scalar_growth_rate,
-                                   quadrature_volume_rate)
+function _quadrature_solvent_derivatives(problem::CrystallisationProblem,
+                                         solvent_dynamics::DefaultSolventDynamics,
+                                         state, time, growth_context, quadrature_volume_rate)
     concentration_rate = _quadrature_concentration_rate(problem, quadrature_volume_rate)
-    concentration_position = _quadrature_concentration_position(problem)
-    return ntuple(index -> index == concentration_position ? concentration_rate :
-                  zero(concentration_rate),
-                  Val(length(propertynames(problem.initial_solvent_state))))
+    return _with_quadrature_concentration_rate(
+        problem,
+        ntuple(_ -> zero(concentration_rate),
+               Val(length(propertynames(problem.initial_solvent_state)))),
+        concentration_rate)
 end
 
-function _qmom_solvent_derivatives(problem::CrystallisationProblem,
-                                   solvent_dynamics,
-                                   state,
-                                   time,
-                                   scalar_growth_rate,
-                                   quadrature_volume_rate)
+function _quadrature_solvent_derivatives(problem::CrystallisationProblem,
+                                         solvent_dynamics,
+                                         state, time, growth_context, quadrature_volume_rate)
     concentration_rate = _quadrature_concentration_rate(problem, quadrature_volume_rate)
-    concentration_position = _quadrature_concentration_position(problem)
-    base_rates = _solvent_derivatives(problem, state, time, scalar_growth_rate,
-                                      solvent_dynamics)
-    return ntuple(index -> index == concentration_position ? concentration_rate :
-                  base_rates[index],
-                  Val(length(propertynames(problem.initial_solvent_state))))
+    base_rates = _solvent_derivatives(problem, state, time, growth_context, solvent_dynamics)
+    return _with_quadrature_concentration_rate(problem, base_rates, concentration_rate)
 end
 
 @inline _quadrature_concentration_rate(problem::CrystallisationProblem, quadrature_volume_rate) =
     -problem.model.system.crystal_density * problem.model.system.volume_shape_factor *
     quadrature_volume_rate
 
-@inline function _quadrature_concentration_position(problem::CrystallisationProblem)
-    concentration_position = findfirst(==(Symbol(:concentration)),
-                                       propertynames(problem.initial_solvent_state))
-    concentration_position === nothing &&
-        throw(ArgumentError("initial_solvent_state must define :concentration."))
-    return concentration_position
+"""Solvent `base_rates` with the concentration entry replaced by `concentration_rate`."""
+@inline function _with_quadrature_concentration_rate(problem::CrystallisationProblem,
+                                                     base_rates, concentration_rate)
+    concentration_position = _solvent_state_index(problem, :concentration) -
+                             first(_solvent_state_range(problem)) + 1
+    return ntuple(index -> index == concentration_position ? concentration_rate :
+                  base_rates[index],
+                  Val(length(propertynames(problem.initial_solvent_state))))
 end
 
-function _qmom_extinction_callback(problem::CrystallisationProblem)
-    _dissolution_enabled(problem) || return nothing
-    n_moments = moment_count(problem.solver)
-    n_moments >= 4 || return nothing
+"""
+    _solid_mass_extinction_callback(problem)
 
-    names = propertynames(problem.initial_solvent_state)
-    concentration_position = findfirst(==(Symbol(:concentration)), names)
-    concentration_position === nothing &&
-        throw(ArgumentError("initial_solvent_state must define :concentration."))
+Release the residual solid mass `ρ kᵥ µ₃` as solute and zero the population block
+when µ₃ crosses the solid-mass threshold downward.  Shared by MoM and QMOM,
+whose population blocks both start with the raw moments µ₀:µ₃.  Only built for
+signed (dissolving) kinetics; the ordinary positive-growth path gets no callback.
+"""
+function _solid_mass_extinction_callback(problem::CrystallisationProblem)
+    _dissolution_enabled(problem) || return nothing
+    population_count = _population_state_count(problem.solver)
+    population_count >= 4 || return nothing
+
     concentration_index = _solvent_state_index(problem, :concentration)
-    state_count = n_moments + _operation_state_count(problem.operation) + length(names)
+    state_count = last(_solvent_state_range(problem))
     threshold = _validate_solid_mass_concentration_threshold(problem)
     condition = (state, time, integrator) -> problem.model.system.crystal_density * problem.model.system.volume_shape_factor * state[4] - threshold
     affect! = integrator -> nothing
     affect_neg! = integrator -> begin
         state = integrator.u
+        # Transfer the actual residual solid mass represented by µ3.  Do not
+        # clamp it: an unexpected negative crossing must remain observable as
+        # a failed physical state rather than being silently hidden.
         residual_mass = problem.model.system.crystal_density * problem.model.system.volume_shape_factor * state[4]
         integrator.u = SVector(ntuple(Val(state_count)) do state_index
-            if state_index <= n_moments
+            if state_index <= population_count
                 zero(state[state_index])
             elseif state_index == concentration_index
                 state[state_index] + residual_mass
@@ -1022,12 +1019,12 @@ function _qmom_rhs(problem::CrystallisationProblem, state::SVector{S}, parameter
                                                          parameters, time,
                                                          scalar_growth_rate,
                                                          nucleation_rate_value)
-    solvent_derivatives = _qmom_solvent_derivatives(problem,
-                                                    problem.solvent_dynamics,
-                                                    state,
-                                                    time,
-                                                    scalar_growth_rate,
-                                                    volume_rate)
+    solvent_derivatives = _quadrature_solvent_derivatives(problem,
+                                                          problem.solvent_dynamics,
+                                                          state,
+                                                          time,
+                                                          scalar_growth_rate,
+                                                          volume_rate)
     reactor_count = _operation_state_count(problem.operation)
     internal_rates = SVector(ntuple(Val(S)) do state_index
         state_index <= M ? moment_derivatives[state_index] :
@@ -1042,7 +1039,7 @@ function crystallisation_odeproblem(solver::QMOM, problem::CrystallisationProble
     _validate_qmom_problem(problem)
     n_moments = moment_count(problem.solver)
     n_solvent = length(propertynames(problem.initial_solvent_state))
-    n_states = n_moments + _operation_state_count(problem.operation) + n_solvent
+    n_states = last(_solvent_state_range(problem))
     n_states == length(_get_initial_state(problem)) ||
         throw(ArgumentError("QMOM initial_state must contain $n_moments raw moments " *
                             "followed by $n_solvent solvent-state values."))
@@ -1068,7 +1065,7 @@ function crystallisation_odeproblem(solver::QMOM, problem::CrystallisationProble
                                     (saveat[1], saveat[end]),
                                     parameters;
                                     callback = CallbackSet(
-                                        _qmom_extinction_callback(problem),
+                                        _solid_mass_extinction_callback(problem),
                                         _qmom_vanishing_node_callback(problem,
                                                                       moment_count_value)))
     return ode_problem, _timestepping_algorithm(solver, Tsit5())

@@ -11,49 +11,6 @@
     end)
 end
 
-function _mom_extinction_callback(CryProblem::CrystallisationProblem)
-    # Extinction handling is only meaningful for explicitly signed scalar
-    # kinetics.  Keeping the callback off the ordinary positive-growth path
-    # avoids changing its event/counter behavior.
-    _dissolution_enabled(CryProblem) || return nothing
-
-    n_mom = CryProblem.solver.nmoments
-    n_mom < 3 && return nothing
-
-    n_solvent = length(propertynames(CryProblem.initial_solvent_state))
-    n_population = n_mom + 1
-    n_states = n_population + _operation_state_count(CryProblem.operation) + n_solvent
-    solvent_names = propertynames(CryProblem.initial_solvent_state)
-    concentration_position = findfirst(==(Symbol(:concentration)), solvent_names)
-    concentration_position === nothing &&
-        throw(ArgumentError("initial_solvent_state must define :concentration."))
-    concentration_index = _solvent_state_index(CryProblem, :concentration)
-    solid_mass_concentration_threshold = _validate_solid_mass_concentration_threshold(CryProblem)
-
-    condition = (state, time, integrator) ->
-        CryProblem.model.system.crystal_density * CryProblem.model.system.volume_shape_factor * state[4] - solid_mass_concentration_threshold
-    affect! = integrator -> nothing
-    affect_neg! = integrator -> begin
-        state = integrator.u
-        # Transfer the actual residual solid mass represented by µ3.  Do not
-        # clamp it: an unexpected negative crossing must remain observable as
-        # a failed physical state rather than being silently hidden.
-        residual_mass = CryProblem.model.system.crystal_density * CryProblem.model.system.volume_shape_factor * state[4]
-        integrator.u = SVector(ntuple(Val(n_states)) do index
-            if index <= n_population
-                zero(state[index])
-            elseif index == concentration_index
-                state[index] + residual_mass
-            else
-                state[index]
-            end
-        end)
-        nothing
-    end
-    return ContinuousCallback(condition, affect!, affect_neg!;
-                              save_positions = (false, true))
-end
-
 function _solvent_derivatives(problem::CrystallisationProblem, state, time, growth)
     return _solvent_derivatives(problem, state, time, growth,
                                 problem.solvent_dynamics)
@@ -93,9 +50,6 @@ function _solvent_solution_state(problem::CrystallisationProblem, solution)
     values = ntuple(index -> solution[first_solvent + index - 1, :], Val(n_solvent))
     return NamedTuple{names}(values)
 end
-
-_solvent_solution_index(problem::CrystallisationProblem, solution, name::Symbol) =
-    _solvent_state_index(problem, name)
 
 """
     _validate_solver_kinetics(solver, problem)
@@ -138,14 +92,13 @@ function crystallisation_odeproblem(solver::MoM, CryProblem::CrystallisationProb
 
     ET = eltype(kinetic_values)
     u0_vec = ET.(_get_initial_state(CryProblem))
-    n_states = moment_count(solver) + _operation_state_count(CryProblem.operation) +
-               length(propertynames(CryProblem.initial_solvent_state))
+    n_states = last(_solvent_state_range(CryProblem))
     u0_typed = SVector(ntuple(k -> u0_vec[k], Val(n_states)))
     ODEprob = ODEProblem{false}(MoM_model,
                                 u0_typed,
                                 (saveat[1], saveat[end]),
                                 kinetic_values;
-                                callback = _mom_extinction_callback(CryProblem))
+                                callback = _solid_mass_extinction_callback(CryProblem))
     return (ODEprob, _timestepping_algorithm(solver, Tsit5()))
 end
 
