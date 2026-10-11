@@ -59,17 +59,20 @@ function _solvent_derivatives(problem::CrystallisationProblem, state, time, grow
                                 problem.solvent_dynamics)
 end
 
-function _solvent_derivatives(problem::CrystallisationProblem, state, time, growth,
-                              solvent_dynamics)
-    rates = solvent_dynamics(problem, state, time, growth)
+_solvent_derivatives(problem::CrystallisationProblem, state, time, growth, solvent_dynamics) =
+    _ordered_solvent_rates(solvent_dynamics(problem, state, time, growth), problem, growth)
+
+"""Solvent rates in `initial_solvent_state` order; a name a NamedTuple omits has zero rate."""
+function _ordered_solvent_rates(rates::NamedTuple, problem::CrystallisationProblem, growth)
     names = propertynames(problem.initial_solvent_state)
-    if rates isa NamedTuple
-        return ntuple(index -> begin
-            name = names[index]
-            hasproperty(rates, name) ? getproperty(rates, name) : _rate_zero(growth)
-        end, Val(length(names)))
-    end
-    length(rates) == length(names) ||
+    return ntuple(index -> begin
+        name = names[index]
+        hasproperty(rates, name) ? getproperty(rates, name) : _rate_zero(growth)
+    end, Val(length(names)))
+end
+
+function _ordered_solvent_rates(rates, problem::CrystallisationProblem, growth)
+    length(rates) == length(propertynames(problem.initial_solvent_state)) ||
         throw(ArgumentError("solvent_dynamics must return one rate per initial solvent variable."))
     return rates
 end
