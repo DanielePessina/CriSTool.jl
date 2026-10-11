@@ -54,7 +54,7 @@ _operation_feed_values(feed::CrystallisationFeed, simulation_time) =
 _validate_operation(problem::CrystallisationProblem, ::BatchOperation) = nothing
 function _validate_operation(problem::CrystallisationProblem,
                              operation::Union{MSMPROperation, FedBatchOperation})
-    _validate_operation_inflow(_operation_profile_value(operation.inflow, 0.0))
+    _operation_inflow_value(operation.inflow, 0.0)
     feed_values = _operation_feed_values(operation.feed, 0.0)
     all(value -> value isa Real && isfinite(value), feed_values) ||
         throw(ArgumentError("Feed solvent values must be finite real numbers."))

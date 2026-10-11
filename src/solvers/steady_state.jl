@@ -194,23 +194,12 @@ function _validate_steady_solver(solver::MoM)
     return nothing
 end
 
-function _steady_rhs(ode_problem, state, parameters, simulation_time)
-    if SciMLBase.isinplace(ode_problem.f, length(state))
-        derivative = similar(state)
-        ode_problem.f(derivative, state, parameters, simulation_time)
-        return derivative
-    end
-    return ode_problem.f(state, parameters, simulation_time)
-end
-
 function _steady_state_reference_scales(problem, ode_problem, user_scales)
     state = collect(ode_problem.u0)
     if !isnothing(user_scales)
         length(user_scales) == length(state) ||
             throw(ArgumentError("residual_scales has length $(length(user_scales)); " *
                                 "expected $(length(state)) for the ODE state."))
-        all(scale -> scale isa Real && isfinite(scale) && scale > 0.0, user_scales) ||
-            throw(ArgumentError("residual_scales must contain finite positive state scales."))
         return collect(user_scales)
     end
 
@@ -239,35 +228,57 @@ function _include_feed_population_scales!(scales, solver::AbstractSolver, proble
 end
 _include_feed_population_scales!(scales, solver::DQMOM, problem, feed_population) = scales
 
+"""How the population block of a steady residual is scaled."""
+abstract type AbstractSteadyPopulationScaling end
+"""Every mesh cell shares the peak density scale."""
+struct SharedDensityPeakScaling <: AbstractSteadyPopulationScaling end
+"""Every state component uses its own scale."""
+struct PerComponentScaling <: AbstractSteadyPopulationScaling end
+
 function _steady_scaled_residual(problem, ode_problem, state, parameters,
-                                 simulation_time, residence_time, reference_scales;
-                                 shared_population_scale::Bool = false)
-    residual = _steady_rhs(ode_problem, state, parameters, simulation_time)
+                                 simulation_time, residence_time, reference_scales,
+                                 population_scaling::AbstractSteadyPopulationScaling)
+    residual = _steady_rhs!(_steady_rhs_buffer(ode_problem), ode_problem, state, parameters,
+                            simulation_time)
     scaled = similar(residual)
     population_range = _population_state_range(problem)
     population_scale = _steady_population_scale(problem, state, reference_scales,
-                                                 shared_population_scale)
+                                                 population_scaling)
     @inbounds for state_index in eachindex(residual, state, reference_scales)
         scaled[state_index] = _steady_scaled_component(residual, state, reference_scales,
-            state_index, population_range, population_scale, shared_population_scale,
+            state_index, population_range, population_scale, population_scaling,
             residence_time)
     end
     return residual, scaled
 end
 
+"""Population scaling of a steady solve: shared peak for meshes without user `residual_scales`."""
+_steady_population_scaling(solver::AbstractDiscretisedSolver, ::Nothing) = SharedDensityPeakScaling()
+_steady_population_scaling(solver::AbstractSolver, residual_scales) = PerComponentScaling()
+
+"""User-visible diagnostic label of a population scaling."""
+_steady_population_scaling_label(::SharedDensityPeakScaling) = :density_peak
+_steady_population_scaling_label(::PerComponentScaling) = :per_component
+
 """Shared residual scale of a mesh population block; zero when components scale individually."""
-_steady_population_scale(problem, state, reference_scales, shared_population_scale::Bool) =
-    shared_population_scale ?
-        max(maximum(abs, view(state, _population_state_range(problem))),
-            maximum(view(reference_scales, _population_state_range(problem))), floatmin(Float64)) :
-        zero(eltype(reference_scales))
+_steady_population_scale(problem, state, reference_scales, ::SharedDensityPeakScaling) =
+    max(maximum(abs, view(state, _population_state_range(problem))),
+        maximum(view(reference_scales, _population_state_range(problem))), floatmin(Float64))
+_steady_population_scale(problem, state, reference_scales, ::PerComponentScaling) =
+    zero(eltype(reference_scales))
 
 """`|residual[i]|` times the residence time over the state scale of component `i`."""
 @inline function _steady_scaled_component(residual, state, reference_scales, state_index,
                                           population_range, population_scale,
-                                          shared_population_scale::Bool, residence_time)
-    scale = shared_population_scale && state_index in population_range ? population_scale :
+                                          ::SharedDensityPeakScaling, residence_time)
+    scale = state_index in population_range ? population_scale :
         max(abs(state[state_index]), reference_scales[state_index], floatmin(Float64))
+    return abs(residual[state_index]) * residence_time / scale
+end
+@inline function _steady_scaled_component(residual, state, reference_scales, state_index,
+                                          population_range, population_scale,
+                                          ::PerComponentScaling, residence_time)
+    scale = max(abs(state[state_index]), reference_scales[state_index], floatmin(Float64))
     return abs(residual[state_index]) * residence_time / scale
 end
 
@@ -293,8 +304,8 @@ end
 
 function _steady_autostop_callback(problem, ode_problem, reference_scales,
                                    residence_time, minimum_relaxation,
-                                   residual_reltol, residual_abstol;
-                                   shared_population_scale::Bool = false)
+                                   residual_reltol, residual_abstol,
+                                   population_scaling::AbstractSteadyPopulationScaling)
     start_time = ode_problem.tspan[1]
     tolerance = residual_reltol + residual_abstol
     population_range = _population_state_range(problem)
@@ -307,10 +318,10 @@ function _steady_autostop_callback(problem, ode_problem, reference_scales,
         residual = _steady_rhs!(derivative_buffer, ode_problem, state, integrator.p,
                                 simulation_time)
         population_scale = _steady_population_scale(problem, state, reference_scales,
-                                                    shared_population_scale)
+                                                    population_scaling)
         for state_index in eachindex(residual, state, reference_scales)
             scaled_component = _steady_scaled_component(residual, state, reference_scales,
-                state_index, population_range, population_scale, shared_population_scale,
+                state_index, population_range, population_scale, population_scaling,
                 residence_time)
             isfinite(scaled_component) && scaled_component <= tolerance || return false
         end
@@ -351,24 +362,25 @@ function _steady_population_density_diagnostics(solver::AbstractDiscretisedSolve
               negative_count)
 end
 
-function _steady_physical_constraints(problem, raw_state, physical_result)
+function _steady_physical_constraints(problem, raw_state, physical_result, density_diagnostics)
     all(isfinite, raw_state) || return false, :nonfinite_state
     concentration = raw_state[_solvent_state_index(problem, :concentration)]
     concentration >= 0.0 || return false, :negative_concentration
-    return _steady_population_constraints(problem.solver, problem, raw_state, physical_result)
+    return _steady_population_constraints(problem.solver, problem, raw_state, physical_result,
+                                          density_diagnostics)
 end
 
 """`(valid, status)` of the solver's population at a candidate steady state."""
 function _steady_population_constraints(solver::AbstractDiscretisedSolver, problem, raw_state,
-                                        physical_result)
-    density_diagnostics = _steady_population_density_diagnostics(solver, problem, raw_state)
+                                        physical_result, density_diagnostics)
     density_diagnostics.negative_count > 0 || return true, :ok
     density_diagnostics.minimum >= -density_diagnostics.roundoff_tolerance ||
         return false, :negative_number_density
     return true, :roundoff_negative_number_density
 end
 
-function _steady_population_constraints(solver::DQMOM, problem, raw_state, physical_result)
+function _steady_population_constraints(solver::DQMOM, problem, raw_state, physical_result,
+                                        density_diagnostics)
     population = physical_result.population
     all(value -> isfinite(value) && value > 0.0, population.weights) ||
         return false, :nonpositive_quadrature_weight
@@ -377,13 +389,15 @@ function _steady_population_constraints(solver::DQMOM, problem, raw_state, physi
     return true, :ok
 end
 
-function _steady_population_constraints(solver::QMOM, problem, raw_state, physical_result)
+function _steady_population_constraints(solver::QMOM, problem, raw_state, physical_result,
+                                        density_diagnostics)
     all(diagnostic -> diagnostic.status in (:ok, :empty, :deflated),
         physical_result.population.diagnostics) || return false, :unrealizable_moments
     return true, :ok
 end
 
-function _steady_population_constraints(solver::MoM, problem, raw_state, physical_result)
+function _steady_population_constraints(solver::MoM, problem, raw_state, physical_result,
+                                        density_diagnostics)
     moments = @view raw_state[_population_state_range(problem)]
     all(value -> isfinite(value) && value >= 0.0, moments) ||
         return false, :negative_moment
@@ -395,6 +409,13 @@ function _steady_population_constraints(solver::MoM, problem, raw_state, physica
     end
     return true, :ok
 end
+
+"""Final lower and upper size-boundary solid mass flows; moment solvers have none."""
+_steady_size_boundary_flows(solver::AbstractMomentSolver, boundary_values, zero_flow) =
+    (zero_flow, zero_flow)
+_steady_size_boundary_flows(solver::AbstractDiscretisedSolver, boundary_values, zero_flow) =
+    (last(boundary_values.size_boundary_lower_solid_mass_flow),
+     last(boundary_values.size_boundary_upper_solid_mass_flow))
 
 function _steady_product_diagnostics(problem, raw_state, physical_result,
                                      simulation_time)
@@ -412,11 +433,8 @@ function _steady_product_diagnostics(problem, raw_state, physical_result,
     outlet_solid_flow = flows.outflow * density * moment3
     total_inlet_flow = inlet_dissolved_flow + inlet_solid_flow
     total_outlet_flow = outlet_dissolved_flow + outlet_solid_flow
-    boundary_values = reactor_vars(physical_result)
-    lower_boundary_flow = hasproperty(boundary_values, :size_boundary_lower_solid_mass_flow) ?
-        last(boundary_values.size_boundary_lower_solid_mass_flow) : zero(total_outlet_flow)
-    upper_boundary_flow = hasproperty(boundary_values, :size_boundary_upper_solid_mass_flow) ?
-        last(boundary_values.size_boundary_upper_solid_mass_flow) : zero(total_outlet_flow)
+    lower_boundary_flow, upper_boundary_flow = _steady_size_boundary_flows(
+        problem.solver, reactor_vars(physical_result), zero(total_outlet_flow))
     size_boundary_flow = lower_boundary_flow + upper_boundary_flow
     balance_residual = total_inlet_flow - total_outlet_flow - size_boundary_flow
     balance_scale = max(abs(total_inlet_flow), abs(total_outlet_flow), abs(size_boundary_flow), floatmin(Float64))
@@ -464,7 +482,7 @@ function _solve_steadystate_ode(problem::CrystallisationProblem, ode_problem,
     start_time, original_end_time = ode_problem.tspan
     horizon = something(options.relaxation_horizon, original_end_time - start_time)
     options.minimum_relaxation <= horizon ||
-        throw(ArgumentError("minimum_relaxation must lie between zero and relaxation_horizon."))
+        throw(ArgumentError("minimum_relaxation must not exceed relaxation_horizon."))
     end_time = start_time + horizon
     active_ode_problem = end_time == original_end_time ? ode_problem :
                          remake(ode_problem; tspan = (start_time, end_time))
@@ -474,12 +492,11 @@ function _solve_steadystate_ode(problem::CrystallisationProblem, ode_problem,
     residence_time = problem.operation.volume / flow
     reference_scales = _steady_state_reference_scales(problem, active_ode_problem,
                                                       options.residual_scales)
-    shared_population_scale = problem.solver isa AbstractDiscretisedSolver &&
-                              isnothing(options.residual_scales)
+    population_scaling = _steady_population_scaling(problem.solver, options.residual_scales)
     convergence_callback = _steady_autostop_callback(
         problem, active_ode_problem, reference_scales, residence_time,
-        options.minimum_relaxation, options.residual_reltol, options.residual_abstol;
-        shared_population_scale)
+        options.minimum_relaxation, options.residual_reltol, options.residual_abstol,
+        population_scaling)
 
     combined_callback_factory = ode_problem_for_solve -> begin
         custom_callback = callback_factory === nothing ? nothing :
@@ -502,7 +519,7 @@ function _solve_steadystate_ode(problem::CrystallisationProblem, ode_problem,
     final_time = raw_solution.t[end]
     residual, scaled_residual = _steady_scaled_residual(
         problem, active_ode_problem, final_ode_state, raw_solution.prob.p, final_time,
-        residence_time, reference_scales; shared_population_scale)
+        residence_time, reference_scales, population_scaling)
     scaled_residual_norm = maximum(scaled_residual)
     solver_success = SciMLBase.successful_retcode(raw_solution.retcode)
     converged = solver_success && all(isfinite, scaled_residual) &&
@@ -514,8 +531,9 @@ function _solve_steadystate_ode(problem::CrystallisationProblem, ode_problem,
     physical_result, reconstructed = _wrap_prepared_result(problem, equilibrium_sample;
         reconstruction_failure_handler)
     reconstructed || return physical_result
+    density_diagnostics = _steady_population_density_diagnostics(problem.solver, problem, raw_state)
     physical_valid, physical_status = _steady_physical_constraints(
-        problem, raw_state, physical_result)
+        problem, raw_state, physical_result, density_diagnostics)
     hydraulics, product, balance = _steady_product_diagnostics(
         problem, raw_state, physical_result, final_time)
     balance_valid = balance.relative_error <= options.balance_reltol
@@ -523,11 +541,10 @@ function _solve_steadystate_ode(problem::CrystallisationProblem, ode_problem,
                     residual_norm = norm(residual, Inf),
                     scaled_residual_norm, residual_limit,
                     residual_scales = reference_scales,
-                    population_scaling = shared_population_scale ? :density_peak : :per_component,
+                    population_scaling = _steady_population_scaling_label(population_scaling),
                     physical_state_valid = physical_valid,
                     physical_state_status = physical_status,
-                    population_density_diagnostics =
-                        _steady_population_density_diagnostics(problem.solver, problem, raw_state),
+                    population_density_diagnostics = density_diagnostics,
                     total_api_balance = balance,
                     balance_reltol = options.balance_reltol,
                     balance_valid,
@@ -572,8 +589,6 @@ function solve_steadystate(problem::CrystallisationProblem;
                            callback_factory = nothing)
     _validate_steadystate_problem(problem; autonomous = options.autonomous)
     horizon = something(options.relaxation_horizon, _default_steady_relaxation_horizon(problem))
-    options.minimum_relaxation <= horizon ||
-        throw(ArgumentError("minimum_relaxation must not exceed relaxation_horizon."))
 
     solve_problem = if isnothing(initial_guess)
         problem

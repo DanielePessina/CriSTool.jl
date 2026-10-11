@@ -107,5 +107,3 @@ _operation_state_count(::AbstractCrystallisationOperation) = 0
 _operation_state_count(::FedBatchOperation) = 1
 _operation_initial_state(::AbstractCrystallisationOperation) = Float64[]
 _operation_initial_state(operation::FedBatchOperation) = [operation.initial_volume]
-_operation_profile_value(profile::Real, simulation_time) = profile
-_operation_profile_value(profile, simulation_time) = profile(simulation_time)
