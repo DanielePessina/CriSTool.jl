@@ -117,34 +117,51 @@ _operation_prediction_names(::BatchOperation) = ()
 _operation_prediction_names(::AbstractCrystallisationOperation) = (:volume,)
 
 """
-    run_ensemble(parameter_samples, prepared_solves; observables=nothing) -> Vector{PredictionEnsemble}
+    run_ensemble(parameter_samples, prepared_solves; observables=nothing, parallel=EnsembleSerial())
+        -> Vector{PredictionEnsemble}
 
 Predict each prepared run for the full kinetic parameter vectors in the columns
 of `parameter_samples`. Without `observables`, every built-in trajectory and
-configured solvent value is predicted. Samples are solved in parallel, each
-task on its own copy of the prepared templates.
+configured solvent value is predicted. With `parallel = EnsembleThreads()` the
+(run, sample) pairs are solved on threads, each task on its own copy of the
+prepared templates; the output does not depend on `parallel`.
 """
 function run_ensemble(parameter_samples::AbstractMatrix, prepared_solves::PreparedSolves;
-                      observables = nothing)
+                      observables = nothing, parallel::SciMLBase.BasicEnsembleAlgorithm = EnsembleSerial())
     size(parameter_samples, 1) == _kinetic_parameter_count(prepared_solves) ||
         throw(ArgumentError("Ensemble sample rows must match the kinetic parameter axis."))
     sample_count = size(parameter_samples, 2)
     sample_count > 0 || throw(ArgumentError("An ensemble requires at least one parameter sample."))
-    run_count = length(prepared_solves.runs)
+    sample_solutions = Matrix{AbstractSolution}(undef, length(prepared_solves.runs), sample_count)
+    _solve_ensemble!(parallel, sample_solutions, parameter_samples, prepared_solves)
+    return map(enumerate(prepared_solves.runs)) do (run_index, prepared_run)
+        _prediction_ensemble(prepared_solves.mode, prepared_run, view(sample_solutions, run_index, :), observables)
+    end
+end
+
+function _solve_ensemble!(::EnsembleSerial, sample_solutions, parameter_samples, prepared_solves)
+    for sample_index in axes(sample_solutions, 2), run_index in axes(sample_solutions, 1)
+        sample_solutions[run_index, sample_index] = _solve_prepared(prepared_solves,
+            prepared_solves.runs[run_index], collect(view(parameter_samples, :, sample_index)))
+    end
+    return sample_solutions
+end
+
+function _solve_ensemble!(::EnsembleThreads, sample_solutions, parameter_samples, prepared_solves)
     private_solves = _cristool_once_per_task(typeof(prepared_solves)) do
         deepcopy(prepared_solves)
     end
-    sample_solutions = Matrix{AbstractSolution}(undef, run_count, sample_count)
-    Threads.@threads for flat_index in 1:(run_count * sample_count)
+    Threads.@threads for flat_index in eachindex(sample_solutions)
         run_index, sample_index = Tuple(CartesianIndices(sample_solutions)[flat_index])
         task_solves = private_solves()
         sample_solutions[run_index, sample_index] = _solve_prepared(task_solves,
             task_solves.runs[run_index], collect(view(parameter_samples, :, sample_index)))
     end
-    return map(enumerate(prepared_solves.runs)) do (run_index, prepared_run)
-        _prediction_ensemble(prepared_solves.mode, prepared_run, view(sample_solutions, run_index, :), observables)
-    end
+    return sample_solutions
 end
+
+_solve_ensemble!(unsupported::SciMLBase.BasicEnsembleAlgorithm, args...) =
+    throw(ArgumentError("parallel must be EnsembleSerial() or EnsembleThreads(), got $(typeof(unsupported))."))
 
 function _prediction_ensemble(simulation_mode::AbstractSimulationMode, prepared_run::PreparedRun,
                               run_solutions::AbstractVector, observables)

@@ -21,6 +21,10 @@ data, or numeric `RunConditions` for future operating conditions, which need
 run; varying conditions never swaps the fitted physics. This form requires an
 explicit `solver`.
 
+`predict(...; parallel = EnsembleThreads())` solves every (experiment, draw) pair
+on threads, each task on a private copy of the prepared templates. The default
+`EnsembleSerial()` gives the same predictions without threads.
+
 A fit or posterior predicts with the solver, mode and numerical options it was
 prepared with:
 

@@ -377,3 +377,45 @@ end
     @test renamed_chain.value.data == reshape(collect(1.0:12.0), 3, 2, 2)
     @test_throws ArgumentError rename_chain(renamed_chain, [:speed])
 end
+
+# Experiments solved on threads must reproduce the serial run exactly: scores are
+# reduced in experiment order, so equality is bitwise, not approximate.
+@testset "parallel = EnsembleThreads(): bitwise identical to serial (loss, fit, predict)" begin
+    parallel_times = [[0.0, 300.0, 600.0, 1000.0], [0.0, 200.0, 800.0], [0.0, 100.0, 500.0, 900.0, 1000.0]]
+    parallel_experiments = [fixture_experiment((time = elapsed_times,
+            concentration = fixture_translation_concentration.(elapsed_times; speed = trial_speed),
+            d43 = fixture_translation_d43.(elapsed_times; speed = trial_speed)),
+        fitpredict_conditions; exp_id = 40 + experiment_index)
+        for (experiment_index, (elapsed_times, trial_speed)) in enumerate(zip(parallel_times, (0.009, 0.011, 0.01)))]
+    parallel_specification = OptimisationSpec(bounds = fitpredict_bounds, algorithm = OptimizationOptimJL.LBFGS())
+    serial_fit = prepare_fit(fitpredict_model, parallel_experiments, parallel_specification)
+    threaded_fit = prepare_fit(fitpredict_model, parallel_experiments, parallel_specification;
+        parallel = EnsembleThreads())
+    @test serial_fit.setup.parallel isa EnsembleSerial
+    @test threaded_fit.setup.parallel isa EnsembleThreads
+    for trial_speed in (0.004, 0.0095, 0.02)
+        @test loss(threaded_fit, [trial_speed]) === loss(serial_fit, [trial_speed])
+        @test collect(values(loss_terms(threaded_fit, [trial_speed]))) ==
+              collect(values(loss_terms(serial_fit, [trial_speed])))
+    end
+    # The loss is not trivially constant: each experiment contributes to it.
+    @test loss(serial_fit, [0.004]) != loss(serial_fit, [0.02])
+    # fit(...; parallel) overrides the preparation for one call and yields the same optimum.
+    serial_result = fit(serial_fit)
+    threaded_result = fit(serial_fit; parallel = EnsembleThreads())
+    @test threaded_result.parameters == serial_result.parameters
+    @test threaded_result.objectives == serial_result.objectives
+    @test serial_fit.setup.parallel isa EnsembleSerial
+    # Predictions: run x draw pairs across threads match the serial solve.
+    prediction_draws = ParameterSamples(; growth = (speed = [0.008, 0.01, 0.012],))
+    serial_prediction = predict(fitpredict_model, parallel_experiments, prediction_draws; solver = MoM())
+    threaded_prediction = predict(fitpredict_model, parallel_experiments, prediction_draws; solver = MoM(),
+        parallel = EnsembleThreads())
+    @test length(serial_prediction.ensembles) == 3
+    for (serial_ensemble, threaded_ensemble) in zip(serial_prediction.ensembles, threaded_prediction.ensembles)
+        @test propertynames(threaded_ensemble) == propertynames(serial_ensemble)
+        @test threaded_ensemble.predictions == serial_ensemble.predictions
+    end
+    @test_throws ArgumentError loss(prepare_fit(fitpredict_model, parallel_experiments, parallel_specification;
+        parallel = CriSTool.SciMLBase.EnsembleDistributed()), [0.01])
+end

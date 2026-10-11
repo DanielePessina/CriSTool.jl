@@ -216,28 +216,43 @@ end
 """
     prepare_fit(model, experiments, specification; solver=MoM(), mode=TransientMode(),
                 problem_options=(;), observable_order=nothing, observable_projections=(;),
-                algorithm=nothing, solve_options=(;), callback_factory=nothing)
+                algorithm=nothing, solve_options=(;), callback_factory=nothing,
+                parallel=EnsembleSerial())
 
 Resolve each experiment's conditions, validate noise, bounds or priors, and build
 reusable solve templates. Time-zero observations consumed by `FromObservation`
 conditions are not scored. `mode = SteadyMode(...)` relaxes each run to its
 MSMPR steady state and needs numeric conditions to relax from. `algorithm`,
-`solve_options` and `callback_factory` configure the ODE solves.
+`solve_options` and `callback_factory` configure the ODE solves. `parallel =
+EnsembleThreads()` solves the experiments of every loss evaluation (and so every
+ForwardDiff gradient) on separate threads; scores are reduced in experiment order,
+so the result is bitwise identical to `EnsembleSerial()`, the default.
 """
 function prepare_fit(crystal_model::CrystallisationModel, measured_runs::AbstractVector{<:CrystallisationExperiment},
         fit_specification::Union{OptimisationSpec, BayesianSpec, ABCSpec};
         solver::AbstractSolver = MoM(), mode::AbstractSimulationMode = TransientMode(),
         problem_options::NamedTuple = (;), observable_order = nothing, observable_projections::NamedTuple = (;),
-        algorithm = nothing, solve_options::NamedTuple = (;), callback_factory = nothing)
+        algorithm = nothing, solve_options::NamedTuple = (;), callback_factory = nothing,
+        parallel::SciMLBase.BasicEnsembleAlgorithm = EnsembleSerial())
     isempty(measured_runs) && throw(ArgumentError("Supply at least one experiment."))
     kinetic_selection = _kinetic_selection(crystal_model, _selected_tree(fit_specification))
     _validate_specification(fit_specification)
     physical_runs = [_model_experiment_problem(crystal_model, experiment_run, solver, mode; problem_options...)
         for experiment_run in measured_runs]
     prepared_setup = prepare_loss(physical_runs, measured_runs; mode, loss_function = fit_specification.loss,
-        observable_order, observable_projections, algorithm, solve_options, callback_factory)
+        observable_order, observable_projections, algorithm, solve_options, callback_factory, parallel)
     _validate_likelihood_noise(fit_specification.loss, prepared_setup)
     return PreparedFit(crystal_model, fit_specification, kinetic_selection, prepared_setup, solver, problem_options)
+end
+
+"""Same preparation with the experiments of each loss evaluation solved under `parallel`."""
+function _with_parallel(prepared_fit::PreparedFit, parallel::SciMLBase.BasicEnsembleAlgorithm)
+    prepared_setup = prepared_fit.setup
+    parallel_setup = LossSetup(prepared_setup.solves, prepared_setup.experiments, prepared_setup.observable_names,
+        prepared_setup.included_observations, prepared_setup.observable_weights,
+        prepared_setup.observable_projections, parallel)
+    return PreparedFit(prepared_fit.model, prepared_fit.specification, prepared_fit.selection,
+        parallel_setup, prepared_fit.solver, prepared_fit.problem_options)
 end
 
 """Evaluate the selected-parameter objective; AD scalar types are preserved."""
@@ -258,14 +273,18 @@ struct FitResult{Model, Parameters, Objectives, Backend, Preparation}
 end
 
 """
-    fit(prepared_fit; threaded=false)
+    fit(prepared_fit; threaded=false, parallel=prepared_fit.setup.parallel)
 
 Optimise the selected kinetic parameters with the specification's algorithm.
 A scalar objective returns a `FitResult`; NSGA2 returns one `FitResult` per
 Pareto candidate. `threaded` evaluates Metaheuristics populations in parallel,
-each task on a private copy of the solve templates.
+each task on a private copy of the solve templates. `parallel = EnsembleThreads()`
+solves the experiments of each loss evaluation on threads, which also speeds up
+gradient-based algorithms; it takes effect for this call only.
 """
-function fit(prepared_fit::PreparedFit{<:Any, <:OptimisationSpec}; threaded::Bool = false)
+function fit(supplied_fit::PreparedFit{<:Any, <:OptimisationSpec}; threaded::Bool = false,
+             parallel::SciMLBase.BasicEnsembleAlgorithm = supplied_fit.setup.parallel)
+    prepared_fit = _with_parallel(supplied_fit, parallel)
     bound_pairs = last.(_named_parameter_leaves(prepared_fit.specification.bounds))
     lower_bounds, upper_bounds = first.(bound_pairs), last.(bound_pairs)
     starting_values = prepared_fit.selection.baseline[prepared_fit.selection.indices]
@@ -411,13 +430,20 @@ struct InferenceResult{Model, Samples, Backend, Preparation}
 end
 
 """
-    fit(bayesian_prepared; rng=default_rng(), threaded=false, kwargs...)
+    fit(bayesian_prepared; rng=default_rng(), threaded=false,
+        parallel=bayesian_prepared.setup.parallel, kwargs...)
 
 Sample the posterior with the specification's sampler and counts. `threaded`
-runs chains in parallel; other keywords go to `Turing.sample` (e.g. `progress`).
+runs chains in parallel (`MCMCThreads`); `parallel = EnsembleThreads()` solves
+the experiments inside each log-density evaluation on threads. Both share
+Julia's thread pool, so use `parallel` for few chains and many experiments, and
+`threaded` when chains are at least as many as threads. Other keywords go to
+`Turing.sample` (e.g. `progress`).
 """
-function fit(prepared_fit::PreparedFit{<:Any, <:BayesianSpec};
-        rng = Random.default_rng(), threaded::Bool = false, kwargs...)
+function fit(supplied_fit::PreparedFit{<:Any, <:BayesianSpec};
+        rng = Random.default_rng(), threaded::Bool = false,
+        parallel::SciMLBase.BasicEnsembleAlgorithm = supplied_fit.setup.parallel, kwargs...)
+    prepared_fit = _with_parallel(supplied_fit, parallel)
     fit_specification = prepared_fit.specification
     posterior_chain = Turing.sample(rng, nuts_model(prepared_fit), fit_specification.sampler,
         threaded ? Turing.MCMCThreads() : Turing.MCMCSerial(),
@@ -428,8 +454,16 @@ function fit(prepared_fit::PreparedFit{<:Any, <:BayesianSpec};
     return InferenceResult(prepared_fit.model, posterior_draws, posterior_chain, prepared_fit)
 end
 
-"""`fit(abc_prepared; threaded=false)` samples under the specification's discrepancy threshold."""
-function fit(prepared_fit::PreparedFit{<:Any, <:ABCSpec}; threaded::Bool = false)
+"""
+    fit(abc_prepared; threaded=false, parallel=abc_prepared.setup.parallel)
+
+Sample under the specification's discrepancy threshold. `threaded` evaluates
+particles in parallel; `parallel = EnsembleThreads()` solves the experiments of
+each discrepancy evaluation on threads.
+"""
+function fit(supplied_fit::PreparedFit{<:Any, <:ABCSpec}; threaded::Bool = false,
+             parallel::SciMLBase.BasicEnsembleAlgorithm = supplied_fit.setup.parallel)
+    prepared_fit = _with_parallel(supplied_fit, parallel)
     fit_specification = prepared_fit.specification
     joint_prior = product_distribution(last.(_named_parameter_leaves(fit_specification.priors)))
     reference_values = prepared_fit.selection.baseline[prepared_fit.selection.indices]
@@ -470,14 +504,16 @@ struct PredictionResult{Samples, Ensembles}
 end
 
 """
-    predict(result; saveat=nothing, observables=nothing)
-    predict(result, runs; saveat=nothing, observables=nothing)
+    predict(result; saveat=nothing, observables=nothing, parallel=result.preparation.setup.parallel)
+    predict(result, runs; saveat=nothing, observables=nothing, parallel=...)
 
 Propagate a fit or posterior through the same model, solver, mode and numerical
 options it was prepared with. Without `runs`, the fitted experiments are
 predicted at their observation times. `runs` may hold experiments (conditions
 resolved from their time-zero observations) or numeric `RunConditions`, which
-need `saveat`. A `FitResult` predicts its single fitted draw.
+need `saveat`. A `FitResult` predicts its single fitted draw. `parallel =
+EnsembleThreads()` solves every (run, draw) pair on threads, each task on a
+private copy of the prepared templates; results equal `EnsembleSerial()`.
 """
 function predict(fit_outcome::Union{FitResult, InferenceResult},
         prediction_runs::AbstractVector = fit_outcome.preparation.setup.experiments; kwargs...)
@@ -487,7 +523,8 @@ function predict(fit_outcome::Union{FitResult, InferenceResult},
     return predict(preparation.model, prediction_runs, _result_samples(fit_outcome);
         solver = preparation.solver, mode = fitted_solves.mode, problem_options = preparation.problem_options,
         algorithm = fitted_solves.requested_algorithm, solve_options = fitted_solves.solve_options,
-        callback_factory = fitted_solves.callback_factory, kwargs...)
+        callback_factory = fitted_solves.callback_factory,
+        (; parallel = preparation.setup.parallel, kwargs...)...)
 end
 
 _result_samples(inference_result::InferenceResult) = inference_result.samples
@@ -497,7 +534,7 @@ _result_samples(fit_result::FitResult) = ParameterSamples(fit_result.preparation
 """
     predict(model, runs, samples; solver, mode=TransientMode(), problem_options=(;),
             saveat=nothing, observables=nothing, algorithm=nothing, solve_options=(;),
-            callback_factory=nothing)
+            callback_factory=nothing, parallel=EnsembleSerial())
 
 Propagate user-supplied joint kinetic draws. The solver is required so that a
 prediction never silently changes numerical method. `algorithm`,
@@ -508,7 +545,8 @@ prediction never silently changes numerical method. `algorithm`,
 function predict(crystal_model::CrystallisationModel, prediction_runs::AbstractVector,
         joint_samples::ParameterSamples; solver::AbstractSolver, mode::AbstractSimulationMode = TransientMode(),
         problem_options::NamedTuple = (;), saveat = nothing, observables = nothing,
-        algorithm = nothing, solve_options::NamedTuple = (;), callback_factory = nothing)
+        algorithm = nothing, solve_options::NamedTuple = (;), callback_factory = nothing,
+        parallel::SciMLBase.BasicEnsembleAlgorithm = EnsembleSerial())
     isempty(prediction_runs) && throw(ArgumentError("Supply prediction experiments or run conditions."))
     sample_selection = _kinetic_selection(crystal_model, joint_samples.names)
     expanded_draws = reduce(hcat, [_expanded_parameters(sample_selection, view(joint_samples.values, :, draw_index))
@@ -517,7 +555,7 @@ function predict(crystal_model::CrystallisationModel, prediction_runs::AbstractV
         for (run_index, prediction_run) in enumerate(prediction_runs)]
     prepared_solves = _prepare_solves(first.(prediction_specs), getindex.(prediction_specs, 2), mode;
         algorithm, solve_options, callback_factory)
-    ensemble_predictions = run_ensemble(expanded_draws, prepared_solves; observables)
+    ensemble_predictions = run_ensemble(expanded_draws, prepared_solves; observables, parallel)
     return PredictionResult(joint_samples, last.(prediction_specs), ensemble_predictions)
 end
 

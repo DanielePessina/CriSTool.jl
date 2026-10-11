@@ -15,7 +15,7 @@ using Turing
 # The solver defaults (Tsit5, SSPRK43) come from the OrdinaryDiffEq subpackages;
 # users pass any other algorithm instance from the subpackage that defines it.
 using SciMLBase: SciMLBase, ODEProblem, remake, solve, CallbackSet, ContinuousCallback,
-                 DiscreteCallback
+                 DiscreteCallback, EnsembleSerial, EnsembleThreads
 using OrdinaryDiffEqTsit5: Tsit5
 using OrdinaryDiffEqSSPRK: SSPRK43
 import DiffEqCallbacks: AutoAbstol, StepsizeLimiter
@@ -111,6 +111,7 @@ export AbstractSolver, AbstractMomentSolver, FiniteVol, MoM, QMOM, DQMOM, WENO,
        moment_order, moment_count, quadrature,
        aggregation_moment_source, breakage_moment_source
 export AbstractABCSampler, ABCDESampler, ABCDETurnerSampler
+export EnsembleSerial, EnsembleThreads
 export PredictionEnsemble, prediction_summary
 export plot_predictions, plot_posterior_pairplot, ChainStatsPlots
 export rename_chain
