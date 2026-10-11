@@ -412,24 +412,42 @@ function _loss_objectives(lossfunction::Union{GaussianNLL, MeanAbsoluteError}, s
         # kinetics and custom observables propagate, including DomainError.
         solution.success || return [zero(eltype(params)) + observable_weight * CRISTOOL_FAILED_SIMULATION_PENALTY
                                     for observable_weight in observable_weights]
-        for (objective_index, name) in enumerate(setup.observable_names)
-            hasproperty(expt.observables, name) || continue
-            iszero(observable_weights[objective_index]) && continue
-            included_indices = setup.included_observations[experiment_index][name]
-            isempty(included_indices) && continue
-            measured = getproperty(expt.observables, name)
-            predicted = _predicted_series(prepared_solves.mode, setup.observable_projections,
-                solution, name, measured.time)
-            for measurement_index in included_indices
-                residual = predicted[measurement_index] - measured.mean[measurement_index]
-                objective_sums[objective_index] += _residual_term(lossfunction, measured, measurement_index, residual)
-                observation_counts[objective_index] += 1
-            end
-        end
+        _accumulate_experiment_objectives!(objective_sums, observation_counts, lossfunction,
+                                           setup, experiment_index, expt, solution)
     end
     return [observable_weights[objective_index] *
             _pooled(lossfunction, objective_sums[objective_index], observation_counts[objective_index])
             for objective_index in eachindex(setup.observable_names)]
+end
+
+"""
+    _accumulate_experiment_objectives!(objective_sums, observation_counts, lf, setup,
+                                       experiment_index, expt, solution)
+
+Add the scored residual terms of one experiment to the per-observable sums.
+The solver result type is only known at run time, so this function barrier
+lets each solution type compile its own observable lookups.
+"""
+function _accumulate_experiment_objectives!(objective_sums, observation_counts, lossfunction,
+                                            setup::LossSetup, experiment_index::Int,
+                                            expt::CrystallisationExperiment, solution::AbstractSolution)
+    observable_weights = setup.observable_weights
+    prepared_solves = setup.solves
+    for (objective_index, name) in enumerate(setup.observable_names)
+        hasproperty(expt.observables, name) || continue
+        iszero(observable_weights[objective_index]) && continue
+        included_indices = setup.included_observations[experiment_index][name]
+        isempty(included_indices) && continue
+        measured = getproperty(expt.observables, name)
+        predicted = _predicted_series(prepared_solves.mode, setup.observable_projections,
+            solution, name, measured.time)
+        for measurement_index in included_indices
+            residual = predicted[measurement_index] - measured.mean[measurement_index]
+            objective_sums[objective_index] += _residual_term(lossfunction, measured, measurement_index, residual)
+            observation_counts[objective_index] += 1
+        end
+    end
+    return objective_sums
 end
 
 """
