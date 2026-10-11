@@ -1,7 +1,10 @@
 #=Tutorial 5: Bayesian and ABC specifications share named priors and joint prediction samples.
 Sampling is intentionally small for a runnable example; increase counts for a study.
 =#
-using CriSTool, Distributions, Turing, Random
+using CriSTool, Distributions, Random
+# Loading Turing enables NUTS fitting of a BayesianSpec. Import only NUTS: Turing
+# also exports its own `predict`, which would clash with CriSTool.predict.
+using Turing: NUTS
 # Loading CairoMakie and PairPlots enables CriSTool's plotting functions.
 using CairoMakie, PairPlots
 

@@ -9,7 +9,6 @@ using Base.Threads
 using LinearAlgebra
 using Random
 using Statistics
-using Turing
 import Compat
 
 # Scientific Computing & Differential Equations

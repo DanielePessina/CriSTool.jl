@@ -60,7 +60,7 @@ moved study settings into the specifications.
 | `load_measurements(path; initial_from, seed_shape, operation, relaxation_initial)` | `load_measurements(path; conditions = (crystals = ..., operation = ...))` |
 | `expt.temperature`, `expt.initial_crystals` | `expt.conditions.temperature`, `expt.conditions.crystals` |
 | `fit(prepared; algorithm = DE(...), adtype, searchoptions)` | `OptimisationSpec(; bounds, algorithm = DE(...), adtype, searchoptions)`, then `fit(prepared)` |
-| `fit(prepared; sampler = NUTS(), n_samples, n_chains)` | `BayesianSpec(; priors, sampler = NUTS(), n_samples, n_chains)` |
+| `fit(prepared; sampler = NUTS(), n_samples, n_chains)` | `BayesianSpec(; priors, sampler = NUTS(), n_samples, n_chains)`; requires `using Turing` (a weak dependency; `sampler = nothing` means `NUTS()`) |
 | `fit(prepared; sampler, nparticles, generations, earlystop)` | `ABCSpec(; priors, target, sampler, n_particles, n_generations, early_stop)` |
 | `HPC = true` | `fit(prepared; threaded = true)` |
 | ABC target derived by a Wilks test from `confidenceinterval` | `ABCSpec(target = ...)` takes an explicit finite number |

@@ -18,7 +18,6 @@ module KissABC
 
 import AbstractMCMC
 import AbstractMCMC: sample, step, MCMCThreads, MCMCDistributed
-import Turing
 using Random
 using Distributions
 using MonteCarloMeasurements
@@ -634,7 +633,7 @@ function ess(w)
     sum(w)^2 / sum(abs2, w)
 end
 
-function resample_residual(w::AbstractVector{<:Real}, num_particles::Integer) # taken from Turing.jl
+function resample_residual(w::AbstractVector{<:Real}, num_particles::Integer) # adapted from the Turing.jl ecosystem
     # Pre-allocate array for resampled particles
     indices = Vector{Int}(undef, num_particles)
 
@@ -1156,20 +1155,6 @@ function AbstractMCMC.step(rng::Random.AbstractRNG,
                            retry_sampling::Int = 100,
                            kwargs...,)
     return _ais_step_impl(rng, model, spl, retry_sampling)
-end
-
-# Resolve the method ambiguity between this vendored AIS step and Turing's
-# `step(::AbstractRNG, ::DynamicPPL.Model, ::AbstractMCMC.AbstractSampler)`
-# (Aqua ambiguities check). The vendored ABC machinery only supports
-# `AbstractDensity` models, so a DynamicPPL/Turing model is a hard misuse:
-# fail loudly instead of dispatching ambiguously into Turing's sampler path.
-function AbstractMCMC.step(rng::Random.AbstractRNG,
-                           model::Turing.DynamicPPL.Model,
-                           spl::AIS;
-                           kwargs...)
-    error("AIS sampling requires a KissABC density (ApproxPosterior / " *
-          "CommonLogDensity), not a DynamicPPL/Turing model. Use Turing's own " *
-          "MCMC samplers for DynamicPPL models.")
 end
 
 function AbstractMCMC.step(rng::Random.AbstractRNG,

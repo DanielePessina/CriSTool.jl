@@ -32,17 +32,18 @@ Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 SciMLBase = "0bca4576-84f4-4d90-8ffe-ffa030f20462"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
-Turing = "fce5fe82-541a-59a6-adf8-730c64b5f9a0"
 
 [weakdeps]
 FlexiChains = "4a37a8b9-6e57-4b92-8664-298d46e639f7"
 Makie = "ee78f7c6-11fb-53f2-987a-cfe4a2b5a57a"
 PairPlots = "43a3c2be-4208-490b-832a-a21dcd55d7da"
+Turing = "fce5fe82-541a-59a6-adf8-730c64b5f9a0"
 
 [extensions]
 CriSToolFlexiChainsExt = "FlexiChains"
 CriSToolMakieExt = "Makie"
 CriSToolPairPlotsExt = ["Makie", "PairPlots"]
+CriSToolTuringExt = "Turing"
 
 [compat]
 AbstractMCMC = "5"
@@ -94,6 +95,7 @@ JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
 OptimizationOptimJL = "36348300-93cb-4f02-beb5-3c3902f8871e"
 PairPlots = "43a3c2be-4208-490b-832a-a21dcd55d7da"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+Turing = "fce5fe82-541a-59a6-adf8-730c64b5f9a0"
 
 [targets]
-test = ["Aqua", "CairoMakie", "DifferentiationInterface", "FiniteDifferences", "FlexiChains", "ForwardDiff", "JET", "OptimizationOptimJL", "PairPlots", "Test"]
+test = ["Aqua", "CairoMakie", "DifferentiationInterface", "FiniteDifferences", "FlexiChains", "ForwardDiff", "JET", "OptimizationOptimJL", "PairPlots", "Test", "Turing"]

@@ -50,7 +50,8 @@ at preparation without adding global methods.
 ## Bayesian inference
 
 ```julia
-using Distributions, Turing
+using Distributions
+using Turing: NUTS   # loading Turing enables BayesianSpec fitting
 bayesian_spec = BayesianSpec(priors = (
     growth = (growth_coefficient = Uniform(1e-12, 1e-9),),),
     sampler = NUTS(), n_samples = 1000, n_chains = 4)
@@ -59,6 +60,13 @@ posterior = fit(bayesian_fit; threaded = true, progress = false)
 joint_draws = posterior.samples
 posterior_predictions = predict(posterior)
 ```
+
+Turing is a weak dependency: `fit` on a `BayesianSpec` needs `using Turing` (or
+`import Turing`) in the session, which loads the `CriSToolTuringExt` extension,
+and throws an error naming that step otherwise. The default `sampler = nothing`
+means `Turing.NUTS()`. Turing also exports a `predict`; import only what you need
+(`using Turing: NUTS`) or call `CriSTool.predict` to avoid the name clash.
+ABC fitting and everything else do not need Turing.
 
 Priors are explicit and never automatically centred on a fitted optimum.
 `threaded` runs chains in parallel; other keywords such as `rng` and `progress`
