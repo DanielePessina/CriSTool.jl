@@ -472,13 +472,24 @@ function fit(supplied_fit::PreparedFit{<:Any, <:ABCSpec}; threaded::Bool = false
     joint_prior = product_distribution(last.(_named_parameter_leaves(fit_specification.priors)))
     reference_values = _selected_baseline(prepared_fit.selection)
     abc_result = _runsampler(fit_specification.sampler, joint_prior,
-        candidate_values -> loss(prepared_fit, collect(candidate_values)), fit_specification.target,
+        _particle_discrepancy(prepared_fit, Val(threaded)), fit_specification.target,
         () -> loss(prepared_fit, reference_values); nparticles = fit_specification.n_particles,
         generations = fit_specification.n_generations, HPC = threaded, earlystop = fit_specification.early_stop)
     sample_matrix = _abc_particles_matrix(abc_result.P)
     sample_matrix === nothing && throw(ArgumentError("ABC returned no posterior particles."))
     posterior_draws = ParameterSamples(prepared_fit.selection.names, sample_matrix; source = :abc)
     return InferenceResult(prepared_fit.model, posterior_draws, abc_result, prepared_fit)
+end
+
+# Threaded ABC evaluates particles concurrently; each borrows a private copy so mesh
+# solvers never share their in-place caches across threads.
+_particle_discrepancy(prepared_fit::PreparedFit, ::Val{false}) =
+    candidate_values -> loss(prepared_fit, collect(candidate_values))
+function _particle_discrepancy(prepared_fit::PreparedFit, ::Val{true})
+    private_fits = _private_copy_pool(prepared_fit, Threads.nthreads())
+    return candidate_values -> _with_private_copy(private_fits) do private_fit
+        loss(private_fit, collect(candidate_values))
+    end
 end
 
 """Sample a supplied joint distribution in the named selection order; correlations are retained."""

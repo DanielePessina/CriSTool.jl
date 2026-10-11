@@ -145,9 +145,9 @@ observable_values(steady::CrystallisationSteadyStateSolution, name::Symbol) =
 function _steady_state_autonomy_issues(problem::CrystallisationProblem)
     operation = problem.operation
     issues = Symbol[]
-    operation.inflow isa Real || push!(issues, :inflow)
-    operation.feed.concentration isa Real &&
-        all(value -> value isa Real, values(operation.feed.solvent_state)) ||
+    _is_time_invariant(operation.inflow) || push!(issues, :inflow)
+    _is_time_invariant(operation.feed.concentration) &&
+        all(_is_time_invariant, values(operation.feed.solvent_state)) ||
         push!(issues, :feed_profile)
     _is_time_invariant(problem.temp_profile) || push!(issues, :temperature_profile)
     _is_time_invariant(problem.model.system.saturation_model) || push!(issues, :saturation_model)

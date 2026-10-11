@@ -107,3 +107,6 @@ _operation_state_count(::AbstractCrystallisationOperation) = 0
 _operation_state_count(::FedBatchOperation) = 1
 _operation_initial_state(::AbstractCrystallisationOperation) = Float64[]
 _operation_initial_state(operation::FedBatchOperation) = [operation.initial_volume]
+
+# A constant operation profile value; callable profiles fall back to time-varying.
+_is_time_invariant(::Real) = true
