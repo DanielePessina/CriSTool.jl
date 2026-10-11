@@ -24,18 +24,19 @@ function main()
     # A narrow 25 µm seed starts below saturation, so crystals dissolve and c rises.
     undersaturated_run = RunConditions(temperature = 293.15, concentration = 5.0,
         crystals = LogNormalInitialCrystals(mass_concentration = 0.17, d43 = 25e-6, geometric_std = 1.05))
+    undersaturated_problem = CrystallisationProblem(crystal_model, undersaturated_run, (0.0, 18000.0))
     save_grid = collect(0.0:1800.0:18000.0)
 
     solvers = [MoM(),
                FiniteVol(meshsize = 80, lmax = 50.0e-6),
                WENO(meshsize = 80, lmax = 50.0e-6)]
-    solutions = [simulate(crystal_model, undersaturated_run; solver, saveat = save_grid) for solver in solvers]
+    solutions = [solve(undersaturated_problem, solver; saveat = save_grid) for solver in solvers]
 
     # Characteristic size: the volume median on a mesh, d43 otherwise.
     size_trajectory(solution::CrystallisationSolution{<:MeshPopulation}) = solution.population.d50q
     size_trajectory(solution::CrystallisationSolution) = solution.d43
     for (solver, solution) in zip(solvers, solutions)
-        println("$(typeof(solver)): success=$(solution.success), " *
+        println("$(typeof(solver)): retcode=$(solution.retcode), " *
                 "c_final=$(round(solution.concentration[end], sigdigits = 5)), " *
                 "size_final=$(round(1e6 * size_trajectory(solution)[end], sigdigits = 5)) μm")
     end
@@ -47,9 +48,9 @@ function main()
     colors = (:dodgerblue, :crimson, :seagreen)
     for (solver, solution, color) in zip(solvers, solutions, colors)
         label = string(typeof(solver))
-        lines!(concentration_axis, solution.time ./ 60, solution.concentration,
+        lines!(concentration_axis, solution.t ./ 60, solution.concentration,
                color = color, label = label)
-        lines!(size_axis, solution.time ./ 60, 1e6 .* size_trajectory(solution),
+        lines!(size_axis, solution.t ./ 60, 1e6 .* size_trajectory(solution),
                color = color, label = label)
     end
     axislegend(concentration_axis, position = :rb)

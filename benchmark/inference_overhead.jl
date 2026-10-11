@@ -6,10 +6,11 @@
 #   (a) one prepared loss evaluation as `fit` performs it, and its ForwardDiff gradient;
 #   (b) the sum of the raw `solve` calls for the same runs, same options, built once;
 #       (a) - (b) is the work CriSTool does outside the integrator;
-#   (c) `simulate(model, conditions)` against the raw solve of the same run;
+#   (c) `solve(problem, solver)` against the raw solve of the same run;
 #   (d) `predict` over 100 joint parameter draws;
 # (f) the same loss, gradient and predict with `parallel = EnsembleThreads()`;
-# and (e) a steady MSMPR relaxation (`solve_steadystate` and a steady loss).
+# and (e) a steady MSMPR relaxation (`solve(CrystallisationSteadyStateProblem(...), solver)`
+# and a steady loss).
 # Every row reports the median time, allocations and allocated bytes.
 using CriSTool, Chairmarks, ComponentArrays, ForwardDiff, Printf, Random
 import OrdinaryDiffEq
@@ -40,8 +41,10 @@ end
 # package passes to `solve`, with the integrator as the only timed work.
 function overhead_raw_solve_inputs(prepared_fit, kinetic_values)
     map(prepared_fit.setup.solves.runs) do prepared_run
+        # The prepared run holds the solve-time (discretised) problem.
         configured_problem = prepared_run.problem
-        odeproblem, _ = crystallisation_odeproblem(configured_problem, prepared_run.saveat,
+        odeproblem, _ = crystallisation_odeproblem(configured_problem.solver, configured_problem,
+            (first(prepared_run.saveat), last(prepared_run.saveat)),
             ComponentArray(kinetic_values, CriSTool.paramaxis(configured_problem)))
         configured_solver = configured_problem.solver
         solve_settings = (reltol = configured_solver.reltol,
@@ -113,16 +116,15 @@ function benchmark_overhead_solver(solver_label, overhead_solver)
     first_run = first(OVERHEAD_RUNS)
     first_conditions = merge(first_run.conditions; concentration = initial_concentration(first_run))
     first_times = first(prepared_fit.setup.solves.runs).saveat
-    simulate(OVERHEAD_MODEL, first_conditions; solver = overhead_solver, saveat = first_times)
-    record_overhead("(c) simulate, run 1",
-        @be(simulate(OVERHEAD_MODEL, first_conditions; solver = overhead_solver, saveat = first_times),
-            seconds = OVERHEAD_SECONDS))
+    first_problem = CrystallisationProblem(OVERHEAD_MODEL, first_conditions, (first(first_times), last(first_times)))
+    solve(first_problem, overhead_solver; saveat = first_times)
+    record_overhead("(c) solve, run 1",
+        @be(solve(first_problem, overhead_solver; saveat = first_times), seconds = OVERHEAD_SECONDS))
     record_overhead("(c) raw solve, run 1",
         @be(overhead_raw_solves(raw_inputs[1:1]), seconds = OVERHEAD_SECONDS))
-    first_problem = first(prepared_fit.setup.solves.runs).problem
     first_ode_solution = OrdinaryDiffEq.solve(raw_inputs[1][1], raw_inputs[1][2]; raw_inputs[1][3]...)
     record_overhead("(c) crystallisation_solution, run 1",
-        @be(crystallisation_solution(first_problem, first_ode_solution), seconds = OVERHEAD_SECONDS))
+        @be(crystallisation_solution(first_problem, overhead_solver, first_ode_solution), seconds = OVERHEAD_SECONDS))
 
     draw_rng = Xoshiro(20261011)
     prediction_draws = ParameterSamples(nucleation = (
@@ -145,11 +147,12 @@ const OVERHEAD_STEADY_CONDITIONS = RunConditions(temperature = 293.15, concentra
 
 function benchmark_overhead_steady(solver_label, overhead_solver)
     println("\n== steady MSMPR, ", solver_label, " ==")
-    steady_problem = CrystallisationProblem(OVERHEAD_MODEL, OVERHEAD_STEADY_CONDITIONS; solver = overhead_solver)
     steady_options = SteadyStateOptions(relaxation_horizon = 360_000.0)
-    steady_result = solve_steadystate(steady_problem; options = steady_options)
-    record_overhead("(e) solve_steadystate",
-        @be(solve_steadystate(steady_problem; options = steady_options), seconds = OVERHEAD_SECONDS))
+    steady_problem = CrystallisationSteadyStateProblem(CrystallisationProblem(OVERHEAD_MODEL,
+        OVERHEAD_STEADY_CONDITIONS, (0.0, 360_000.0)); options = steady_options)
+    steady_result = solve(steady_problem, overhead_solver)
+    record_overhead("(e) steady solve",
+        @be(solve(steady_problem, overhead_solver), seconds = OVERHEAD_SECONDS))
     steady_concentration = steady_result.equilibrium.concentration
     steady_experiment = CrystallisationExperiment(observables = (
             concentration = Observable(time = [0.0], mean = [steady_concentration], variance = [0.01]),

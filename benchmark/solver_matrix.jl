@@ -10,14 +10,14 @@ using Statistics
 # Every case runs on its own fixed 4 h save grid with the solver's default
 # tolerances and time stepper. For each supported (case, solver) pair the
 # script reports:
-#   - the median forward solve (`runsimulation`, the call fits make), its
+#   - the median forward solve (`solve(remake(problem; p), solver)`), its
 #     allocations and bytes;
 #   - the number of RHS evaluations and the time per evaluation, which splits
 #     cost into "how many steps" and "how expensive each step is";
 #   - the median ForwardDiff gradient of a scalar trajectory summary with
 #     respect to every kinetic parameter (the cost of one gradient-based fit
 #     iteration).
-# Unsupported combinations (ArgumentError at problem construction) print n/a.
+# Unsupported combinations (ArgumentError or DomainError at solve time) print n/a.
 #
 # Usage:  julia --project=benchmark benchmark/solver_matrix.jl [seconds]
 # ============================================================================
@@ -81,36 +81,32 @@ const MATRIX_SOLVERS = (
     ("WENO200", WENO(meshsize = 200)),
 )
 
-matrix_problem(case, solver) =
-    CrystallisationProblem(case.model, case.conditions; solver)
+matrix_problem(case) =
+    CrystallisationProblem(case.model, case.conditions, (first(MATRIX_SAVE_TIMES), last(MATRIX_SAVE_TIMES)))
 
-matrix_forward(parameters, problem) = last(runsimulation(parameters, problem; save_idx = MATRIX_SAVE_TIMES))
+matrix_forward(parameters, problem, solver) =
+    solve(remake(problem; p = parameters), solver; saveat = MATRIX_SAVE_TIMES)
 
 # Scalar summary that touches the solute and size outputs every solver shares.
-matrix_objective(parameters, problem) = begin
-    trajectory = matrix_forward(parameters, problem)
+matrix_objective(parameters, problem, solver) = begin
+    trajectory = matrix_forward(parameters, problem, solver)
     sum(trajectory.concentration) + 1e6 * sum(trajectory.d43)
 end
 
 function matrix_row(case, solver_name, solver)
-    problem = try
-        matrix_problem(case, solver)
-    catch caught_error
-        caught_error isa ArgumentError || rethrow()
-        return (solver_name, nothing, "constructor: " * first(split(caught_error.msg, '\n')))
-    end
+    problem = matrix_problem(case)
     parameters = collect(Float64, kinetic_parameter_vector(problem))
     trajectory = try
-        matrix_forward(parameters, problem)
+        matrix_forward(parameters, problem, solver)
     catch caught_error
         caught_error isa Union{ArgumentError, DomainError} || rethrow()
         return (solver_name, nothing, "solve: " * first(split(sprint(showerror, caught_error), '\n')))
     end
     rhs_evaluations = trajectory.ode_stats.nf
-    forward = median(@be matrix_forward($parameters, $problem) evals = 1 seconds = SECONDS_PER_BENCHMARK)
+    forward = median(@be matrix_forward($parameters, $problem, $solver) evals = 1 seconds = SECONDS_PER_BENCHMARK)
     gradient = try
-        ForwardDiff.gradient(parameter_vector -> matrix_objective(parameter_vector, problem), parameters)
-        median(@be ForwardDiff.gradient(parameter_vector -> matrix_objective(parameter_vector, $problem),
+        ForwardDiff.gradient(parameter_vector -> matrix_objective(parameter_vector, problem, solver), parameters)
+        median(@be ForwardDiff.gradient(parameter_vector -> matrix_objective(parameter_vector, $problem, $solver),
             $parameters) evals = 1 seconds = SECONDS_PER_BENCHMARK)
     catch caught_error
         @warn "gradient failed" case.name solver_name exception = caught_error

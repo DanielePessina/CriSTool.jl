@@ -14,8 +14,8 @@ ways to obtain that operating point:
    The final dynamic point approaches the steady state but the transient runner
    stops at the requested horizon — it does not prove equilibrium.
 
-2. `solve_steadystate(problem)`, the explicit steady-state route for a constant
-   autonomous MSMPR. It relaxes the dynamics until the scaled full-state RHS
+2. `solve(CrystallisationSteadyStateProblem(problem), solver)`, the explicit
+   steady-state route for a constant autonomous MSMPR. It relaxes the dynamics until the scaled full-state RHS
    residual is within tolerance and returns a `CrystallisationSteadyStateSolution`:
    equilibrium values through `steady.equilibrium` (`.concentration`, `.d43`), product flows in
    `steady.product`, and residual / mass-balance checks in `steady.diagnostics`.
@@ -48,8 +48,8 @@ function main()
 
     msmpr_run = RunConditions(temperature = 293.15, concentration = 8.0,
                               crystals = tank_seed, operation = operation)
-    problem = CrystallisationProblem(msmpr_model, msmpr_run; solver = qmom_solver)
-    solution = simulate(problem; saveat = save_grid)
+    problem = CrystallisationProblem(msmpr_model, msmpr_run, (0.0, save_grid[end]))
+    solution = solve(problem, qmom_solver; saveat = save_grid)
 
     # Dynamic trajectory vs the analytic relaxation.
     tau = operation.volume / operation.inflow      # residence time = 4 s
@@ -72,9 +72,9 @@ function main()
     # Explicit steady-state solve on the same configured problem. Every law,
     # the solubility and the temperature are built in and time invariant, so
     # no autonomy declaration is needed.
-    steady = solve_steadystate(problem)
+    steady = solve(CrystallisationSteadyStateProblem(problem), qmom_solver)
     steady_values = steady.equilibrium
-    @assert steady.success && steady.diagnostics.converged
+    @assert successful_retcode(steady) && steady.diagnostics.converged
     @assert isapprox(steady_values.concentration, c_ss; rtol = 1e-6)
     @assert isapprox(steady_values.moments[1], m0_trajectory[1] * m0_feed_fraction; rtol = 1e-6)
     @assert steady.diagnostics.scaled_residual_norm < 1e-6
@@ -93,28 +93,29 @@ function main()
     # Time-dependent inlet profiles are transient inputs, not steady inputs.
     var_flow = MSMPROperation(volume = 2.0, inflow = t -> 0.5 + 0.1 * t / 3600,
                               feed = CrystallisationFeed(concentration = 2.0))
-    transient_solution = simulate(msmpr_model,
-        RunConditions(temperature = 293.15, concentration = 8.0, operation = var_flow);
-        solver = qmom_solver, saveat = [0.0, 3600.0])
-    @assert transient_solution.success
+    transient_solution = solve(remake(problem;
+            conditions = RunConditions(temperature = 293.15, concentration = 8.0, operation = var_flow),
+            tspan = (0.0, 3600.0)),
+        qmom_solver; saveat = [0.0, 3600.0])
+    @assert successful_retcode(transient_solution)
     println("  callable inflow at t = 3600 s: ", operation_flows(var_flow, 3600.0),
             " (transient only)")
 
     fig = Figure(size = (900, 550))
     ax_c = CairoMakie.Axis(fig[1, 1], xlabel = "Time (min)", ylabel = "c (kg/m³)")
-    lines!(ax_c, solution.time ./ 60, solution.concentration, color = :dodgerblue,
+    lines!(ax_c, solution.t ./ 60, solution.concentration, color = :dodgerblue,
            label = "dynamic C(t)")
-    lines!(ax_c, solution.time ./ 60, c_oracle.(solution.time), color = :crimson,
+    lines!(ax_c, solution.t ./ 60, c_oracle.(solution.t), color = :crimson,
            linestyle = :dash, label = "analytic approach")
     hlines!(ax_c, [c_ss], color = :black, linestyle = :dot, label = "C_ss")
     scatter!(ax_c, [save_grid[end] ./ 60], [steady_values.concentration],
-             color = :seagreen, label = "solve_steadystate")
+             color = :seagreen, label = "steady-state solve")
     axislegend(ax_c; position = :rt)
 
     ax_m = CairoMakie.Axis(fig[2, 1], xlabel = "Time (min)", ylabel = "M₀ / M₀(0)")
-    lines!(ax_m, solution.time ./ 60, m0_trajectory ./ m0_trajectory[1],
+    lines!(ax_m, solution.t ./ 60, m0_trajectory ./ m0_trajectory[1],
            color = :dodgerblue, label = "dynamic M₀(t)")
-    lines!(ax_m, solution.time ./ 60, m0_oracle.(solution.time) ./ m0_trajectory[1],
+    lines!(ax_m, solution.t ./ 60, m0_oracle.(solution.t) ./ m0_trajectory[1],
            color = :crimson, linestyle = :dash, label = "relaxation oracle")
     hlines!(ax_m, [m0_feed_fraction], color = :black, linestyle = :dot, label = "M₀_feed/M₀(0)")
     axislegend(ax_m; position = :rt)

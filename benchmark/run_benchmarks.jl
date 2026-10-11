@@ -36,11 +36,16 @@ const BENCHMARK_MODEL = CrystallisationModel(LysozymeSystem();
     nucleation = CNTNucleation(ln_nucleation_prefactor = CANONICAL_θ[1], surface_energy = CANONICAL_θ[2]),
     growth = EmpiricalGrowth(growth_coefficient = CANONICAL_θ[3], growth_order = CANONICAL_θ[4]))
 
-"""Configured problem for one experiment: its temperature and measured initial concentration."""
-benchmark_problem(e, solver; crystals = nothing) = CrystallisationProblem(BENCHMARK_MODEL,
-    merge(e.conditions; concentration = CriSTool.initial_concentration(e), crystals); solver)
+"""Configured problem for one experiment over `timegrid`: its temperature and measured initial concentration."""
+benchmark_problem(e, timegrid; crystals = nothing) = CrystallisationProblem(BENCHMARK_MODEL,
+    merge(e.conditions; concentration = CriSTool.initial_concentration(e), crystals),
+    (first(timegrid), last(timegrid)))
 
 experiment_times(e) = e.observables.concentration.time
+
+"""One forward solve at kinetic values `θ`, the call a fit makes per experiment."""
+benchmark_solve(θ, e, solver, timegrid; crystals = nothing) =
+    solve(remake(benchmark_problem(e, timegrid; crystals); p = θ), solver; saveat = timegrid)
 
 # Aggregate ODE stats over the 7 experiments of a fit run. NOTE: SciMLBase's
 # current DEStats has no `nsteps` field (it was removed) — reported as missing.
@@ -48,15 +53,14 @@ function fit_ode_stats(exps, θ, solver; grid=nothing, initial_crystals=nothing)
     nf = naccept = nreject = nsave = 0
     nsolve = 0
     for e in exps
-        save_idx = grid === nothing ? experiment_times(e) : grid
-        _, sol = CriSTool.runsimulation(θ, benchmark_problem(e, solver; crystals = initial_crystals);
-                                        save_idx)
+        timegrid = grid === nothing ? experiment_times(e) : grid
+        sol = benchmark_solve(θ, e, solver, timegrid; crystals = initial_crystals)
         st = sol.ode_stats
         nf += something(_get_ode_stat(st, :nf), 0)
         naccept += something(_get_ode_stat(st, :naccept), 0)
         nreject += something(_get_ode_stat(st, :nreject), 0)
         nsolve += something(_get_ode_stat(st, :nsolve), 0)
-        nsave += length(sol.time)
+        nsave += length(sol.t)
     end
     return (nf = nf, nsteps = missing, naccept = naccept,
             nreject = nreject, nsave = nsave, nsolve = nsolve)
@@ -71,8 +75,7 @@ kinetics, seed characteristics, temperatures, and observation grids.
 """
 function run_seeded_compact_fit(exps, θ, solver)
     for e in exps
-        CriSTool.runsimulation(θ, benchmark_problem(e, solver; crystals = SEEDED_INITIAL_CRYSTALS);
-                               save_idx = experiment_times(e))
+        benchmark_solve(θ, e, solver, experiment_times(e); crystals = SEEDED_INITIAL_CRYSTALS)
     end
     return nothing
 end
@@ -80,7 +83,7 @@ end
 # --- oracle fit: gold MoM fit over all 7 experiments -----------------------
 function run_mom_fit(exps, θ)
     for e in exps
-        CriSTool.runsimulation(θ, benchmark_problem(e, mom_solver); save_idx = experiment_times(e))
+        benchmark_solve(θ, e, mom_solver, experiment_times(e))
     end
     return nothing
 end
@@ -88,13 +91,13 @@ end
 # --- FV/WENO fits: same 7 experiments, common fixed grid -------------------
 function run_fixed_grid_fit(exps, θ, solver)
     for e in exps
-        CriSTool.runsimulation(θ, benchmark_problem(e, solver); save_idx = FIXED_GRID)
+        benchmark_solve(θ, e, solver, FIXED_GRID)
     end
     return nothing
 end
 
 # --- AllocCheck target: representative warm MoM call (flat-vector path) ----
-warm_mom_call(θ, problem, timegrid) = last(CriSTool.runsimulation(θ, problem; save_idx = timegrid))
+warm_mom_call(θ, problem, solver, timegrid) = solve(remake(problem; p = θ), solver; saveat = timegrid)
 
 # --- results plumbing ------------------------------------------------------
 function median_sample(bm::Chairmarks.Benchmark)
@@ -166,12 +169,12 @@ function main()
     # ---- AllocCheck on a representative warm MoM call ----------------------
     println("Running AllocCheck on the warm MoM call (flat-vector path)...")
     e1 = exps[1]
-    warm_problem = benchmark_problem(e1, mom_solver)
     timegrid = collect(Float64, experiment_times(e1))
-    warm_mom_call(CANONICAL_θ, warm_problem, timegrid)  # compile first
+    warm_problem = benchmark_problem(e1, timegrid)
+    warm_mom_call(CANONICAL_θ, warm_problem, mom_solver, timegrid)  # compile first
     t0 = time()
     alloc_errs = AllocCheck.check_allocs(warm_mom_call,
-                                         (Vector{Float64}, typeof(warm_problem), Vector{Float64}))
+                                         (Vector{Float64}, typeof(warm_problem), typeof(mom_solver), Vector{Float64}))
     t_alloc = time() - t0
 
     # ---- report -------------------------------------------------------------
@@ -193,7 +196,7 @@ function main()
     println(io, "-"^100)
     println(io, "(stats aggregated over the 7 experiments; MoM on per-experiment time ")
     println(io, " grids, FV200/WENO200 on fixed grid 0:1800:16200 seconds; nsteps removed from")
-    println(io, " SciMLBase.DEStats, so nsave = length(sol.time) is reported instead)")
+    println(io, " SciMLBase.DEStats, so nsave = length(sol.t) is reported instead)")
 
     println(io, "\nSeeded compact-solver comparison (same LogNormalInitialCrystals workload):")
     @printf(io, "%-14s %12s %12s %14s %8s %8s %8s %8s %10s %10s\n",
@@ -223,14 +226,14 @@ function main()
     end
     println(io, "(AllocCheck only sees statically resolvable code; the ODE solve core is")
     println(io, " behind kwcall boundaries and is NOT analysed — the reported sites above are all")
-    println(io, " in the flat-vector wrapper: paramaxis/ComponentArray axis construction,")
-    println(io, " src/physics/model_interfaces.jl and src/inference/workflow_interfaces.jl.)")
+    println(io, " in the flat-vector wrapper: paramaxis/ComponentArray axis construction in")
+    println(io, " remake and src/core/model_types.jl.)")
 
     # ---- hotspot: wrapper vs ComponentArray direct call ----------------------
     p = ComponentArray(CANONICAL_θ, paramaxis(warm_problem))
     function run_component_fit(exps, p)
         for e in exps
-            CriSTool.runsimulation(p, benchmark_problem(e, mom_solver); save_idx = experiment_times(e))
+            benchmark_solve(p, e, mom_solver, experiment_times(e))
         end
         return nothing
     end

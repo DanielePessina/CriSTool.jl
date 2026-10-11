@@ -11,9 +11,10 @@ function main()
     crystal_model = CrystallisationModel(LysozymeSystem();
         nucleation = CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 0.0006),
         growth = saturation_growth)
-    trajectory = simulate(crystal_model, RunConditions(temperature = 293.15, concentration = 18.0);
-        saveat = 0.0:600.0:21600.0)
-    @assert trajectory.success
+    custom_problem = CrystallisationProblem(crystal_model, RunConditions(temperature = 293.15, concentration = 18.0),
+        (0.0, 21600.0))
+    trajectory = solve(custom_problem, MoM(); saveat = 600.0)
+    @assert successful_retcode(trajectory)
     println("Custom growth: final concentration = ", trajectory.concentration[end])
     # Callable parameters are selected by name like built-in ones.
     coefficient_spec = OptimisationSpec(bounds = (growth = (coefficient = (1e-12, 1e-10),),),
