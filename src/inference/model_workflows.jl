@@ -1,4 +1,3 @@
-import Distributions: fit
 # `predict` extends StatsAPI.predict, the function Turing and StatsBase export,
 # so `using CriSTool, Turing` resolves to one `predict`.
 import StatsAPI: predict
@@ -15,81 +14,42 @@ function loss_terms(loss_function::Union{GaussianNLL, MeanAbsoluteError}, prepar
         Tuple(_loss_objectives(loss_function, prepared_setup, parameter_values)))
 end
 
-"""
-    OptimisationSpec(; bounds, algorithm, loss=GaussianNLL(), adtype=AutoForwardDiff(), searchoptions=(;))
-
-Select kinetic parameters by named `(lower, upper)` bounds and choose how they
-are optimised. `algorithm` is a Metaheuristics algorithm or an Optimization.jl
-solver; `adtype` and `searchoptions` apply to Optimization.jl solvers only.
-"""
-Base.@kwdef struct OptimisationSpec{Bounds <: NamedTuple, Algorithm, Loss, AD, SearchOptions <: NamedTuple}
-    bounds::Bounds
-    algorithm::Algorithm
-    loss::Loss = GaussianNLL()
-    adtype::AD = AutoForwardDiff()
-    searchoptions::SearchOptions = (;)
+# An estimation problem selects its kinetic parameters by named bounds, named priors,
+# or both (then with the same names in the same order); the selection follows them.
+_selected_tree(::Nothing, ::Nothing) =
+    throw(ArgumentError("Select kinetic parameters with named bounds or named priors."))
+_selected_tree(bounds::NamedTuple, ::Nothing) = bounds
+_selected_tree(::Nothing, priors::NamedTuple) = priors
+function _selected_tree(bounds::NamedTuple, priors::NamedTuple)
+    first.(_named_parameter_leaves(bounds)) == first.(_named_parameter_leaves(priors)) ||
+        throw(ArgumentError("Bounds and priors must name the same kinetic parameters in the same order."))
+    return bounds
 end
 
-"""
-    BayesianSpec(; priors, sampler=nothing, n_samples=1000, n_chains=1, loss=GaussianNLL())
-
-Select kinetic parameters by named univariate priors and sample their posterior
-with a Turing sampler (`nothing` means `Turing.NUTS()`). Fitting requires
-`using Turing`, which loads the `CriSToolTuringExt` extension. The likelihood uses supplied measurement variances; noise
-is never fitted.
-"""
-Base.@kwdef struct BayesianSpec{Priors <: NamedTuple, Sampler, Loss}
-    priors::Priors
-    sampler::Sampler = nothing
-    n_samples::Int = 1000
-    n_chains::Int = 1
-    loss::Loss = GaussianNLL()
-end
-
-"""
-    ABCSpec(; priors, target, sampler=ABCDESampler(), n_particles=1024,
-            n_generations=128, early_stop=false, loss=MeanAbsoluteError())
-
-Select kinetic parameters by named priors and sample them by approximate
-Bayesian computation under an explicit finite discrepancy threshold `target`.
-"""
-Base.@kwdef struct ABCSpec{Priors <: NamedTuple, Target <: Real, Sampler, Loss}
-    priors::Priors
-    target::Target
-    sampler::Sampler = ABCDESampler()
-    n_particles::Int = 1024
-    n_generations::Int = 128
-    early_stop::Bool = false
-    loss::Loss = MeanAbsoluteError()
-end
-
-_selected_tree(fit_specification::OptimisationSpec) = fit_specification.bounds
-_selected_tree(fit_specification::Union{BayesianSpec, ABCSpec}) = fit_specification.priors
-
-function _validate_specification(fit_specification::OptimisationSpec)
-    for bound_pair in last.(_named_parameter_leaves(fit_specification.bounds))
+_validate_bounds(::Nothing) = nothing
+function _validate_bounds(bounds::NamedTuple)
+    for bound_pair in last.(_named_parameter_leaves(bounds))
         bound_pair isa Tuple && length(bound_pair) == 2 &&
             all(bound_value -> bound_value isa Real && isfinite(bound_value), bound_pair) &&
             bound_pair[1] < bound_pair[2] || throw(ArgumentError("Each bound must be a finite (lower, upper) pair."))
     end
 end
-function _validate_specification(fit_specification::Union{BayesianSpec, ABCSpec})
+_validate_priors(::Nothing) = nothing
+function _validate_priors(priors::NamedTuple)
     all(prior_value -> prior_value isa Distributions.UnivariateDistribution,
-        last.(_named_parameter_leaves(fit_specification.priors))) ||
+        last.(_named_parameter_leaves(priors))) ||
         throw(ArgumentError("Supply a univariate prior per selected kinetic parameter."))
-    _validate_sampling_counts(fit_specification)
 end
-function _validate_sampling_counts(fit_specification::BayesianSpec)
-    is_likelihood(fit_specification.loss) ||
-        throw(ArgumentError("BayesianSpec requires a likelihood loss, not an error discrepancy."))
-    fit_specification.n_samples > 0 && fit_specification.n_chains > 0 ||
-        throw(ArgumentError("Sample and chain counts must be positive."))
-end
-function _validate_sampling_counts(fit_specification::ABCSpec)
-    isfinite(fit_specification.target) || throw(ArgumentError("ABC target must be explicit and finite."))
-    fit_specification.n_particles > 0 && fit_specification.n_generations > 0 ||
-        throw(ArgumentError("Particle and generation counts must be positive."))
-end
+
+"""`(lower, upper)` bounds of the selection; optimisers need bounds."""
+_bound_pairs(::Nothing) = throw(ArgumentError(
+    "Optimisers search inside bounds; build the EstimationProblem with `bounds`."))
+_bound_pairs(bounds::NamedTuple) = last.(_named_parameter_leaves(bounds))
+
+"""Univariate priors of the selection, in selection order; samplers need priors."""
+_prior_distributions(::Nothing) = throw(ArgumentError(
+    "Samplers draw from priors; build the EstimationProblem with `priors`."))
+_prior_distributions(priors::NamedTuple) = last.(_named_parameter_leaves(priors))
 
 function _named_parameter_leaves(named_tree::NamedTuple, path_prefix::String = "")
     leaf_pairs = Pair{String, Any}[]
@@ -210,104 +170,162 @@ function _validate_likelihood_noise(likelihood::GaussianNLL, prepared_setup::Los
     end
 end
 
-"""Prepared experiment solves, the resolved parameter selection, and how they were configured."""
-struct PreparedFit{Model, Specification, Selection, Setup <: LossSetup, Solver <: AbstractSolver,
-                   ProblemOptions <: NamedTuple}
+"""
+    EstimationProblem(model, experiments; bounds=nothing, priors=nothing, loss=GaussianNLL(),
+                      solver=MoM(), mode=TransientMode(), problem_options=(;),
+                      observable_order=nothing, observable_projections=(;), alg=nothing,
+                      solve_options=(;), callback_factory=nothing)
+
+Estimate the kinetic parameters of `model` named by `bounds` or `priors` from the
+measured `experiments`, scored by `loss`, with every run simulated by `solver`.
+`solve(problem, alg)` runs the estimation algorithm:
+
+- a Metaheuristics algorithm (`DE()`, `NSGA2()`, ...) or an Optimization.jl
+  optimiser (`LBFGS()` from OptimizationOptimJL) searches inside `bounds` and
+  returns a `FitResult`;
+- `NUTS()` (or another Turing sampler; requires `using Turing`) samples the
+  posterior under `priors` and returns an `InferenceResult`;
+- `ABCDE()` or `ABCDETurner()` samples by approximate Bayesian computation under
+  `priors` and returns an `InferenceResult`.
+
+`bounds` are named `(lower, upper)` pairs and `priors` named univariate
+distributions, for example `bounds = (growth = (growth_order = (1.0, 4.0),),)`.
+Supplying both lets one problem be optimised and sampled; they must then name
+the same parameters in the same order.
+
+Construction resolves each experiment's conditions, validates bounds, priors and
+noise, and builds the reusable solve templates once. Time-zero observations
+consumed by `FromObservation` conditions are not scored. `mode = SteadyMode(...)`
+relaxes each run to its MSMPR steady state and needs numeric conditions to relax
+from. `alg`, `solve_options` and `callback_factory` configure the ODE solves as in
+`solve(problem, solver)`. A likelihood loss (`GaussianNLL`) needs supplied
+measurement variances; noise is never fitted. `remake(problem; kwargs...)`
+rebuilds the problem with the given keywords replaced.
+"""
+struct EstimationProblem{Model, Bounds <: Union{Nothing, NamedTuple}, Priors <: Union{Nothing, NamedTuple},
+                         Loss <: AbstractPELossFunction, Solver <: AbstractSolver,
+                         ProblemOptions <: NamedTuple, ObservableOrder, Selection <: KineticSelection,
+                         Setup <: LossSetup} <: SciMLBase.AbstractSciMLProblem
     model::Model
-    specification::Specification
-    selection::Selection
-    setup::Setup
+    bounds::Bounds
+    priors::Priors
+    loss::Loss
     solver::Solver
     problem_options::ProblemOptions
+    observable_order::ObservableOrder
+    selection::Selection
+    setup::Setup
 end
 
-"""
-    prepare_fit(model, experiments, specification; solver=MoM(), mode=TransientMode(),
-                problem_options=(;), observable_order=nothing, observable_projections=(;),
-                algorithm=nothing, solve_options=(;), callback_factory=nothing,
-                parallel=EnsembleSerial())
-
-Resolve each experiment's conditions, validate noise, bounds or priors, and build
-reusable solve templates. Time-zero observations consumed by `FromObservation`
-conditions are not scored. `mode = SteadyMode(...)` relaxes each run to its
-MSMPR steady state and needs numeric conditions to relax from. `algorithm`,
-`solve_options` and `callback_factory` configure the ODE solves. `parallel =
-EnsembleThreads()` solves the experiments of every loss evaluation (and so every
-ForwardDiff gradient) on separate threads; scores are reduced in experiment order,
-so the result is bitwise identical to `EnsembleSerial()`, the default.
-"""
-function prepare_fit(crystal_model::CrystallisationModel, measured_runs::AbstractVector{<:CrystallisationExperiment},
-        fit_specification::Union{OptimisationSpec, BayesianSpec, ABCSpec};
-        solver::AbstractSolver = MoM(), mode::AbstractSimulationMode = TransientMode(),
-        problem_options::NamedTuple = (;), observable_order = nothing, observable_projections::NamedTuple = (;),
-        algorithm = nothing, solve_options::NamedTuple = (;), callback_factory = nothing,
-        parallel::SciMLBase.BasicEnsembleAlgorithm = EnsembleSerial())
+function EstimationProblem(crystal_model::CrystallisationModel,
+        measured_runs::AbstractVector{<:CrystallisationExperiment};
+        bounds::Union{Nothing, NamedTuple} = nothing, priors::Union{Nothing, NamedTuple} = nothing,
+        loss::AbstractPELossFunction = GaussianNLL(), solver::AbstractSolver = MoM(),
+        mode::AbstractSimulationMode = TransientMode(), problem_options::NamedTuple = (;),
+        observable_order = nothing, observable_projections::NamedTuple = (;), alg = nothing,
+        solve_options::NamedTuple = (;), callback_factory = nothing)
     isempty(measured_runs) && throw(ArgumentError("Supply at least one experiment."))
-    kinetic_selection = _kinetic_selection(crystal_model, _selected_tree(fit_specification))
-    _validate_specification(fit_specification)
+    kinetic_selection = _kinetic_selection(crystal_model, _selected_tree(bounds, priors))
+    _validate_bounds(bounds)
+    _validate_priors(priors)
     physical_runs = [_model_experiment_problem(crystal_model, experiment_run, mode; problem_options...)
         for experiment_run in measured_runs]
-    prepared_setup = prepare_loss(physical_runs, measured_runs; solver, mode, loss_function = fit_specification.loss,
-        observable_order, observable_projections, algorithm, solve_options, callback_factory, parallel)
-    _validate_likelihood_noise(fit_specification.loss, prepared_setup)
-    return PreparedFit(crystal_model, fit_specification, kinetic_selection, prepared_setup, solver, problem_options)
+    prepared_setup = prepare_loss(physical_runs, measured_runs; solver, mode, loss_function = loss,
+        observable_order, observable_projections, alg, solve_options, callback_factory)
+    _validate_likelihood_noise(loss, prepared_setup)
+    return EstimationProblem(crystal_model, bounds, priors, loss, solver, problem_options, observable_order,
+        kinetic_selection, prepared_setup)
 end
 
-"""Same preparation with the experiments of each loss evaluation solved under `parallel`."""
-function _with_parallel(prepared_fit::PreparedFit, parallel::SciMLBase.BasicEnsembleAlgorithm)
-    prepared_setup = prepared_fit.setup
+"""
+    remake(problem::EstimationProblem; model, experiments, bounds, priors, loss, solver, mode,
+           problem_options, observable_order, observable_projections, alg, solve_options,
+           callback_factory)
+
+Build the estimation problem again with the given keywords replaced; the others
+keep their values. `bounds = nothing` or `priors = nothing` drops that selection.
+"""
+function SciMLBase.remake(estimation_problem::EstimationProblem; model = missing, experiments = missing,
+        bounds = missing, priors = missing, loss = missing, solver = missing, mode = missing,
+        problem_options = missing, observable_order = missing, observable_projections = missing,
+        alg = missing, solve_options = missing, callback_factory = missing)
+    prepared_setup = estimation_problem.setup
+    prepared_solves = prepared_setup.solves
+    return EstimationProblem(coalesce(model, estimation_problem.model),
+        coalesce(experiments, prepared_setup.experiments);
+        bounds = coalesce(bounds, estimation_problem.bounds),
+        priors = coalesce(priors, estimation_problem.priors),
+        loss = coalesce(loss, estimation_problem.loss),
+        solver = coalesce(solver, estimation_problem.solver),
+        mode = coalesce(mode, prepared_solves.mode),
+        problem_options = coalesce(problem_options, estimation_problem.problem_options),
+        observable_order = coalesce(observable_order, estimation_problem.observable_order),
+        observable_projections = coalesce(observable_projections, prepared_setup.observable_projections),
+        alg = coalesce(alg, prepared_solves.requested_algorithm),
+        solve_options = coalesce(solve_options, prepared_solves.solve_options),
+        callback_factory = coalesce(callback_factory, prepared_solves.callback_factory))
+end
+
+"""Same problem with the experiments of each loss evaluation solved under `parallel`."""
+function _with_parallel(estimation_problem::EstimationProblem, parallel::SciMLBase.BasicEnsembleAlgorithm)
+    prepared_setup = estimation_problem.setup
     parallel_setup = LossSetup(prepared_setup.solves, prepared_setup.experiments, prepared_setup.observable_names,
         prepared_setup.included_observations, prepared_setup.observable_weights,
         prepared_setup.observable_projections, parallel)
-    return PreparedFit(prepared_fit.model, prepared_fit.specification, prepared_fit.selection,
-        parallel_setup, prepared_fit.solver, prepared_fit.problem_options)
+    return EstimationProblem(estimation_problem.model, estimation_problem.bounds, estimation_problem.priors,
+        estimation_problem.loss, estimation_problem.solver, estimation_problem.problem_options,
+        estimation_problem.observable_order, estimation_problem.selection, parallel_setup)
 end
 
 """Evaluate the selected-parameter objective; AD scalar types are preserved."""
-loss(prepared_fit::PreparedFit, selected_values::AbstractVector) = loss(prepared_fit.specification.loss,
-    prepared_fit.setup, _expanded_parameters(prepared_fit.selection, selected_values))
+loss(estimation_problem::EstimationProblem, selected_values::AbstractVector) = loss(estimation_problem.loss,
+    estimation_problem.setup, _expanded_parameters(estimation_problem.selection, selected_values))
 
-"""Named objectives of the specification's loss at selected parameter values."""
-loss_terms(prepared_fit::PreparedFit, selected_values::AbstractVector) = loss_terms(prepared_fit.specification.loss,
-    prepared_fit.setup, _expanded_parameters(prepared_fit.selection, selected_values))
+"""Named objectives of the problem's loss at selected parameter values."""
+loss_terms(estimation_problem::EstimationProblem, selected_values::AbstractVector) =
+    loss_terms(estimation_problem.loss, estimation_problem.setup,
+        _expanded_parameters(estimation_problem.selection, selected_values))
 
-"""A fitted model, named selected values, observable objectives, and native optimizer diagnostics."""
-struct FitResult{Model, Parameters, Objectives, Backend, Preparation}
+"""
+A fitted model, named selected values, observable objectives, the optimisation
+algorithm, its native result, and the `EstimationProblem` that was solved.
+"""
+struct FitResult{Model, Parameters, Objectives, Algorithm, Backend, Problem}
     model::Model
     parameters::Parameters
     objectives::Objectives
+    alg::Algorithm
     backend_result::Backend
-    preparation::Preparation
+    estimation_problem::Problem
 end
 
-"""Parallel level of a fit: candidates (population, particles or chains) run under `parallel`."""
+"""Parallel level of a solve: candidates (population, particles or chains) run under `parallel`."""
 struct ParallelCandidates end
-"""Parallel level of a fit: the experiments inside each loss evaluation run under `parallel`."""
+"""Parallel level of a solve: the experiments inside each loss evaluation run under `parallel`."""
 struct ParallelExperiments end
 
 """
-    _parallel_level(fit_specification) -> ParallelCandidates() or ParallelExperiments()
+    _parallel_level(alg) -> ParallelCandidates() or ParallelExperiments()
 
-The one level of a fit that receives `fit(...; parallel)`; the other level runs
-serially, since threading both levels only adds scheduling overhead.
+The one level of an estimation that receives `solve(...; parallel)`; the other
+level runs serially, since threading both levels only adds scheduling overhead.
+MCMC samplers choose by chain count through `_chain_parallel_level`.
 """
-_parallel_level(fit_specification::OptimisationSpec) = _parallel_level(fit_specification.algorithm)
 _parallel_level(::Metaheuristics.Algorithm) = ParallelCandidates()
+_parallel_level(::AbstractABCSampler) = ParallelCandidates()
 _parallel_level(optimiser) = ParallelExperiments()
-_parallel_level(::ABCSpec) = ParallelCandidates()
-_parallel_level(fit_specification::BayesianSpec) =
-    fit_specification.n_chains > 1 ? ParallelCandidates() : ParallelExperiments()
+_chain_parallel_level(chain_count::Integer) = chain_count > 1 ? ParallelCandidates() : ParallelExperiments()
 
 _candidate_parallel(::ParallelCandidates, parallel::SciMLBase.BasicEnsembleAlgorithm) = parallel
 _candidate_parallel(::ParallelExperiments, parallel::SciMLBase.BasicEnsembleAlgorithm) = EnsembleSerial()
 _experiment_parallel(::ParallelCandidates, parallel::SciMLBase.BasicEnsembleAlgorithm) = EnsembleSerial()
 _experiment_parallel(::ParallelExperiments, parallel::SciMLBase.BasicEnsembleAlgorithm) = parallel
 
-"""Split `parallel` by level: the candidate ensemble, and the fit whose loss solves experiments under the other."""
-function _split_parallel(supplied_fit::PreparedFit, parallel::SciMLBase.BasicEnsembleAlgorithm)
-    parallel_level = _parallel_level(supplied_fit.specification)
+"""Split `parallel` by level: the candidate ensemble, and the problem whose loss solves experiments under the other."""
+function _split_parallel(estimation_problem::EstimationProblem, parallel_level,
+                         parallel::SciMLBase.BasicEnsembleAlgorithm)
     return _candidate_parallel(parallel_level, parallel),
-           _with_parallel(supplied_fit, _experiment_parallel(parallel_level, parallel))
+           _with_parallel(estimation_problem, _experiment_parallel(parallel_level, parallel))
 end
 
 # Backends that take a Bool (Metaheuristics `parallel_evaluation`, KissABC `HPC`) or a
@@ -319,25 +337,14 @@ _candidate_copy_count(::EnsembleSerial) = 0
 _candidate_copy_count(::EnsembleThreads) = Threads.nthreads()
 _candidate_copy_count(unsupported::SciMLBase.BasicEnsembleAlgorithm) = _unsupported_parallel(unsupported)
 
-"""
-    fit(prepared_fit; parallel=prepared_fit.setup.parallel)
-
-Optimise the selected kinetic parameters with the specification's algorithm.
-A scalar objective returns a `FitResult`; NSGA2 returns one `FitResult` per
-Pareto candidate. `parallel = EnsembleThreads()` evaluates a Metaheuristics
-population on threads, each task on a private copy of the solve templates;
-for Optimization.jl solvers it solves the experiments of each loss evaluation
-on threads instead. It takes effect for this call only.
-"""
-function fit(supplied_fit::PreparedFit{<:Any, <:OptimisationSpec};
-             parallel::SciMLBase.BasicEnsembleAlgorithm = supplied_fit.setup.parallel)
-    candidate_parallel, prepared_fit = _split_parallel(supplied_fit, parallel)
-    bound_pairs = last.(_named_parameter_leaves(prepared_fit.specification.bounds))
+"""Lower bounds, upper bounds and the model's current selected values, which must lie inside them."""
+function _search_box(estimation_problem::EstimationProblem)
+    bound_pairs = _bound_pairs(estimation_problem.bounds)
     lower_bounds, upper_bounds = first.(bound_pairs), last.(bound_pairs)
-    starting_values = _selected_baseline(prepared_fit.selection)
-    all(lower_bounds .<= starting_values .<= upper_bounds) || throw(ArgumentError("Current selected values must lie within bounds."))
-    return _optimise(prepared_fit.specification.algorithm, prepared_fit, lower_bounds, upper_bounds,
-        starting_values, candidate_parallel)
+    starting_values = _selected_baseline(estimation_problem.selection)
+    all(lower_bounds .<= starting_values .<= upper_bounds) ||
+        throw(ArgumentError("Current selected values must lie within bounds."))
+    return lower_bounds, upper_bounds, starting_values
 end
 
 # Preserve caller configuration while isolating mutable status, parameters and RNG.
@@ -357,35 +364,60 @@ function _configured_mh_algorithm(supplied_algorithm::Metaheuristics.Algorithm;
     return run_algorithm
 end
 
-"""Optimization.jl solvers: search from the model's current values; candidates are always serial."""
-function _optimise(optimiser, prepared_fit, lower_bounds, upper_bounds, starting_values,
-                   ::SciMLBase.BasicEnsembleAlgorithm)
-    fit_specification = prepared_fit.specification
+"""
+    solve(problem::EstimationProblem, optimiser; adtype=AutoForwardDiff(),
+          parallel=EnsembleSerial(), kwargs...) -> FitResult
+
+Optimise the selected kinetic parameters with an Optimization.jl optimiser (for
+example `LBFGS()` from OptimizationOptimJL), searching inside the bounds from
+the model's current values. `adtype` differentiates the loss; the remaining
+keywords (such as `maxiters`) go to the Optimization.jl `solve`.
+`parallel = EnsembleThreads()` solves the experiments of each loss evaluation
+(and so each ForwardDiff gradient) on threads; scores are reduced in experiment
+order, so the result is bitwise identical to `EnsembleSerial()`.
+"""
+function SciMLBase.solve(estimation_problem::EstimationProblem, optimiser; adtype = AutoForwardDiff(),
+        parallel::SciMLBase.BasicEnsembleAlgorithm = EnsembleSerial(), optimiser_options...)
+    _, split_problem = _split_parallel(estimation_problem, _parallel_level(optimiser), parallel)
+    lower_bounds, upper_bounds, starting_values = _search_box(split_problem)
     optimization_function = OptimizationBase.OptimizationFunction(
-        (candidate_values, fit_context) -> loss(fit_context, candidate_values), fit_specification.adtype)
+        (candidate_values, fit_context) -> loss(fit_context, candidate_values), adtype)
     optimization_problem = OptimizationBase.OptimizationProblem(optimization_function,
-        starting_values, prepared_fit; lb = lower_bounds, ub = upper_bounds)
-    optimization_solution = OptimizationBase.solve(optimization_problem, optimiser; fit_specification.searchoptions...)
-    return _model_fit_result(prepared_fit, optimization_solution.u, optimization_solution)
+        starting_values, split_problem; lb = lower_bounds, ub = upper_bounds)
+    optimization_solution = OptimizationBase.solve(optimization_problem, optimiser; optimiser_options...)
+    return _model_fit_result(split_problem, optimiser, optimization_solution.u, optimization_solution)
 end
 
-"""Metaheuristics algorithms: population search inside the bounds on a private algorithm copy."""
-function _optimise(supplied_algorithm::Metaheuristics.Algorithm, prepared_fit, lower_bounds, upper_bounds,
-                   starting_values, candidate_parallel::SciMLBase.BasicEnsembleAlgorithm)
+"""
+    solve(problem::EstimationProblem, alg::Metaheuristics.Algorithm; parallel=EnsembleSerial())
+        -> FitResult or Vector{FitResult}
+
+Population search inside the bounds with a Metaheuristics algorithm (`DE()`,
+`ECA()`, `NSGA2()`, ...) run on a private copy, so `alg`, its options, status
+and RNG are not consumed. A scalar objective returns a `FitResult`; NSGA2
+minimises each named observable objective and returns one `FitResult` per
+Pareto candidate. `parallel = EnsembleThreads()` evaluates the population on
+threads, each task on a private copy of the solve templates.
+"""
+function SciMLBase.solve(estimation_problem::EstimationProblem, supplied_algorithm::Metaheuristics.Algorithm;
+        parallel::SciMLBase.BasicEnsembleAlgorithm = EnsembleSerial())
+    candidate_parallel, split_problem = _split_parallel(estimation_problem,
+        _parallel_level(supplied_algorithm), parallel)
+    lower_bounds, upper_bounds, _ = _search_box(split_problem)
     private_algorithm = _configured_mh_algorithm(supplied_algorithm;
         parallel_evaluation = _threads_candidates(candidate_parallel))
-    private_fits = _private_copy_pool(prepared_fit, _candidate_copy_count(candidate_parallel))
-    candidate_objective = _MetaheuristicsObjective(private_algorithm.parameters, prepared_fit, private_fits)
+    private_problems = _private_copy_pool(split_problem, _candidate_copy_count(candidate_parallel))
+    candidate_objective = _MetaheuristicsObjective(private_algorithm.parameters, split_problem, private_problems)
     final_state = Metaheuristics.optimize(candidate_objective,
         Metaheuristics.boxconstraints(lower_bounds, upper_bounds), private_algorithm)
-    return _metaheuristics_fit_results(private_algorithm.parameters, prepared_fit, final_state)
+    return _metaheuristics_fit_results(private_algorithm.parameters, split_problem, supplied_algorithm, final_state)
 end
 
 """Metaheuristics objective: one candidate serially, or a population in parallel on pooled private copies."""
-struct _MetaheuristicsObjective{Parameters, Fit}
+struct _MetaheuristicsObjective{Parameters, Problem}
     parameters::Parameters
-    prepared_fit::Fit
-    private_fits::Channel{Fit}
+    estimation_problem::Problem
+    private_problems::Channel{Problem}
 end
 
 # Metaheuristics requires a method accepting `Any`; the argument shape then selects the evaluation.
@@ -393,13 +425,13 @@ end
     _evaluate_candidates(candidate_objective, candidate_values)
 
 _evaluate_candidates(candidate_objective::_MetaheuristicsObjective, candidate_values::AbstractVector) =
-    _candidate_score(candidate_objective.parameters, candidate_objective.prepared_fit, candidate_values)
+    _candidate_score(candidate_objective.parameters, candidate_objective.estimation_problem, candidate_values)
 
 function _evaluate_candidates(candidate_objective::_MetaheuristicsObjective, candidate_values::AbstractMatrix)
     candidate_scores = Vector{_candidate_score_type(candidate_objective.parameters)}(undef, size(candidate_values, 1))
     Threads.@threads for candidate_index in axes(candidate_values, 1)
-        candidate_scores[candidate_index] = _with_private_copy(candidate_objective.private_fits) do private_fit
-            _candidate_score(candidate_objective.parameters, private_fit,
+        candidate_scores[candidate_index] = _with_private_copy(candidate_objective.private_problems) do private_problem
+            _candidate_score(candidate_objective.parameters, private_problem,
                 collect(view(candidate_values, candidate_index, :)))
         end
     end
@@ -407,10 +439,10 @@ function _evaluate_candidates(candidate_objective::_MetaheuristicsObjective, can
 end
 
 # Scalar algorithms minimise the total loss; NSGA2 minimises each named objective.
-_candidate_score(::Metaheuristics.AbstractParameters, prepared_fit, candidate_values) =
-    loss(prepared_fit, candidate_values)
-_candidate_score(::Metaheuristics.NSGA2, prepared_fit, candidate_values) =
-    (collect(Float64, values(loss_terms(prepared_fit, candidate_values))), [0.0], [0.0])
+_candidate_score(::Metaheuristics.AbstractParameters, estimation_problem, candidate_values) =
+    loss(estimation_problem, candidate_values)
+_candidate_score(::Metaheuristics.NSGA2, estimation_problem, candidate_values) =
+    (collect(Float64, values(loss_terms(estimation_problem, candidate_values))), [0.0], [0.0])
 
 _candidate_score_type(::Metaheuristics.AbstractParameters) = Float64
 _candidate_score_type(::Metaheuristics.NSGA2) = Tuple{Vector{Float64}, Vector{Float64}, Vector{Float64}}
@@ -420,26 +452,27 @@ _population_scores(::Metaheuristics.NSGA2, candidate_scores) =
     (permutedims(reduce(hcat, first.(candidate_scores))),
      zeros(length(candidate_scores), 1), zeros(length(candidate_scores), 1))
 
-_metaheuristics_fit_results(::Metaheuristics.AbstractParameters, prepared_fit, final_state) =
-    _model_fit_result(prepared_fit, Metaheuristics.minimizer(final_state), final_state)
-function _metaheuristics_fit_results(::Metaheuristics.NSGA2, prepared_fit, final_state)
+_metaheuristics_fit_results(::Metaheuristics.AbstractParameters, estimation_problem, supplied_algorithm, final_state) =
+    _model_fit_result(estimation_problem, supplied_algorithm, Metaheuristics.minimizer(final_state), final_state)
+function _metaheuristics_fit_results(::Metaheuristics.NSGA2, estimation_problem, supplied_algorithm, final_state)
     pareto_solutions = Metaheuristics.get_non_dominated_solutions(final_state.population)
     pareto_values = Metaheuristics.positions(pareto_solutions)
     # The stored objective rows are the `loss_terms` scored for these exact candidates.
     pareto_objectives = Metaheuristics.fvals(pareto_solutions)
-    objective_names = Tuple(prepared_fit.setup.observable_names)
-    return [_model_fit_result(prepared_fit, collect(candidate_values),
+    objective_names = Tuple(estimation_problem.setup.observable_names)
+    return [_model_fit_result(estimation_problem, supplied_algorithm, collect(candidate_values),
                 NamedTuple{objective_names}(Tuple(candidate_objectives)), final_state)
             for (candidate_values, candidate_objectives) in zip(eachrow(pareto_values), eachrow(pareto_objectives))]
 end
 
-_model_fit_result(prepared_fit, optimal_values, backend_result) =
-    _model_fit_result(prepared_fit, optimal_values, loss_terms(prepared_fit, optimal_values), backend_result)
+_model_fit_result(estimation_problem, fit_algorithm, optimal_values, backend_result) =
+    _model_fit_result(estimation_problem, fit_algorithm, optimal_values,
+        loss_terms(estimation_problem, optimal_values), backend_result)
 
-function _model_fit_result(prepared_fit, optimal_values, objective_terms, backend_result)
-    fitted_model = _selected_model(prepared_fit.model, prepared_fit.selection, optimal_values)
-    return FitResult(fitted_model, _selected_named_values(prepared_fit.selection, optimal_values),
-        objective_terms, backend_result, prepared_fit)
+function _model_fit_result(estimation_problem, fit_algorithm, optimal_values, objective_terms, backend_result)
+    fitted_model = _selected_model(estimation_problem.model, estimation_problem.selection, optimal_values)
+    return FitResult(fitted_model, _selected_named_values(estimation_problem.selection, optimal_values),
+        objective_terms, fit_algorithm, backend_result, estimation_problem)
 end
 
 """Joint parameter draws: selected named paths in rows, common sample IDs in columns."""
@@ -470,67 +503,74 @@ function ParameterSamples(; source = :user, kwargs...)
     return ParameterSamples(first.(sample_leaves), permutedims(hcat(sample_vectors...)); source)
 end
 
-"""Posterior draws, the native chain or sampler result, and the preparation that produced them."""
-struct InferenceResult{Model, Samples, Backend, Preparation}
+"""
+Posterior draws, the sampling algorithm, its native chain or sampler result, and
+the `EstimationProblem` that was solved.
+"""
+struct InferenceResult{Model, Samples, Algorithm, Backend, Problem}
     model::Model
     samples::Samples
+    alg::Algorithm
     backend_result::Backend
-    preparation::Preparation
+    estimation_problem::Problem
+end
+
+"""Check what MCMC sampling needs: priors, a likelihood loss and positive counts."""
+function _validate_posterior_sampling(estimation_problem::EstimationProblem, sample_count::Integer,
+                                      chain_count::Integer)
+    _prior_distributions(estimation_problem.priors)
+    is_likelihood(estimation_problem.loss) ||
+        throw(ArgumentError("Posterior sampling requires a likelihood loss, not an error discrepancy."))
+    sample_count > 0 && chain_count > 0 || throw(ArgumentError("Sample and chain counts must be positive."))
+    return nothing
+end
+
+"""The named posterior draws of an MCMC chain, as an `InferenceResult` (used by `CriSToolTuringExt`)."""
+function _chain_inference_result(estimation_problem::EstimationProblem, sampler, posterior_chain)
+    selected_symbols = Symbol.(estimation_problem.selection.names)
+    renamed_chain = rename_chain(posterior_chain, selected_symbols)
+    posterior_draws = ParameterSamples(estimation_problem.selection.names,
+        chains_to_matrix(renamed_chain; params = selected_symbols); source = :nuts)
+    return InferenceResult(estimation_problem.model, posterior_draws, sampler, renamed_chain, estimation_problem)
 end
 
 """
-    fit(bayesian_prepared; rng=default_rng(), parallel=bayesian_prepared.setup.parallel, kwargs...)
+    solve(problem::EstimationProblem, sampler::AbstractABCSampler; target, n_particles=1024,
+          n_generations=128, early_stop=false, parallel=EnsembleSerial()) -> InferenceResult
 
-Sample the posterior with the specification's sampler and counts. With
-`n_chains > 1`, `parallel = EnsembleThreads()` runs the chains on threads
-(`MCMCThreads`); with one chain it solves the experiments inside each
-log-density evaluation on threads instead. Other keywords go to
-`Turing.sample` (e.g. `progress`). Requires `using Turing`.
+Sample the priors by approximate Bayesian computation (`ABCDE()` or
+`ABCDETurner()`), accepting particles whose loss is within the explicit finite
+discrepancy threshold `target`. `parallel = EnsembleThreads()` evaluates
+particles on threads, each on a private copy of the solve templates; the
+experiments of one discrepancy run serially.
 """
-function fit(supplied_fit::PreparedFit{<:Any, <:BayesianSpec}; rng = Random.default_rng(),
-        parallel::SciMLBase.BasicEnsembleAlgorithm = supplied_fit.setup.parallel, kwargs...)
-    _require_turing_extension()
-    chain_parallel, prepared_fit = _split_parallel(supplied_fit, parallel)
-    posterior_chain = _nuts_posterior_chain(prepared_fit, rng, chain_parallel; kwargs...)
-    posterior_chain = rename_chain(posterior_chain, Symbol.(prepared_fit.selection.names))
-    posterior_draws = ParameterSamples(prepared_fit.selection.names,
-        chains_to_matrix(posterior_chain; params = Symbol.(prepared_fit.selection.names)); source = :nuts)
-    return InferenceResult(prepared_fit.model, posterior_draws, posterior_chain, prepared_fit)
-end
-
-"""
-    fit(abc_prepared; parallel=abc_prepared.setup.parallel)
-
-Sample under the specification's discrepancy threshold.
-`parallel = EnsembleThreads()` evaluates particles on threads, each on a private
-copy of the solve templates; the experiments of one discrepancy run serially.
-"""
-function fit(supplied_fit::PreparedFit{<:Any, <:ABCSpec};
-             parallel::SciMLBase.BasicEnsembleAlgorithm = supplied_fit.setup.parallel)
-    particle_parallel, prepared_fit = _split_parallel(supplied_fit, parallel)
-    fit_specification = prepared_fit.specification
-    joint_prior = product_distribution(last.(_named_parameter_leaves(fit_specification.priors)))
-    reference_values = _selected_baseline(prepared_fit.selection)
-    abc_result = _runsampler(fit_specification.sampler, joint_prior,
-        _particle_discrepancy(prepared_fit, particle_parallel), fit_specification.target,
-        () -> loss(prepared_fit, reference_values); nparticles = fit_specification.n_particles,
-        generations = fit_specification.n_generations, HPC = _threads_candidates(particle_parallel), earlystop = fit_specification.early_stop)
+function SciMLBase.solve(estimation_problem::EstimationProblem, abc_sampler::AbstractABCSampler;
+        target::Real, n_particles::Integer = 1024, n_generations::Integer = 128, early_stop::Bool = false,
+        parallel::SciMLBase.BasicEnsembleAlgorithm = EnsembleSerial())
+    isfinite(target) || throw(ArgumentError("ABC target must be explicit and finite."))
+    n_particles > 0 && n_generations > 0 || throw(ArgumentError("Particle and generation counts must be positive."))
+    joint_prior = product_distribution(_prior_distributions(estimation_problem.priors))
+    particle_parallel, split_problem = _split_parallel(estimation_problem, _parallel_level(abc_sampler), parallel)
+    reference_values = _selected_baseline(split_problem.selection)
+    abc_result = _runsampler(abc_sampler, joint_prior, _particle_discrepancy(split_problem, particle_parallel),
+        target, () -> loss(split_problem, reference_values); nparticles = n_particles,
+        generations = n_generations, HPC = _threads_candidates(particle_parallel), earlystop = early_stop)
     sample_matrix = _abc_particles_matrix(abc_result.P)
     sample_matrix === nothing && throw(ArgumentError("ABC returned no posterior particles."))
-    posterior_draws = ParameterSamples(prepared_fit.selection.names, sample_matrix; source = :abc)
-    return InferenceResult(prepared_fit.model, posterior_draws, abc_result, prepared_fit)
+    posterior_draws = ParameterSamples(split_problem.selection.names, sample_matrix; source = :abc)
+    return InferenceResult(split_problem.model, posterior_draws, abc_sampler, abc_result, split_problem)
 end
 
 # Threaded ABC evaluates particles concurrently; each borrows a private copy so mesh
 # solvers never share their in-place caches across threads.
-_particle_discrepancy(prepared_fit::PreparedFit, ::EnsembleSerial) =
-    candidate_values -> loss(prepared_fit, collect(candidate_values))
-_particle_discrepancy(prepared_fit::PreparedFit, unsupported::SciMLBase.BasicEnsembleAlgorithm) =
+_particle_discrepancy(estimation_problem::EstimationProblem, ::EnsembleSerial) =
+    candidate_values -> loss(estimation_problem, collect(candidate_values))
+_particle_discrepancy(estimation_problem::EstimationProblem, unsupported::SciMLBase.BasicEnsembleAlgorithm) =
     _unsupported_parallel(unsupported)
-function _particle_discrepancy(prepared_fit::PreparedFit, ::EnsembleThreads)
-    private_fits = _private_copy_pool(prepared_fit, Threads.nthreads())
-    return candidate_values -> _with_private_copy(private_fits) do private_fit
-        loss(private_fit, collect(candidate_values))
+function _particle_discrepancy(estimation_problem::EstimationProblem, ::EnsembleThreads)
+    private_problems = _private_copy_pool(estimation_problem, Threads.nthreads())
+    return candidate_values -> _with_private_copy(private_problems) do private_problem
+        loss(private_problem, collect(candidate_values))
     end
 end
 
@@ -546,8 +586,8 @@ end
 """Build named joint samples from bootstrap fits with identical selections."""
 function parameter_samples(bootstrap_results::AbstractVector{<:FitResult})
     isempty(bootstrap_results) && throw(ArgumentError("Supply at least one bootstrap fit."))
-    selected_names = first(bootstrap_results).preparation.selection.names
-    all(bootstrap_result -> bootstrap_result.preparation.selection.names == selected_names, bootstrap_results) ||
+    selected_names = first(bootstrap_results).estimation_problem.selection.names
+    all(bootstrap_result -> bootstrap_result.estimation_problem.selection.names == selected_names, bootstrap_results) ||
         throw(ArgumentError("Bootstrap fits must select the same named parameters in the same order."))
     sample_matrix = hcat([last.(_named_parameter_leaves(bootstrap_result.parameters)) for bootstrap_result in bootstrap_results]...)
     return ParameterSamples(selected_names, sample_matrix; source = :bootstrap)
@@ -565,45 +605,45 @@ end
     predict(result, runs; saveat=nothing, observables=nothing, parallel=EnsembleThreads())
 
 Propagate a fit or posterior through the same model, solver, mode and numerical
-options it was prepared with. Without `runs`, the fitted experiments are
-predicted at their observation times. `runs` may hold experiments (conditions
-resolved from their time-zero observations) or numeric `RunConditions`, which
-need `saveat`. A `FitResult` predicts its single fitted draw. By default
-(`parallel = EnsembleThreads()`) every (run, draw) pair is solved on threads,
-each task on a private copy of the prepared templates; `EnsembleSerial()` gives
-identical results on one thread.
+options as the `EstimationProblem` it solved. Without `runs`, the fitted
+experiments are predicted at their observation times. `runs` may hold
+experiments (conditions resolved from their time-zero observations) or numeric
+`RunConditions`, which need `saveat`. A `FitResult` predicts its single fitted
+draw. By default (`parallel = EnsembleThreads()`) every (run, draw) pair is
+solved on threads, each task on a private copy of the prepared templates;
+`EnsembleSerial()` gives identical results on one thread.
 """
 function predict(fit_outcome::Union{FitResult, InferenceResult},
-        prediction_runs::AbstractVector = fit_outcome.preparation.setup.experiments; kwargs...)
-    preparation = fit_outcome.preparation
-    fitted_solves = preparation.setup.solves
+        prediction_runs::AbstractVector = fit_outcome.estimation_problem.setup.experiments; kwargs...)
+    estimation_problem = fit_outcome.estimation_problem
+    fitted_solves = estimation_problem.setup.solves
     # Scoring settings (observable order, weights, projections) belong to the fit, not its predictions.
-    return predict(preparation.model, prediction_runs, _result_samples(fit_outcome);
-        solver = preparation.solver, mode = fitted_solves.mode, problem_options = preparation.problem_options,
-        algorithm = fitted_solves.requested_algorithm, solve_options = fitted_solves.solve_options,
-        callback_factory = fitted_solves.callback_factory,
+    return predict(estimation_problem.model, prediction_runs, _result_samples(fit_outcome);
+        solver = estimation_problem.solver, mode = fitted_solves.mode,
+        problem_options = estimation_problem.problem_options, alg = fitted_solves.requested_algorithm,
+        solve_options = fitted_solves.solve_options, callback_factory = fitted_solves.callback_factory,
         kwargs...)
 end
 
 _result_samples(inference_result::InferenceResult) = inference_result.samples
-_result_samples(fit_result::FitResult) = ParameterSamples(fit_result.preparation.selection.names,
+_result_samples(fit_result::FitResult) = ParameterSamples(fit_result.estimation_problem.selection.names,
     reshape(last.(_named_parameter_leaves(fit_result.parameters)), :, 1); source = :fit)
 
 """
     predict(model, runs, samples; solver, mode=TransientMode(), problem_options=(;),
-            saveat=nothing, observables=nothing, algorithm=nothing, solve_options=(;),
+            saveat=nothing, observables=nothing, alg=nothing, solve_options=(;),
             callback_factory=nothing, parallel=EnsembleThreads())
 
 Propagate user-supplied joint kinetic draws. The solver is required so that a
-prediction never silently changes numerical method. `algorithm`,
-`solve_options` and `callback_factory` are the solve settings accepted by
-`prepare_fit`. Each draw is reused across all runs; noise is added only through
+prediction never silently changes numerical method. `alg`, `solve_options` and
+`callback_factory` are the ODE solve settings accepted by `EstimationProblem`.
+Each draw is reused across all runs; noise is added only through
 `measurement_samples`.
 """
 function predict(crystal_model::CrystallisationModel, prediction_runs::AbstractVector,
         joint_samples::ParameterSamples; solver::AbstractSolver, mode::AbstractSimulationMode = TransientMode(),
         problem_options::NamedTuple = (;), saveat = nothing, observables = nothing,
-        algorithm = nothing, solve_options::NamedTuple = (;), callback_factory = nothing,
+        alg = nothing, solve_options::NamedTuple = (;), callback_factory = nothing,
         parallel::SciMLBase.BasicEnsembleAlgorithm = EnsembleThreads())
     isempty(prediction_runs) && throw(ArgumentError("Supply prediction experiments or run conditions."))
     sample_selection = _kinetic_selection(crystal_model, joint_samples.names)
@@ -612,7 +652,7 @@ function predict(crystal_model::CrystallisationModel, prediction_runs::AbstractV
     prediction_specs = [_prediction_run(prediction_run, run_index, crystal_model, mode, saveat, problem_options)
         for (run_index, prediction_run) in enumerate(prediction_runs)]
     prepared_solves = _prepare_solves(first.(prediction_specs), getindex.(prediction_specs, 2), mode;
-        solver, algorithm, solve_options, callback_factory)
+        solver, alg, solve_options, callback_factory)
     ensemble_predictions = run_ensemble(expanded_draws, prepared_solves; observables, parallel)
     return PredictionResult(joint_samples, last.(prediction_specs), ensemble_predictions)
 end

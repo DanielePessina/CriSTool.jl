@@ -16,7 +16,7 @@ abstract type AbstractSimulationMode end
     TransientMode()
 
 Integrate each run from time zero and compare the trajectory with observations
-at their measured times. This is the default for `prepare_fit` and `predict`.
+at their measured times. This is the default for `EstimationProblem` and `predict`.
 """
 struct TransientMode <: AbstractSimulationMode end
 
@@ -55,7 +55,7 @@ end
     PreparedSolves
 
 Prepared runs that share one simulation mode and one set of numerical solve
-settings. `requested_algorithm` is the caller's ODE algorithm (or `nothing`),
+settings. `requested_algorithm` is the caller's ODE algorithm `alg` (or `nothing`),
 kept so predictions reuse the same request.
 """
 struct PreparedSolves{Runs <: AbstractVector{<:PreparedRun}, Mode <: AbstractSimulationMode,
@@ -100,7 +100,7 @@ _failed_prepared_retcode(reconstruction_error::DomainError) = SciMLBase.ReturnCo
 Prepared solves bundled with the measured experiments they are scored against:
 the observable order, the scored sample indices per experiment, the observable
 weights resolved from the preparation loss, and local observable projections.
-Built with `prepare_loss` (normally through `prepare_fit`) and evaluated with
+Built with `prepare_loss` (normally through `EstimationProblem`) and evaluated with
 `loss(lf, setup, params)`.
 """
 struct LossSetup{Solves <: PreparedSolves, Weights <: NamedTuple, Projections <: NamedTuple,
@@ -132,7 +132,7 @@ end
 
 """
     _prepare_solves(configured_problems, observation_times, mode; solver,
-                    algorithm=nothing, solve_options=(;), callback_factory=nothing) -> PreparedSolves
+                    alg=nothing, solve_options=(;), callback_factory=nothing) -> PreparedSolves
 
 Build one `ODEProblem` template per configured problem under `solver`.
 `observation_times[i]` are the times at which run `i` is compared or reported;
@@ -142,7 +142,7 @@ callback for each evaluation and composes with package callbacks.
 """
 function _prepare_solves(configured_problems::AbstractVector{<:CrystallisationProblem},
                          observation_times::AbstractVector, simulation_mode::AbstractSimulationMode;
-                         solver::AbstractSolver, algorithm = nothing, solve_options::NamedTuple = (;),
+                         solver::AbstractSolver, alg = nothing, solve_options::NamedTuple = (;),
                          callback_factory = nothing)
     _validate_crystallisation_solve_options(solve_options)
     isempty(configured_problems) && throw(ArgumentError("At least one run is required."))
@@ -160,10 +160,10 @@ function _prepare_solves(configured_problems::AbstractVector{<:CrystallisationPr
         _validate_save_times(integration_times)
         odeproblem, default_algorithm = crystallisation_odeproblem(solver, discretised_run,
             (first(integration_times), last(integration_times)), kinetic_values)
-        PreparedRun(discretised_run, odeproblem, something(algorithm, default_algorithm), save_times,
+        PreparedRun(discretised_run, odeproblem, something(alg, default_algorithm), save_times,
                     parameter_axis)
     end
-    return PreparedSolves(prepared_runs, simulation_mode, algorithm, solve_options, callback_factory)
+    return PreparedSolves(prepared_runs, simulation_mode, alg, solve_options, callback_factory)
 end
 
 """
@@ -181,12 +181,12 @@ function prepare_loss(configured_problems::AbstractVector{<:CrystallisationProbl
                       solver::AbstractSolver, mode::AbstractSimulationMode = TransientMode(),
                       loss_function = nothing,
                       observable_order = nothing, observable_projections::NamedTuple = (;),
-                      algorithm = nothing, solve_options::NamedTuple = (;), callback_factory = nothing,
+                      alg = nothing, solve_options::NamedTuple = (;), callback_factory = nothing,
                       parallel::SciMLBase.BasicEnsembleAlgorithm = EnsembleSerial())
     length(configured_problems) == length(experiments) && !isempty(experiments) ||
         throw(ArgumentError("Supply one configured problem per experiment."))
     prepared_solves = _prepare_solves(configured_problems, map(_observation_times, experiments), mode;
-        solver, algorithm, solve_options, callback_factory)
+        solver, alg, solve_options, callback_factory)
     _validate_loss_projection_names(prepared_solves, observable_projections)
     schemas = [collect(propertynames(expt.observables)) for expt in experiments]
     heterogeneous_schema = any(Set(schema) != Set(first(schemas)) for schema in schemas)

@@ -1,31 +1,30 @@
 """
-Turing-backed NUTS sampling for `BayesianSpec`. Loaded when Turing is: it
-supplies the DynamicPPL loss model, the `nuts_model` and NUTS chain methods
-owned by CriSTool, the `nothing` sampler default (`Turing.NUTS()`), and the
-guard against passing a DynamicPPL model to the vendored AIS sampler.
+Turing-backed posterior sampling of an `EstimationProblem`. Loaded when Turing
+is: it supplies the DynamicPPL loss model, the `nuts_model` method owned by
+CriSTool, `solve(problem, sampler)` for Turing samplers such as `NUTS()`, and
+the guard against passing a DynamicPPL model to the vendored AIS sampler.
 """
 module CriSToolTuringExt
 
 import AbstractMCMC
 import Random
 import Turing
-using CriSTool: CriSTool, BayesianSpec, PreparedFit, loss, EnsembleSerial, EnsembleThreads
+using CriSTool: CriSTool, EstimationProblem, loss, EnsembleSerial, EnsembleThreads
 using CriSTool.SciMLBase: SciMLBase
-using CriSTool: nuts_model, _nuts_posterior_chain, _cristool_once_per_task,
-                _named_parameter_leaves
+using CriSTool: nuts_model, _cristool_once_per_task, _prior_distributions
 using CriSTool.KissABC: AIS
 
 # Keep the Turing model at module scope (DynamicPPL requirement). Its data
 # arguments are captured by a zero-argument adapter below because the generated
 # DynamicPPL 0.39 evaluator for nonempty model arguments references a global
 # defined later in that dependency; Julia 1.12+ rejects that world-age access.
-Turing.@model function _cristool_nuts_loss_model_with_data(prior, prepared_fit_per_task)
+Turing.@model function _cristool_nuts_loss_model_with_data(prior, estimation_problem_per_task)
     n = length(prior)
     θ = Vector{Float64}(undef, n)
     for i in 1:n
         θ[i] ~ prior[i]
     end
-    Turing.@addlogprob!(-loss(prepared_fit_per_task(), θ))
+    Turing.@addlogprob!(-loss(estimation_problem_per_task(), θ))
 end
 
 struct _CristoolNUTSModelEvaluator{CompiledModel, ModelArguments, ModelDefaults}
@@ -44,46 +43,59 @@ function (evaluator::_CristoolNUTSModelEvaluator)(outer_model, varinfo)
                             evaluator.model_defaults...)
 end
 
-function _cristool_nuts_loss_model(prior, prepared_fit_per_task)
-    compiled_model = _cristool_nuts_loss_model_with_data(prior, prepared_fit_per_task)
+function _cristool_nuts_loss_model(prior, estimation_problem_per_task)
+    compiled_model = _cristool_nuts_loss_model_with_data(prior, estimation_problem_per_task)
     evaluator = _CristoolNUTSModelEvaluator(
         compiled_model, Tuple(values(compiled_model.args)), compiled_model.defaults)
     return Turing.DynamicPPL.Model{false}(evaluator, NamedTuple(), NamedTuple())
 end
 
 
-"""Resolve the sampler of a `BayesianSpec`: `nothing` means `Turing.NUTS()`."""
-_nuts_sampler(::Nothing) = Turing.NUTS()
-_nuts_sampler(sampler) = sampler
-
-# Serial sampling evaluates on the caller's task, so the fit is used directly and no
+# Serial sampling evaluates on the caller's task, so the problem is used directly and no
 # copy stays pinned in the caller's task-local storage. Threaded chains each take a
 # private per-task copy of the mutable solve templates.
-_fit_per_task(prepared_fit, ::Turing.MCMCSerial) = Base.Returns(prepared_fit)
-_fit_per_task(prepared_fit, ::Turing.MCMCThreads) =
-    _cristool_once_per_task(typeof(prepared_fit)) do
-        deepcopy(prepared_fit)
+_problem_per_task(estimation_problem, ::Turing.MCMCSerial) = Base.Returns(estimation_problem)
+_problem_per_task(estimation_problem, ::Turing.MCMCThreads) =
+    _cristool_once_per_task(typeof(estimation_problem)) do
+        deepcopy(estimation_problem)
     end
 
 _chain_ensemble(::EnsembleSerial) = Turing.MCMCSerial()
 _chain_ensemble(::EnsembleThreads) = Turing.MCMCThreads()
 _chain_ensemble(unsupported::SciMLBase.BasicEnsembleAlgorithm) = CriSTool._unsupported_parallel(unsupported)
 
-CriSTool.nuts_model(prepared_fit::PreparedFit{<:Any, <:BayesianSpec}) =
-    nuts_model(prepared_fit, Turing.MCMCSerial())
+CriSTool.nuts_model(estimation_problem::EstimationProblem) =
+    nuts_model(estimation_problem, Turing.MCMCSerial())
 
-function CriSTool.nuts_model(prepared_fit::PreparedFit{<:Any, <:BayesianSpec},
+function CriSTool.nuts_model(estimation_problem::EstimationProblem,
         ensemble::Union{Turing.MCMCSerial, Turing.MCMCThreads})
-    prior_values = last.(_named_parameter_leaves(prepared_fit.specification.priors))
-    return _cristool_nuts_loss_model(prior_values, _fit_per_task(prepared_fit, ensemble))
+    return _cristool_nuts_loss_model(_prior_distributions(estimation_problem.priors),
+        _problem_per_task(estimation_problem, ensemble))
 end
 
-function CriSTool._nuts_posterior_chain(prepared_fit::PreparedFit{<:Any, <:BayesianSpec},
-        rng::Random.AbstractRNG, chain_parallel::SciMLBase.BasicEnsembleAlgorithm; kwargs...)
-    fit_specification = prepared_fit.specification
+"""
+    solve(problem::EstimationProblem, sampler::AbstractMCMC.AbstractSampler;
+          n_samples=1000, n_chains=1, rng=default_rng(), parallel=EnsembleSerial(), kwargs...)
+        -> InferenceResult
+
+Sample the posterior of the problem's priors and likelihood loss with a Turing
+sampler such as `NUTS()`: `n_chains` chains of `n_samples` draws each. With
+`n_chains > 1`, `parallel = EnsembleThreads()` runs the chains on threads
+(`MCMCThreads`); with one chain it solves the experiments inside each
+log-density evaluation on threads instead. Other keywords go to `Turing.sample`
+(e.g. `progress`). The likelihood uses supplied measurement variances; noise is
+never fitted.
+"""
+function SciMLBase.solve(estimation_problem::EstimationProblem, sampler::AbstractMCMC.AbstractSampler;
+        n_samples::Integer = 1000, n_chains::Integer = 1, rng::Random.AbstractRNG = Random.default_rng(),
+        parallel::SciMLBase.BasicEnsembleAlgorithm = EnsembleSerial(), sample_options...)
+    CriSTool._validate_posterior_sampling(estimation_problem, n_samples, n_chains)
+    chain_parallel, split_problem = CriSTool._split_parallel(estimation_problem,
+        CriSTool._chain_parallel_level(n_chains), parallel)
     ensemble = _chain_ensemble(chain_parallel)
-    return Turing.sample(rng, nuts_model(prepared_fit, ensemble), _nuts_sampler(fit_specification.sampler),
-        ensemble, fit_specification.n_samples, fit_specification.n_chains; kwargs...)
+    posterior_chain = Turing.sample(rng, nuts_model(split_problem, ensemble), sampler, ensemble,
+        n_samples, n_chains; sample_options...)
+    return CriSTool._chain_inference_result(split_problem, sampler, posterior_chain)
 end
 
 # Resolve the method ambiguity between the vendored AIS step and DynamicPPL's

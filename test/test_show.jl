@@ -176,39 +176,47 @@ const show_mesh_population = MeshPopulation(zeros(200, 2), zeros(200, 2), zeros(
 end
 
 @testset "Display: fit, inference and prediction results" begin
-    show_specification = OptimisationSpec(bounds = (growth = (growth_coefficient = (1e-12, 1e-10),),),
-        algorithm = OptimizationOptimJL.LBFGS())
     hand_fit = FitResult(nothing, (growth = (growth_coefficient = 1.667e-11,), nucleation = (ln_nucleation_prefactor = 38.21,)),
-        (concentration = 0.02, d43 = 0.0121), nothing, (; specification = show_specification))
+        (concentration = 0.02, d43 = 0.0121), OptimizationOptimJL.LBFGS(), nothing, nothing)
     @test show_plain(hand_fit) == """
-        FitResult — OptimisationSpec(LBFGS), loss = 0.0321
+        FitResult — LBFGS, loss = 0.0321
           growth.growth_coefficient            1.667e-11
           nucleation.ln_nucleation_prefactor   38.21"""
-    @test sprint(show, hand_fit) == "FitResult(OptimisationSpec(LBFGS), loss = 0.0321, 2 parameters)"
-    @test occursin("OptimisationSpec(DE)", show_plain(FitResult(nothing, (growth = (speed = 0.01,),), (total = 1.0,), nothing,
-        (; specification = OptimisationSpec(bounds = (;), algorithm = DE())))))
+    @test sprint(show, hand_fit) == "FitResult(LBFGS, loss = 0.0321, 2 parameters)"
+    # A Metaheuristics algorithm is labelled by its method, not its wrapper type.
+    @test occursin("FitResult — DE,", show_plain(FitResult(nothing, (growth = (speed = 0.01,),), (total = 1.0,), DE(),
+        nothing, nothing)))
 
     # A fit through Optimization.jl reports convergence from its return code.
     lbfgs_experiment = fixture_experiment((time = [0.0, 300.0, 600.0],
             concentration = fixture_translation_concentration.([0.0, 300.0, 600.0]),
             d43 = fixture_translation_d43.([0.0, 300.0, 600.0])),
         RunConditions(temperature = 293.15, crystals = fixture_uniform_seed()); exp_id = 61)
-    lbfgs_fit = fit(prepare_fit(fixture_translation_model(speed = 0.012), [lbfgs_experiment],
-        OptimisationSpec(bounds = (growth = (speed = (0.001, 0.03),),), algorithm = OptimizationOptimJL.LBFGS(),
-            searchoptions = (maxiters = 50,))))
+    lbfgs_estimation = EstimationProblem(fixture_translation_model(speed = 0.012), [lbfgs_experiment];
+        bounds = (growth = (speed = (0.001, 0.03),),))
+    @test show_plain(lbfgs_estimation) == """
+        EstimationProblem
+          model:       CrystallisationModel(growth = CallableGrowth(speed = 0.012))
+          experiments: 1 (observables concentration, d43)
+          selects:     growth.speed by bounds
+          loss:        GaussianNLL
+          solver:      MoM(4 moments)
+          mode:        TransientMode"""
+    @test sprint(show, lbfgs_estimation) ==
+          "EstimationProblem(1 experiments, 1 parameters by bounds, GaussianNLL, MoM(4 moments))"
+    lbfgs_fit = solve(lbfgs_estimation, OptimizationOptimJL.LBFGS(); maxiters = 50)
     lbfgs_lines = split(show_plain(lbfgs_fit), '\n')
-    @test startswith(lbfgs_lines[1], "FitResult — OptimisationSpec(LBFGS), loss = ")
+    @test startswith(lbfgs_lines[1], "FitResult — LBFGS, loss = ")
     @test endswith(lbfgs_lines[1], ", converged")
     @test lbfgs_lines[2] == "  growth.speed   0.01"
 
     posterior_samples = ParameterSamples(growth = (speed = [0.01, 0.02, 0.03],); source = :nuts)
     @test sprint(show, posterior_samples) == "ParameterSamples(1 parameters, 3 draws, source = :nuts)"
-    hand_inference = InferenceResult(nothing, posterior_samples, nothing,
-        (; specification = BayesianSpec(priors = (growth = (speed = Uniform(0.001, 0.03),),))))
+    hand_inference = InferenceResult(nothing, posterior_samples, ABCDE(), nothing, nothing)
     @test show_plain(hand_inference) == """
-        InferenceResult — BayesianSpec(NUTS), 3 draws
+        InferenceResult — ABCDE, 3 draws
           growth.speed   0.02 ± 0.01"""
-    @test sprint(show, hand_inference) == "InferenceResult(BayesianSpec(NUTS), 1 parameters, 3 draws)"
+    @test sprint(show, hand_inference) == "InferenceResult(ABCDE, 1 parameters, 3 draws)"
 
     prediction_times = [0.0, 100.0]
     hand_ensemble = CriSTool.PredictionEnsemble(prediction_times, (concentration = ones(3, 2), d43 = ones(3, 2)),

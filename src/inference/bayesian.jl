@@ -1,6 +1,6 @@
 """
-Task-local state, the Turing-extension entry points of
-`fit(::PreparedFit{<:Any, <:BayesianSpec})`, and chain renaming. Chain trace/density plots (`plot_chain_diagnostics`) live in
+Task-local state, the Turing-extension entry point `nuts_model` behind
+`solve(::EstimationProblem, NUTS())`, and chain renaming. Chain trace/density plots (`plot_chain_diagnostics`) live in
 the Makie extension.
 """
 
@@ -13,7 +13,7 @@ identical port: Base's own implementation of `OncePerTask` is exactly
 `get!(f, task_local_storage(), self)::T` keyed by the object.
 
 `T` is passed explicitly (never inferred) so the model's
-`prepared_fit_per_task()` call site - which runs once per NUTS
+`estimation_problem_per_task()` call site - which runs once per NUTS
 log-probability evaluation - stays type stable on every supported Julia.
 """
 function _cristool_once_per_task(initializer, ::Type{T}) where {T}
@@ -50,24 +50,15 @@ end
     get!(_opt.initializer, task_local_storage(), _opt)::T
 end
 
-"""Build the Turing model with explicit priors for a Bayesian prepared fit; an optional
-second argument selects the chain ensemble (`MCMCSerial()` or `MCMCThreads()`).
+"""
+    nuts_model(problem::EstimationProblem[, ensemble])
 
-Methods are provided by the `CriSToolTuringExt` package extension; load it with
-`using Turing`.
+The Turing model behind `solve(problem, NUTS())`: the problem's priors and its
+loss as the negative log likelihood. An optional second argument selects the
+chain ensemble (`MCMCSerial()` or `MCMCThreads()`). Methods are provided by the
+`CriSToolTuringExt` package extension; load it with `using Turing`.
 """
 function nuts_model end
-
-"""Throw a loading instruction when the Turing extension is absent."""
-function _require_turing_extension()
-    Base.get_extension(@__MODULE__, :CriSToolTuringExt) === nothing &&
-        throw(ArgumentError("Sampling a BayesianSpec requires Turing; run `using Turing` " *
-                            "to load the CriSToolTuringExt extension."))
-    return nothing
-end
-
-"""Sample the NUTS posterior chain of a Bayesian prepared fit (`CriSToolTuringExt`)."""
-function _nuts_posterior_chain end
 
 """
     rename_chain(chain::MCMCChains.Chains, symbols::Vector{Symbol}) -> Chains

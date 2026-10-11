@@ -106,15 +106,15 @@ export AbstractSolver, AbstractMomentSolver, FiniteVol, MoM, QMOM, DQMOM, WENO,
        invert_moments,
        moment_order, moment_count, quadrature,
        aggregation_moment_source, breakage_moment_source
-export AbstractABCSampler, ABCDESampler, ABCDETurnerSampler
+export AbstractABCSampler, ABCDE, ABCDETurner
 export EnsembleSerial, EnsembleThreads
 export PredictionEnsemble, prediction_summary
 export plot_predictions, plot_posterior_pairplot, plot_chain_diagnostics
 export rename_chain
 export CrystallisationSystem, LysozymeSystem, KineticModel, CrystallisationModel,
        CallableGrowth, CallableNucleation, CallableLengthGrowth, KineticContext, system_properties,
-       required_properties, named_parameters, OptimisationSpec, BayesianSpec, ABCSpec,
-       PreparedFit, prepare_fit, fit, FitResult, InferenceResult, is_likelihood, loss_terms,
+       required_properties, named_parameters, EstimationProblem, FitResult, InferenceResult,
+       is_likelihood, loss_terms,
        AbstractSimulationMode, TransientMode, SteadyMode,
        ParameterSamples, parameter_samples, predict, PredictionResult, measurement_samples,
        DistributionInitialCrystals, AbstractSeedWeighting, NumberWeighted, VolumeWeighted,
@@ -168,7 +168,7 @@ include("solvers/weno.jl")
 include("solvers/steady_state.jl")
 
 include("vendor/KissABC.jl")
-using .KissABC
+import .KissABC
 
 # Inference and posterior utilities.
 include("inference/parameter_estimation.jl")

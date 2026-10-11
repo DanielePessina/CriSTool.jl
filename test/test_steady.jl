@@ -151,18 +151,17 @@ end
                            variance = [concentration_variance]),
                          d43 = Observable(time = [300.0], mean = [measured_d43], variance = [d43_variance])))
     growth_bounds = (growth = (speed = (0.1, 0.3),),)
-    steady_spec = OptimisationSpec(bounds = growth_bounds, algorithm = OptimizationOptimJL.LBFGS())
-    steady_prepared = prepare_fit(steady_msmpr_model(speed = 0.15), [steady_experiment], steady_spec;
-        mode = SteadyMode(steady_autonomous_options))
+    steady_estimation = EstimationProblem(steady_msmpr_model(speed = 0.15), [steady_experiment];
+        bounds = growth_bounds, mode = SteadyMode(steady_autonomous_options))
 
     # Gaussian NLL sum_i [log(2 pi var_i) + r_i^2 / var_i] / 2 at closed-form equilibria.
     gaussian_nll(speed) = 0.5 * (log(2pi * concentration_variance) +
         (steady_ideal_concentration(; speed) - measured_concentration)^2 / concentration_variance) +
         0.5 * (log(2pi * d43_variance) + (steady_ideal_d43(; speed) - measured_d43)^2 / d43_variance)
-    @test loss(steady_prepared, [0.2]) ≈ gaussian_nll(0.2) atol = 1e-5
-    @test loss(steady_prepared, [0.25]) ≈ gaussian_nll(0.25) rtol = 1e-5
+    @test loss(steady_estimation, [0.2]) ≈ gaussian_nll(0.2) atol = 1e-5
+    @test loss(steady_estimation, [0.25]) ≈ gaussian_nll(0.25) rtol = 1e-5
 
-    steady_fit = fit(steady_prepared)
+    steady_fit = solve(steady_estimation, OptimizationOptimJL.LBFGS())
     @test steady_fit.parameters.growth.speed ≈ 0.2 rtol = 1e-4
     fitted_predictions = predict(steady_fit)
     @test fitted_predictions.ensembles[1].success == [true]
@@ -178,15 +177,16 @@ end
           [steady_ideal_concentration(; speed) for speed in draw_speeds] rtol = 2e-6
 
     # Steady fits need numeric conditions, an MSMPR, and declared autonomy.
-    @test_throws ArgumentError prepare_fit(steady_msmpr_model(), [CrystallisationExperiment(;
+    @test_throws ArgumentError EstimationProblem(steady_msmpr_model(), [CrystallisationExperiment(;
         exp_id = 802, observables = steady_experiment.observables,
-        conditions = RunConditions(temperature = 298.15, operation = fixture_msmpr()))], steady_spec;
-        mode = SteadyMode(steady_autonomous_options))
-    @test_throws ArgumentError prepare_fit(steady_msmpr_model(), [CrystallisationExperiment(;
+        conditions = RunConditions(temperature = 298.15, operation = fixture_msmpr()))];
+        bounds = growth_bounds, mode = SteadyMode(steady_autonomous_options))
+    @test_throws ArgumentError EstimationProblem(steady_msmpr_model(), [CrystallisationExperiment(;
         exp_id = 803, observables = steady_experiment.observables,
-        conditions = RunConditions(temperature = 298.15, concentration = 1.0))], steady_spec;
-        mode = SteadyMode(steady_autonomous_options))
-    @test_throws ArgumentError prepare_fit(steady_msmpr_model(), [steady_experiment], steady_spec; mode = SteadyMode())
+        conditions = RunConditions(temperature = 298.15, concentration = 1.0))];
+        bounds = growth_bounds, mode = SteadyMode(steady_autonomous_options))
+    @test_throws ArgumentError EstimationProblem(steady_msmpr_model(), [steady_experiment];
+        bounds = growth_bounds, mode = SteadyMode())
 
     # A candidate that cannot relax within the horizon is a failed prediction, not an error.
     exhausted_predictions = predict(steady_msmpr_model(), [steady_experiment],

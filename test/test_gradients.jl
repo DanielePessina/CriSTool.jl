@@ -22,8 +22,8 @@ const gradient_lysozyme_scaled_point = [38.0, 0.7, 1.0, 3.0]
     gradient_observed = fixture_translation_concentration.(gradient_times)
     gradient_experiment = fixture_experiment((time = gradient_times, concentration = gradient_observed),
         fixture_seeded_conditions(); observables = (:concentration,))
-    gradient_prepared = prepare_fit(fixture_translation_model(), [gradient_experiment],
-        OptimisationSpec(bounds = (growth = (speed = (0.001, 0.05),),), algorithm = nothing))
+    gradient_estimation = EstimationProblem(fixture_translation_model(), [gradient_experiment];
+        bounds = (growth = (speed = (0.001, 0.05),),))
     gradient_speed = 0.015
     # d/ds sum (C(t; s) - y)^2 / (2 var), differentiating the analytic trajectory.
     closed_form_gradient = sum(gradient_times .|> elapsed_time ->
@@ -31,8 +31,8 @@ const gradient_lysozyme_scaled_point = [38.0, 0.7, 1.0, 3.0]
          fixture_translation_concentration(elapsed_time)) / 0.01 *
         ForwardDiff.derivative(trial_speed -> fixture_translation_concentration(elapsed_time; speed = trial_speed),
             gradient_speed))
-    forward_gradient = DI.gradient(trial -> loss(gradient_prepared, trial), gradient_forward_backend, [gradient_speed])
-    difference_gradient = DI.gradient(trial -> loss(gradient_prepared, trial), gradient_difference_backend, [gradient_speed])
+    forward_gradient = DI.gradient(trial -> loss(gradient_estimation, trial), gradient_forward_backend, [gradient_speed])
+    difference_gradient = DI.gradient(trial -> loss(gradient_estimation, trial), gradient_difference_backend, [gradient_speed])
     @test only(forward_gradient) ≈ closed_form_gradient rtol = 1e-5
     @test forward_gradient ≈ difference_gradient rtol = 1e-6
 end
@@ -49,10 +49,9 @@ end
     noncontiguous_experiment = fixture_experiment(
         (time = [0.0, 100.0], concentration = [20.0, 19.0]), fixture_seeded_conditions();
         observables = (:concentration,))
-    noncontiguous_prepared = prepare_fit(noncontiguous_model, [noncontiguous_experiment],
-        OptimisationSpec(bounds = (nucleation = (amplitude = (0.01, 0.5),), growth = (order = (1.0, 3.0),)),
-            algorithm = nothing))
-    noncontiguous_objective = trial -> loss(noncontiguous_prepared, trial)
+    noncontiguous_estimation = EstimationProblem(noncontiguous_model, [noncontiguous_experiment];
+        bounds = (nucleation = (amplitude = (0.01, 0.5),), growth = (order = (1.0, 3.0),)))
+    noncontiguous_objective = trial -> loss(noncontiguous_estimation, trial)
     @test DI.gradient(noncontiguous_objective, gradient_forward_backend, [0.2, 2.5]) ≈
           DI.gradient(noncontiguous_objective, gradient_difference_backend, [0.2, 2.5]) rtol = 1e-4 atol = 1e-8
 end
@@ -184,14 +183,13 @@ end
             mean = [steady_observed_d43], variance = [steady_variance]),),
         conditions = RunConditions(temperature = 298.15, concentration = 1.0,
             operation = fixture_msmpr(feed = fixture_clear_feed(concentration = 1.0))), exp_id = 1)
-    steady_prepared = prepare_fit(steady_model, [steady_experiment],
-        OptimisationSpec(bounds = (growth = (speed = (0.01, 1.0),),), algorithm = nothing);
-        solver = MoM(reltol = 1e-10, abstol = 1e-24), mode = SteadyMode(SteadyStateOptions(autonomous = true, relaxation_horizon = 1000.0)))
+    steady_estimation = EstimationProblem(steady_model, [steady_experiment];
+        bounds = (growth = (speed = (0.01, 1.0),),), solver = MoM(reltol = 1e-10, abstol = 1e-24), mode = SteadyMode(SteadyStateOptions(autonomous = true, relaxation_horizon = 1000.0)))
     steady_speed = 0.2
     steady_d43 = 4 * steady_speed * 1e-6 * steady_residence
-    steady_gradient = DI.gradient(trial -> loss(steady_prepared, trial), gradient_forward_backend, [steady_speed])
+    steady_gradient = DI.gradient(trial -> loss(steady_estimation, trial), gradient_forward_backend, [steady_speed])
     @test only(steady_gradient) ≈ (steady_d43 - steady_observed_d43) / steady_variance * 4e-6 * steady_residence rtol = 2e-4
-    @test steady_gradient ≈ DI.gradient(trial -> loss(steady_prepared, trial),
+    @test steady_gradient ≈ DI.gradient(trial -> loss(steady_estimation, trial),
         DI.AutoFiniteDifferences(FiniteDifferences.central_fdm(5, 1; max_range = 1e-3)), [steady_speed]) rtol = 2e-4
 end
 
@@ -230,15 +228,15 @@ end
         fixture_seeded_conditions(); observables = (:concentration,), exp_id = experiment_index)
         for (experiment_index, (elapsed_times, true_speed)) in
             enumerate(zip(gradient_times_by_experiment, (0.008, 0.01, 0.012)))]
-    gradient_specification = OptimisationSpec(bounds = (growth = (speed = (0.001, 0.05),),), algorithm = nothing)
-    serial_prepared = prepare_fit(fixture_translation_model(), threaded_experiments, gradient_specification)
-    threaded_prepared = prepare_fit(fixture_translation_model(), threaded_experiments, gradient_specification;
-        parallel = EnsembleThreads())
+    serial_estimation = EstimationProblem(fixture_translation_model(), threaded_experiments;
+        bounds = (growth = (speed = (0.001, 0.05),),))
+    # The experiment threading that solve(...; parallel = EnsembleThreads()) gives a gradient optimiser.
+    threaded_estimation = CriSTool._with_parallel(serial_estimation, EnsembleThreads())
     trial_speed = [0.015]
-    serial_gradient = DI.gradient(trial -> loss(serial_prepared, trial), gradient_forward_backend, trial_speed)
-    threaded_gradient = DI.gradient(trial -> loss(threaded_prepared, trial), gradient_forward_backend, trial_speed)
+    serial_gradient = DI.gradient(trial -> loss(serial_estimation, trial), gradient_forward_backend, trial_speed)
+    threaded_gradient = DI.gradient(trial -> loss(threaded_estimation, trial), gradient_forward_backend, trial_speed)
     @test threaded_gradient == serial_gradient
     @test !iszero(only(serial_gradient))
-    difference_gradient = DI.gradient(trial -> loss(threaded_prepared, trial), gradient_difference_backend, trial_speed)
+    difference_gradient = DI.gradient(trial -> loss(threaded_estimation, trial), gradient_difference_backend, trial_speed)
     @test threaded_gradient ≈ difference_gradient rtol = 1e-6
 end

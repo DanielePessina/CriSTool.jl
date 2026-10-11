@@ -1,6 +1,6 @@
 """
 Precompile workload: one short simulation per solver with the built-in kinetic
-laws and one prepared-fit loss evaluation, so the first `solve` or `loss`
+laws and one estimation-problem loss evaluation, so the first `solve` or `loss`
 call in a session reuses cached native code instead of compiling the solver
 stack. Callable laws (`CallableGrowth`, ...)
 are user closures and still compile on first use.
@@ -27,13 +27,13 @@ are user closures and still compile on first use.
               WENO(meshsize = 8, lmax = 100e-6); saveat = workload_save_times)
         solve(CrystallisationProblem(workload_model, workload_unseeded_run, workload_tspan), MoM();
               saveat = workload_save_times)
-        # One prepared-fit loss evaluation (the objective every fit calls).
+        # One estimation-problem loss evaluation (the objective every fit calls).
         workload_experiment = CrystallisationExperiment(exp_id = 1,
             observables = (concentration = Observable(time = [0.0, 30.0, 60.0],
                 mean = [18.0, 17.99, 17.98], variance = [0.01, 0.01, 0.01]),),
             conditions = RunConditions(temperature = 293.15, crystals = workload_seed))
-        workload_fit = prepare_fit(workload_model, [workload_experiment],
-            OptimisationSpec(bounds = (growth = (growth_order = (1.0, 4.0),),), algorithm = nothing))
-        loss(workload_fit, [3.0])
+        workload_estimation = EstimationProblem(workload_model, [workload_experiment];
+            bounds = (growth = (growth_order = (1.0, 4.0),),))
+        loss(workload_estimation, [3.0])
     end
 end
