@@ -14,8 +14,9 @@
 - Opt-in multithreading across experiments: `prepare_fit`, `fit` and `predict`
   accept `parallel = EnsembleThreads()` (`EnsembleSerial()` and `EnsembleThreads()`
   are re-exported from SciMLBase). Loss values, ForwardDiff gradients, fits and
-  predictions are bitwise identical to serial. `predict` now defaults to
-  `EnsembleSerial()` instead of always threading its (run, draw) pairs.
+  predictions are bitwise identical to serial. Losses and fits default to
+  `EnsembleSerial()`; `predict` keeps threading its (run, draw) pairs by default
+  and now accepts `parallel = EnsembleSerial()` to opt out.
 
 - Plotting moved to package extensions: `using CairoMakie` (or another Makie
   backend) enables `plot_predictions` and `ChainStatsPlots`; `PairPlots`
@@ -27,8 +28,8 @@
 - Turing is a weak dependency: `fit` on a `BayesianSpec` needs `using Turing`
   (`CriSToolTuringExt`), and `BayesianSpec`'s default `sampler` is now `nothing`,
   meaning `Turing.NUTS()`. `using CriSTool` no longer loads Turing, and
-  `CriSTool.predict` is no longer Turing's `predict`: import Turing selectively
-  (`using Turing: NUTS`) to avoid a name clash on `predict`. The AIS-versus-
+  `predict` extends `StatsAPI.predict` (the function Turing exports), so
+  `using CriSTool, Turing` has no name clash. The AIS-versus-
   DynamicPPL ambiguity guard moved into the extension.
 - Depend on `OrdinaryDiffEqTsit5`, `OrdinaryDiffEqSSPRK` and `SciMLBase` instead
   of the full `OrdinaryDiffEq`. Other time steppers come from the user's own

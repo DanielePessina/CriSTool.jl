@@ -55,8 +55,7 @@ positive variances for scored measurements; MAE does not. Predictions describe
 physical trajectories; adding measurement noise is a separate, explicit step
 (`measurement_samples`).
 
-Turing is optional: `fit` on a `BayesianSpec` needs `using Turing` (`using Turing: NUTS`
-avoids a clash between Turing's and CriSTool's `predict`).
+Turing is optional: `fit` on a `BayesianSpec` needs `using Turing`.
 
 Plotting is a package extension: run `using CairoMakie` to enable
 `plot_predictions` and `ChainStatsPlots`, and add `using PairPlots` for

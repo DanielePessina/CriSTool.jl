@@ -44,11 +44,10 @@ function overhead_raw_solve_inputs(prepared_fit, kinetic_values)
         odeproblem, _ = crystallisation_odeproblem(configured_problem, prepared_run.saveat,
             ComponentArray(kinetic_values, CriSTool.paramaxis(configured_problem)))
         configured_solver = configured_problem.solver
-        solve_settings = merge((reltol = configured_solver.reltol,
-                abstol = CriSTool._solver_absolute_floor(configured_problem, odeproblem),
-                dense = false, maxiters = CriSTool.CRISTOOL_MAX_SOLVER_ITERS,
-                internalnorm = CriSTool._primal_error_norm, saveat = prepared_run.saveat),
-            CriSTool._solver_alg_hints(configured_solver))
+        solve_settings = (reltol = configured_solver.reltol,
+            abstol = CriSTool._solver_absolute_floor(configured_problem, odeproblem),
+            dense = false, maxiters = CriSTool.CRISTOOL_MAX_SOLVER_ITERS,
+            internalnorm = CriSTool._primal_error_norm, saveat = prepared_run.saveat)
         (odeproblem, prepared_run.algorithm, solve_settings)
     end
 end

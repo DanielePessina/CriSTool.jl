@@ -86,8 +86,8 @@ posterior_predictions = predict(posterior)
 Turing is a weak dependency: `fit` on a `BayesianSpec` needs `using Turing` (or
 `import Turing`) in the session, which loads the `CriSToolTuringExt` extension,
 and throws an error naming that step otherwise. The default `sampler = nothing`
-means `Turing.NUTS()`. Turing also exports a `predict`; import only what you need
-(`using Turing: NUTS`) or call `CriSTool.predict` to avoid the name clash.
+means `Turing.NUTS()`. CriSTool's `predict` extends the same `StatsAPI.predict`
+that Turing exports, so `using CriSTool, Turing` works without a name clash.
 ABC fitting and everything else do not need Turing.
 
 Priors are explicit and never automatically centred on a fitted optimum.

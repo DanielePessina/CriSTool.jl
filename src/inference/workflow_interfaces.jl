@@ -117,17 +117,17 @@ _operation_prediction_names(::BatchOperation) = ()
 _operation_prediction_names(::AbstractCrystallisationOperation) = (:volume,)
 
 """
-    run_ensemble(parameter_samples, prepared_solves; observables=nothing, parallel=EnsembleSerial())
+    run_ensemble(parameter_samples, prepared_solves; observables=nothing, parallel=EnsembleThreads())
         -> Vector{PredictionEnsemble}
 
 Predict each prepared run for the full kinetic parameter vectors in the columns
 of `parameter_samples`. Without `observables`, every built-in trajectory and
-configured solvent value is predicted. With `parallel = EnsembleThreads()` the
-(run, sample) pairs are solved on threads, each task on its own copy of the
+configured solvent value is predicted. With `parallel = EnsembleThreads()` (the
+default) the (run, sample) pairs are solved on threads, each task on its own copy of the
 prepared templates; the output does not depend on `parallel`.
 """
 function run_ensemble(parameter_samples::AbstractMatrix, prepared_solves::PreparedSolves;
-                      observables = nothing, parallel::SciMLBase.BasicEnsembleAlgorithm = EnsembleSerial())
+                      observables = nothing, parallel::SciMLBase.BasicEnsembleAlgorithm = EnsembleThreads())
     size(parameter_samples, 1) == _kinetic_parameter_count(prepared_solves) ||
         throw(ArgumentError("Ensemble sample rows must match the kinetic parameter axis."))
     sample_count = size(parameter_samples, 2)

@@ -1,4 +1,7 @@
 import Distributions: fit
+# `predict` extends StatsAPI.predict, the function Turing and StatsBase export,
+# so `using CriSTool, Turing` resolves to one `predict`.
+import StatsAPI: predict
 
 """Declare whether a custom loss represents a supplied-noise negative log likelihood."""
 is_likelihood(::AbstractPELossFunction) = false
@@ -493,16 +496,17 @@ struct PredictionResult{Samples, Ensembles}
 end
 
 """
-    predict(result; saveat=nothing, observables=nothing, parallel=result.preparation.setup.parallel)
-    predict(result, runs; saveat=nothing, observables=nothing, parallel=...)
+    predict(result; saveat=nothing, observables=nothing, parallel=EnsembleThreads())
+    predict(result, runs; saveat=nothing, observables=nothing, parallel=EnsembleThreads())
 
 Propagate a fit or posterior through the same model, solver, mode and numerical
 options it was prepared with. Without `runs`, the fitted experiments are
 predicted at their observation times. `runs` may hold experiments (conditions
 resolved from their time-zero observations) or numeric `RunConditions`, which
-need `saveat`. A `FitResult` predicts its single fitted draw. `parallel =
-EnsembleThreads()` solves every (run, draw) pair on threads, each task on a
-private copy of the prepared templates; results equal `EnsembleSerial()`.
+need `saveat`. A `FitResult` predicts its single fitted draw. By default
+(`parallel = EnsembleThreads()`) every (run, draw) pair is solved on threads,
+each task on a private copy of the prepared templates; `EnsembleSerial()` gives
+identical results on one thread.
 """
 function predict(fit_outcome::Union{FitResult, InferenceResult},
         prediction_runs::AbstractVector = fit_outcome.preparation.setup.experiments; kwargs...)
@@ -513,7 +517,7 @@ function predict(fit_outcome::Union{FitResult, InferenceResult},
         solver = preparation.solver, mode = fitted_solves.mode, problem_options = preparation.problem_options,
         algorithm = fitted_solves.requested_algorithm, solve_options = fitted_solves.solve_options,
         callback_factory = fitted_solves.callback_factory,
-        (; parallel = preparation.setup.parallel, kwargs...)...)
+        kwargs...)
 end
 
 _result_samples(inference_result::InferenceResult) = inference_result.samples
@@ -523,7 +527,7 @@ _result_samples(fit_result::FitResult) = ParameterSamples(fit_result.preparation
 """
     predict(model, runs, samples; solver, mode=TransientMode(), problem_options=(;),
             saveat=nothing, observables=nothing, algorithm=nothing, solve_options=(;),
-            callback_factory=nothing, parallel=EnsembleSerial())
+            callback_factory=nothing, parallel=EnsembleThreads())
 
 Propagate user-supplied joint kinetic draws. The solver is required so that a
 prediction never silently changes numerical method. `algorithm`,
@@ -535,7 +539,7 @@ function predict(crystal_model::CrystallisationModel, prediction_runs::AbstractV
         joint_samples::ParameterSamples; solver::AbstractSolver, mode::AbstractSimulationMode = TransientMode(),
         problem_options::NamedTuple = (;), saveat = nothing, observables = nothing,
         algorithm = nothing, solve_options::NamedTuple = (;), callback_factory = nothing,
-        parallel::SciMLBase.BasicEnsembleAlgorithm = EnsembleSerial())
+        parallel::SciMLBase.BasicEnsembleAlgorithm = EnsembleThreads())
     isempty(prediction_runs) && throw(ArgumentError("Supply prediction experiments or run conditions."))
     sample_selection = _kinetic_selection(crystal_model, joint_samples.names)
     expanded_draws = reduce(hcat, [_expanded_parameters(sample_selection, view(joint_samples.values, :, draw_index))
