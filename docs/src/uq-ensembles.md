@@ -64,6 +64,8 @@ plot_posterior_pairplot(posterior; savename = "posterior", savedir = "results")
 for a posterior, overlays the specification's prior marginals. It also takes
 `ParameterSamples` directly, with optional `prior` and `reference` values.
 `ChainStatsPlots(posterior.backend_result)` gives NUTS trace and density plots.
+Single simulations plot directly, for example `lines(solution, :d43)`; see
+[Plotting and diagnostics](api/plotting.md).
 
 ## Future measurements
 
