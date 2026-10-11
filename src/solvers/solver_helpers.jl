@@ -108,7 +108,8 @@ end
 @inline _rate_zero(net_growth_rates::AbstractVector) = zero(eltype(net_growth_rates))
 
 """
-    _mesh_transport_divergence!(population_derivative, face_flux, solver) -> solid_volume_rate
+    _mesh_transport_divergence!(population_derivative, face_flux, solver,
+                                cell_centre_cubed = solver.cell_centre .^ 3) -> solid_volume_rate
 
 Write the conservative transport divergence `-(F[i+1] - F[i]) / ΔL` of the mesh
 face fluxes `F` (number/m³/s) into `population_derivative` and return the
@@ -128,18 +129,20 @@ size-boundary solid flows, which the solute balance treats as exchanges with
 the unrepresented size range. Hence `C + ρ kv µ3` changes only through
 operation flows and these size-boundary flows, to round-off, for every flux
 the scheme produces (nucleation inflow, growth, dissolution through `lmin`).
+
+RHS callers pass `cell_centre_cubed` precomputed once per ODE construction:
+indexing the `LinRange` mesh costs a division per cell on every call.
 """
 @inline function _mesh_transport_divergence!(population_derivative, face_flux,
-                                             solver::AbstractDiscretisedSolver)
-    cell_centre = solver.cell_centre
+                                             solver::AbstractDiscretisedSolver,
+                                             cell_centre_cubed::AbstractVector =
+                                                 solver.cell_centre .^ 3)
     cell_dL = solver.cell_dL
     transported_volume_rate = zero(eltype(face_flux))
-    @inbounds for cell_index in eachindex(population_derivative)
+    @inbounds for cell_index in eachindex(population_derivative, cell_centre_cubed)
         face_flux_difference = face_flux[cell_index + 1] - face_flux[cell_index]
         population_derivative[cell_index] = -face_flux_difference / cell_dL
-        centre_length = cell_centre[cell_index]
-        transported_volume_rate -= centre_length * centre_length * centre_length *
-                                   face_flux_difference
+        transported_volume_rate -= cell_centre_cubed[cell_index] * face_flux_difference
     end
     lower_length = first(solver.cell_face)
     upper_length = last(solver.cell_face)

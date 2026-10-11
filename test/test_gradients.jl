@@ -157,6 +157,23 @@ end
         fixture_translation_concentration(weno_time; speed = trial_speed), 0.1) rtol = 0.05
 end
 
+@testset "WENO (200 cells) gradient from an empty population" begin
+    # Nucleation into an empty mesh leaves a WENO tail of ~1e-160 densities;
+    # dual solves used to stop there as `Unstable` and return a zero gradient.
+    # Default solver tolerances, so the finite-difference oracle is loose.
+    empty_start_problem = CrystallisationProblem(fixture_lysozyme_model, fixture_lysozyme_conditions;
+        solver = WENO(meshsize = 200))
+    empty_start_times = collect(0.0:300.0:14400.0)
+    empty_start_concentration(scaled_values) = begin
+        trajectory = last(runsimulation(gradient_lysozyme_values(scaled_values), empty_start_problem;
+            save_idx = empty_start_times))
+        trajectory.success || error("WENO solve failed")
+        trajectory.concentration[end]
+    end
+    @test DI.gradient(empty_start_concentration, gradient_forward_backend, gradient_lysozyme_scaled_point) ≈
+          DI.gradient(empty_start_concentration, gradient_difference_backend, gradient_lysozyme_scaled_point) rtol = 1e-3
+end
+
 @testset "Steady MSMPR: d d43 / dG = 4 tau exactly" begin
     # Constant B and G give n(L) = B/G exp(−L/(G tau)), so d43 = 4 G tau and the
     # GaussianNLL gradient on one d43 datum is (4 G tau − y)/var · 4 tau · 1e-6 per unit speed.

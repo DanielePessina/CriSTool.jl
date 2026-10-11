@@ -68,6 +68,17 @@ numerics_state(population_count, concentration) = [zeros(population_count); conc
     @test split_flux[1] == 3.0
     @test split_flux[13] == 0.0
     @test split_flux[end] == 0.0
+
+    # Positivity limiter: a negative trace h beside a nonempty upwind cell u
+    # blends with θ = -h/(u - h), and θu + (1 - θ)h = 0. On far-tail values the
+    # state and its ForwardDiff partials must stay exactly zero (the blend's
+    # quotient rule would square u - h ≈ 1e-162 to zero and return NaN).
+    @test CriSTool._weno_nonnegative_state(-0.5, 2.0) == 0.0
+    @test CriSTool._weno_nonnegative_state(0.7, 2.0) == 0.7
+    tail_trace = CriSTool._weno_nonnegative_state(ForwardDiff.Dual(-1e-164, 1.0, 0.0),
+                                                  ForwardDiff.Dual(1e-162, 0.0, 0.0))
+    @test ForwardDiff.value(tail_trace) == 0.0
+    @test collect(ForwardDiff.partials(tail_trace)) == [0.0, 0.0]
 end
 
 @testset "FV limiter and reconstruction" begin
