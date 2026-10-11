@@ -266,7 +266,7 @@ function _auto_abstol_opts(solver::AbstractSolver, u0::AbstractVector,
                            absolute_floor, scalar_type::Type = Float64;
                            reltol = solver.reltol)
     if solver.auto_abstol
-        component_floor = absolute_floor isa AbstractVector ? copy(absolute_floor) :
+        component_floor = absolute_floor isa AbstractVector ? collect(absolute_floor) :
                           fill(float(absolute_floor), length(u0))
         promoted_floor = scalar_type.(component_floor)
         return promoted_floor,
@@ -290,9 +290,15 @@ function _solver_absolute_floor(configured_problem, odeproblem, qmom_solver::QMO
                                  eps(Float64) * qmom_solver.coordinate_scale^index),
                              eps(Float64) * qmom_solver.coordinate_scale^index)
                          for index in 0:(n_moments - 1)]
-    return vcat(moment_tolerances,
-                fill(qmom_solver.abstol, length(odeproblem.u0) - n_moments))
+    return _state_shaped_tolerance(odeproblem.u0,
+                                   vcat(moment_tolerances,
+                                        fill(qmom_solver.abstol, length(odeproblem.u0) - n_moments)))
 end
+
+# A static state takes a static tolerance vector so the step error norm does
+# not allocate a heap array on every step.
+_state_shaped_tolerance(state::SVector{N}, tolerances) where {N} = SVector{N}(tolerances)
+_state_shaped_tolerance(state, tolerances) = tolerances
 
 function _validate_crystallisation_solve_options(solve_options::NamedTuple)
     for option_name in keys(solve_options)

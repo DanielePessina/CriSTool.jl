@@ -36,7 +36,7 @@ function nucleationrate(nf::CNTNucleation, parameters::T, prob::CrystallisationP
         exp(-16π * p.surface_energy^3 * prob.model.system.molecular_volume^2 /
             (3(CRISTOOL_BOLTZMANN_CONSTANT * temp)^3 * (log(S))^2))
     else
-        0.0
+        _inactive_rate(parameters, S, temp)
     end
 end
 
@@ -60,7 +60,8 @@ function nucleationrate(nf::EmpiricalNucleation, parameters::T, prob::Crystallis
     p = _named_params(nf, parameters)
     S = supersaturation(prob, state, t)
     return S > 1.001 ? 10^p.log10_nucleation_prefactor *
-                       (S - 1)^p.nucleation_order : 0.0
+                       (S - 1)^p.nucleation_order :
+                       _inactive_rate(parameters, S)
 end
 
 """
@@ -87,7 +88,8 @@ function nucleationrate(nf::ArrheniusNucleation, parameters::T, prob::Crystallis
     return S > 1.001 ?
            exp(p.ln_nucleation_prefactor) *
            exp(-p.activation_energy / (CRISTOOL_GAS_CONSTANT * temp)) *
-           (S - 1)^p.nucleation_order : 0.0
+           (S - 1)^p.nucleation_order :
+           _inactive_rate(parameters, S, temp)
 end
 
 """
@@ -117,7 +119,7 @@ function nucleationrate(nf::CNTNucleationNoSupersaturation, parameters::T, prob:
         exp(-16π * p.surface_energy^3 * prob.model.system.molecular_volume^2 /
             (3(CRISTOOL_BOLTZMANN_CONSTANT * temp)^3 * (log(S))^2))
     else
-        0.0
+        _inactive_rate(parameters, S, temp)
     end
 end
 
@@ -150,7 +152,7 @@ function nucleationrate(nf::SecondaryNucleation, parameters::T, prob::Crystallis
         base_rate * _secondary_third_moment(prob.solver, prob,
                                             crystal_state(prob, state))
     else
-        0.0
+        _inactive_rate(parameters, S, temp, eltype(state))
     end
 end
 

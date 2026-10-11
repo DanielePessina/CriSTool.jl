@@ -113,6 +113,11 @@ end
     @test_throws ArgumentError invert_moments([1.0, NaN, 0.0, 0.0, 0.0, 0.0], qmom_solver)
     @test_throws ArgumentError invert_moments([1.0, -0.5e-6, 0.25e-12, -0.125e-18, 0.0625e-24, -0.03125e-30], qmom_solver)
     @test_throws ArgumentError invert_moments(zeros(5), qmom_solver)
+    # QL rotation radius: a 3-4-5 triangle in range and past both ends of the
+    # Float64 range, where squaring would overflow or underflow.
+    @test CriSTool._givens_radius(3.0, 4.0) == 5.0
+    @test CriSTool._givens_radius(3e200, 4e200) ≈ 5e200 rtol = 1e-15
+    @test CriSTool._givens_radius(3e-200, 4e-200) ≈ 5e-200 rtol = 1e-15
 end
 
 @testset "Moment sources on quadratures" begin
@@ -129,7 +134,7 @@ end
 
     # Constant growth on M_k = 2·(1e-6)^k: dM_k/dt = k G M_{k-1}.
     growth_source = CriSTool._qmom_scalar_growth_moment_source(
-        [2.0 * 1e-6^order for order in 0:5], 3.0e-9, 0.0, 5)
+        CriSTool.SVector{6}(2.0 * 1e-6^order for order in 0:5), 3.0e-9, 0.0)
     @test growth_source[1:4] ≈ [0.0, 6.0e-9, 12.0e-15, 18.0e-21]
 
     # DQMOM normalised weights (0.25, 0.75), pair scale 1e12: total collision
@@ -145,7 +150,7 @@ end
 
     # DQMOM projection for nodes (0.5, 1.5): rows k = 0..3 of
     # [(1-k) Lᵢᵏ | k Lᵢᵏ⁻¹], evaluated by hand.
-    @test CriSTool._dqmom_projection_matrix([0.5, 1.5]) ≈
+    @test CriSTool._dqmom_projection_matrix(CriSTool.SVector(0.5, 1.5)) ≈
           [1.0 1.0 0.0 0.0; 0.0 0.0 1.0 1.0; -0.25 -2.25 1.0 3.0; -0.25 -6.75 0.75 6.75]
 end
 

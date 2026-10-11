@@ -126,6 +126,23 @@ end
           ForwardDiff.derivative(msmpr_closed_form, 1.0) rtol = 1e-5
 end
 
+@testset "QMOM with aggregation and breakage: gradient through the moment inversion" begin
+    # Binary sources are evaluated on the quadrature rebuilt from the moments at
+    # every stage, so this differentiates the Wheeler/Golub-Welsch inversion.
+    # The coefficients make aggregation and breakage move d43 by ~10%.
+    binary_problem = CrystallisationProblem(
+        CrystallisationModel(fixture_system; growth = fixture_constant_growth(),
+            aggregation = ConstantAggregation(log10_aggregation_coefficient = -13.0),
+            breakage = UniformBreakage(ln_breakage_coefficient = -12.0, breakage_size_exponent = 1.0)),
+        fixture_seeded_conditions(); solver = QMOM(reltol = 1e-10, abstol = 1e-12))
+    binary_d43(binary_coefficients) = 1e6 * last(runsimulation(
+        [0.01, binary_coefficients[1], binary_coefficients[2], 1.0], binary_problem;
+        save_idx = [0.0, 200.0])).d43[end]
+    binary_point = [-13.0, -12.0]
+    @test DI.gradient(binary_d43, gradient_forward_backend, binary_point) ≈
+          DI.gradient(binary_d43, gradient_difference_backend, binary_point) rtol = 1e-6
+end
+
 @testset "WENO (30 cells) seeded transport gradient" begin
     weno_problem = CrystallisationProblem(fixture_translation_model(), fixture_seeded_conditions();
         solver = WENO(meshsize = 30, lmax = 40e-6, reltol = 1e-6, abstol = 1e-10))

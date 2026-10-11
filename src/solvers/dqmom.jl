@@ -74,288 +74,30 @@ function _validate_dqmom_problem(problem::CrystallisationProblem)
     return problem
 end
 
-"""Allocation-free scalar DQMOM3 RHS for the default concentration path.
-
-When there are no binary sources, growth is evaluated on the three physical
-nodes and the 6x6 projection is solved statically; the solvent slot receives
-the exact volume-rate coupling.  The default-solvent contract is enforced by
-the caller's gate, so no custom solvent-dynamics branch or aggregation /
-breakage sources appear here.
-"""
-@inline function _dqmom_scalar_model_3(problem::CrystallisationProblem,
-                                       state, parameters, time)
-    solver = problem.solver
-    coordinate_scale = solver.coordinate_scale
-    weight_scale = solver.weight_scale
-    scaled_weights = SVector(state[1], state[2], state[3])
-    scaled_nodes = SVector(state[4] / state[1],
-                           state[5] / state[2],
-                           state[6] / state[3])
-    physical_nodes = coordinate_scale .* scaled_nodes
-    growth_rates = SVector(
-        net_growth_rate_at_length(problem.model.growth.law,
-                                  parameters.gr,
-                                  problem.model.dissolution.law,
-                                  parameters.diss,
-                                  problem,
-                                  state,
-                                  time,
-                                  physical_nodes[1]),
-        net_growth_rate_at_length(problem.model.growth.law,
-                                  parameters.gr,
-                                  problem.model.dissolution.law,
-                                  parameters.diss,
-                                  problem,
-                                  state,
-                                  time,
-                                  physical_nodes[2]),
-        net_growth_rate_at_length(problem.model.growth.law,
-                                  parameters.gr,
-                                  problem.model.dissolution.law,
-                                  parameters.diss,
-                                  problem,
-                                  state,
-                                  time,
-                                  physical_nodes[3]))
-    nucleation_rate_value = nucleationrate(problem.model.nucleation.law,
-                                           parameters.nucl,
-                                           problem,
-                                           state,
-                                           time)
-    source = _dqmom_source_n3(scaled_weights,
-                              scaled_nodes,
-                              growth_rates,
-                              nucleation_rate_value,
-                              coordinate_scale,
-                              weight_scale)
-    direct_rates = _dqmom_projection_matrix_n3(scaled_nodes) \ source
-
-    scaled_volume_rate = -2 * scaled_nodes[1]^3 * direct_rates[1] +
-                         3 * scaled_nodes[1]^2 * direct_rates[4] -
-                         2 * scaled_nodes[2]^3 * direct_rates[2] +
-                         3 * scaled_nodes[2]^2 * direct_rates[5] -
-                         2 * scaled_nodes[3]^3 * direct_rates[3] +
-                         3 * scaled_nodes[3]^2 * direct_rates[6]
-    physical_volume_rate = weight_scale * coordinate_scale^3 * scaled_volume_rate
-    concentration_rate = -problem.model.system.crystal_density *
-                         problem.model.system.volume_shape_factor * physical_volume_rate
-    return SVector(direct_rates[1], direct_rates[2], direct_rates[3],
-                   direct_rates[4], direct_rates[5], direct_rates[6],
-                   concentration_rate)
-end
-
-"""Static three-node DQMOM model exposing both ODE calling conventions.
-
-The solver runs the out-of-place form on an `SVector` state (fully static
-Tsit5 stages); the in-place form exists so callers that treat the RHS as a
-mutating function (e.g. tests probing `ode_problem.f(du, u, p, t)`) keep
-working.  Both methods compute exactly the same derivative vector.
-"""
-struct DQMOMFastModel{P <: CrystallisationProblem}
-    problem::P
-end
-
-@inline (model::DQMOMFastModel)(state, parameters, time) =
-    _dqmom_scalar_model_3(model.problem, state, parameters, time)
-
-@inline function (model::DQMOMFastModel)(destination, state, parameters, time)
-    rates = _dqmom_scalar_model_3(model.problem, state, parameters, time)
-    @inbounds for index in eachindex(destination)
-        destination[index] = rates[index]
-    end
-    return nothing
-end
-
-"""Build the scaled DQMOM projection matrix for dimensionless nodes."""
-function _dqmom_projection_matrix(scaled_nodes::AbstractVector)
-    nquadrature = length(scaled_nodes)
-    element_type = eltype(scaled_nodes)
-    matrix = Matrix{element_type}(undef, 2 * nquadrature, 2 * nquadrature)
-    @inbounds for moment_index in 0:(2 * nquadrature - 1)
-        row_index = moment_index + 1
-        for node_index in 1:nquadrature
-            scaled_node = scaled_nodes[node_index]
-            matrix[row_index, node_index] = moment_index == 0 ?
-                one(element_type) :
-                (one(element_type) - moment_index) * scaled_node^moment_index
-            matrix[row_index, nquadrature + node_index] = moment_index == 0 ?
-                zero(element_type) :
-                moment_index * scaled_node^(moment_index - 1)
-        end
-    end
-    return matrix
-end
-
-"""Scaled node coordinates at a saved time index, static for the default 3-node path."""
-@inline function _dqmom_scaled_nodes_at(node_matrix, solver::DQMOM, time_index)
-    if solver.nquadrature == 3
-        coordinate_scale = solver.coordinate_scale
-        return SVector(node_matrix[1, time_index] / coordinate_scale,
-                       node_matrix[2, time_index] / coordinate_scale,
-                       node_matrix[3, time_index] / coordinate_scale)
-    end
-    return node_matrix[:, time_index] ./ solver.coordinate_scale
-end
-
-"""Projection-matrix condition estimate without a full SVD.
-
-For the default 3-node path the 6x6 matrix is inverted statically (zero
-heap allocations); the generic dense fallback uses the LU-based 1-norm
-condition number.
-"""
-@inline function _dqmom_projection_condition_estimate(scaled_nodes::SVector{3})
-    static_matrix = _dqmom_projection_matrix_n3(scaled_nodes)
-    return opnorm(static_matrix, 1) * opnorm(inv(static_matrix), 1)
-end
-
-@inline function _dqmom_projection_condition_estimate(scaled_nodes::AbstractVector)
-    matrix = _dqmom_projection_matrix(scaled_nodes)
-    return cond(matrix, 1)
-end
-
-"""Static projection matrix for the default three-node DQMOM path."""
-@inline function _dqmom_projection_matrix_n3(scaled_nodes)
-    projection_values = ntuple(Val(36)) do linear_index
-        row_index = ((linear_index - 1) % 6) + 1
-        column_index = ((linear_index - 1) ÷ 6) + 1
+"""Static scaled DQMOM projection matrix `[(1-k) xᵢᵏ | k xᵢᵏ⁻¹]` for dimensionless nodes."""
+@inline function _dqmom_projection_matrix(scaled_nodes::SVector{N, T}) where {N, T}
+    node_powers = map(scaled_node -> _ascending_powers(scaled_node, Val(2 * N)), scaled_nodes)
+    projection_values = ntuple(Val(4 * N * N)) do linear_index
+        row_index = ((linear_index - 1) % (2 * N)) + 1
+        column_index = ((linear_index - 1) ÷ (2 * N)) + 1
         moment_index = row_index - 1
-        node_index = column_index <= 3 ? column_index : column_index - 3
-        scaled_node = scaled_nodes[node_index]
-        if column_index <= 3
-            moment_index == 0 ? one(scaled_node) :
-                (one(scaled_node) - moment_index) * scaled_node^moment_index
+        node_index = column_index <= N ? column_index : column_index - N
+        powers = node_powers[node_index]
+        if column_index <= N
+            moment_index == 0 ? one(T) :
+                (one(T) - moment_index) * powers[moment_index + 1]
         else
-            moment_index == 0 ? zero(scaled_node) :
-                moment_index * scaled_node^(moment_index - 1)
+            moment_index == 0 ? zero(T) :
+                moment_index * powers[moment_index]
         end
     end
-    return SMatrix{6, 6}(projection_values)
+    return SMatrix{2 * N, 2 * N, T}(projection_values)
 end
 
-"""DQMOM source vector without binary aggregation or breakage sources."""
-@inline function _dqmom_source_n3(scaled_weights,
-                                  scaled_nodes,
-                                  growth_rates,
-                                  nucleation_rate_value,
-                                  coordinate_scale,
-                                  weight_scale)
-    source_type = promote_type(eltype(scaled_weights),
-                               eltype(scaled_nodes),
-                               eltype(growth_rates),
-                               typeof(nucleation_rate_value),
-                               typeof(coordinate_scale),
-                               typeof(weight_scale))
-    growth_rate_one = growth_rates[1] / coordinate_scale
-    growth_rate_two = growth_rates[2] / coordinate_scale
-    growth_rate_three = growth_rates[3] / coordinate_scale
-    source_zero = nucleation_rate_value / weight_scale
-    source_one = scaled_weights[1] * growth_rate_one +
-                 scaled_weights[2] * growth_rate_two +
-                 scaled_weights[3] * growth_rate_three
-    source_two = 2 * (scaled_weights[1] * scaled_nodes[1] * growth_rate_one +
-                      scaled_weights[2] * scaled_nodes[2] * growth_rate_two +
-                      scaled_weights[3] * scaled_nodes[3] * growth_rate_three)
-    source_three = 3 * (scaled_weights[1] * scaled_nodes[1]^2 * growth_rate_one +
-                        scaled_weights[2] * scaled_nodes[2]^2 * growth_rate_two +
-                        scaled_weights[3] * scaled_nodes[3]^2 * growth_rate_three)
-    source_four = 4 * (scaled_weights[1] * scaled_nodes[1]^3 * growth_rate_one +
-                       scaled_weights[2] * scaled_nodes[2]^3 * growth_rate_two +
-                       scaled_weights[3] * scaled_nodes[3]^3 * growth_rate_three)
-    source_five = 5 * (scaled_weights[1] * scaled_nodes[1]^4 * growth_rate_one +
-                       scaled_weights[2] * scaled_nodes[2]^4 * growth_rate_two +
-                       scaled_weights[3] * scaled_nodes[3]^4 * growth_rate_three)
-    return SVector{6, source_type}(source_zero, source_one, source_two,
-                                   source_three, source_four, source_five)
-end
-
-"""Allocation-reduced N=3 RHS for the common no-binary-source workload."""
-function _dqmom_rhs_no_binary_n3!(destination,
-                                   state,
-                                   parameters,
-                                   time,
-                                   problem::CrystallisationProblem)
-    solver = problem.solver
-    coordinate_scale = solver.coordinate_scale
-    weight_scale = solver.weight_scale
-    scaled_weights = SVector(state[1], state[2], state[3])
-    scaled_nodes = SVector(state[4] / state[1],
-                           state[5] / state[2],
-                           state[6] / state[3])
-    physical_nodes = coordinate_scale .* scaled_nodes
-    growth_rates = SVector(
-        net_growth_rate_at_length(problem.model.growth.law,
-                                  parameters.gr,
-                                  problem.model.dissolution.law,
-                                  parameters.diss,
-                                  problem,
-                                  state,
-                                  time,
-                                  physical_nodes[1]),
-        net_growth_rate_at_length(problem.model.growth.law,
-                                  parameters.gr,
-                                  problem.model.dissolution.law,
-                                  parameters.diss,
-                                  problem,
-                                  state,
-                                  time,
-                                  physical_nodes[2]),
-        net_growth_rate_at_length(problem.model.growth.law,
-                                  parameters.gr,
-                                  problem.model.dissolution.law,
-                                  parameters.diss,
-                                  problem,
-                                  state,
-                                  time,
-                                  physical_nodes[3]))
-    nucleation_rate_value = nucleationrate(problem.model.nucleation.law,
-                                           parameters.nucl,
-                                           problem,
-                                           state,
-                                           time)
-    source = _dqmom_source_n3(scaled_weights,
-                              scaled_nodes,
-                              growth_rates,
-                              nucleation_rate_value,
-                              coordinate_scale,
-                              weight_scale)
-    direct_rates = _dqmom_projection_matrix_n3(scaled_nodes) \ source
-
-    @inbounds for node_index in 1:3
-        destination[node_index] = direct_rates[node_index]
-        destination[3 + node_index] = direct_rates[3 + node_index]
-    end
-
-    scaled_volume_rate = -2 * scaled_nodes[1]^3 * direct_rates[1] +
-                         3 * scaled_nodes[1]^2 * direct_rates[4] -
-                         2 * scaled_nodes[2]^3 * direct_rates[2] +
-                         3 * scaled_nodes[2]^2 * direct_rates[5] -
-                         2 * scaled_nodes[3]^3 * direct_rates[3] +
-                         3 * scaled_nodes[3]^2 * direct_rates[6]
-    physical_volume_rate = weight_scale * coordinate_scale^3 * scaled_volume_rate
-    first_solvent = 7
-    n_solvent = length(propertynames(problem.initial_solvent_state))
-    if n_solvent == 1 && problem.solvent_dynamics isa DefaultSolventDynamics
-        destination[first_solvent] = -problem.model.system.crystal_density *
-                                     problem.model.system.volume_shape_factor *
-                                     physical_volume_rate
-    else
-        growth_context = _is_length_law(problem.model.growth.law) ?
-                         growth_rates :
-                         net_growth_rate(problem.model.growth.law,
-                                         parameters.gr,
-                                         problem.model.dissolution.law,
-                                         parameters.diss,
-                                         problem,
-                                         state,
-                                         time)
-        solvent_rates = _dqmom_solvent_derivatives(problem,
-                                                   state,
-                                                   time,
-                                                   growth_context,
-                                                   physical_volume_rate)
-        _write_solvent_derivatives!(destination, problem, solvent_rates)
-    end
-    return nothing
+"""Projection-matrix condition estimate in the 1-norm, without a full SVD."""
+@inline function _dqmom_projection_condition_estimate(scaled_nodes::SVector)
+    projection_matrix = _dqmom_projection_matrix(scaled_nodes)
+    return opnorm(projection_matrix, 1) * opnorm(inv(projection_matrix), 1)
 end
 
 function _dqmom_direct_state(problem::CrystallisationProblem)
@@ -390,55 +132,36 @@ function _dqmom_direct_state(problem::CrystallisationProblem)
     return internal_state
 end
 
-@inline function _dqmom_length_and_weight(state,
-                                          solver::DQMOM,
-                                          node_index::Integer)
-    nquadrature = solver.nquadrature
-    scaled_weight = state[node_index]
-    scaled_node = state[nquadrature + node_index] / scaled_weight
-    physical_weight = solver.weight_scale * scaled_weight
-    physical_node = solver.coordinate_scale * scaled_node
-    return physical_node, physical_weight, scaled_node
+"""Scaled weights, scaled nodes and physical nodes of a normalized DQMOM state."""
+@inline function _dqmom_static_nodes(state, solver::DQMOM, ::Val{N}) where {N}
+    scaled_weights = SVector(ntuple(node_index -> state[node_index], Val(N)))
+    scaled_nodes = SVector(ntuple(node_index -> state[N + node_index] / state[node_index],
+                                  Val(N)))
+    physical_nodes = solver.coordinate_scale .* scaled_nodes
+    return scaled_weights, scaled_nodes, physical_nodes
 end
 
-function _dqmom_source_vector(problem::CrystallisationProblem,
-                              state,
+"""Scaled moment sources `S₀:S₂N₋₁` of crystallisation kinetics on the DQMOM nodes."""
+function _dqmom_moment_source(problem::CrystallisationProblem,
                               parameters,
-                              time,
-                              physical_nodes::AbstractVector,
-                              scaled_weights::AbstractVector,
-                              scaled_nodes::AbstractVector,
-                              growth_rates::AbstractVector,
-                              nucleation_rate_value)
+                              physical_nodes::SVector{N},
+                              scaled_weights::SVector{N},
+                              scaled_nodes::SVector{N},
+                              growth_rates::SVector{N},
+                              nucleation_rate_value) where {N}
     solver = problem.solver
-    nquadrature = solver.nquadrature
-    maximum_order = 2 * nquadrature - 1
     coordinate_scale = solver.coordinate_scale
     weight_scale = solver.weight_scale
-    element_type = promote_type(eltype(state), eltype(parameters),
-                                eltype(physical_nodes), typeof(time))
-    source = zeros(element_type, maximum_order + 1)
-
-    # Boundary-at-zero nucleation changes the number moment only.  A finite
-    # nucleus would instead add J * L_nucleus^k to every moment here.
-    source[1] = nucleation_rate_value / weight_scale
-
-    @inbounds for moment_index in 1:maximum_order
-        growth_integral = zero(element_type)
-        for node_index in 1:nquadrature
-            growth_integral += scaled_weights[node_index] *
-                               scaled_nodes[node_index]^(moment_index - 1) *
-                               (growth_rates[node_index] / coordinate_scale)
-        end
-        source[moment_index + 1] = moment_index * growth_integral
-    end
+    element_type = promote_type(eltype(scaled_weights), eltype(scaled_nodes),
+                                eltype(growth_rates), typeof(nucleation_rate_value),
+                                eltype(parameters), typeof(coordinate_scale))
 
     aggregation_source = _aggregation_moment_source(
         problem.model.aggregation.law,
         parameters.agg,
         physical_nodes,
         scaled_weights,
-        maximum_order;
+        Val(2 * N);
         shape_factor = problem.model.system.volume_shape_factor,
         pair_weight_scale = weight_scale)
     breakage_source = _breakage_moment_source(
@@ -446,149 +169,100 @@ function _dqmom_source_vector(problem::CrystallisationProblem,
         parameters.br,
         physical_nodes,
         scaled_weights,
-        maximum_order)
+        Val(2 * N))
 
-    @inbounds for moment_index in 0:maximum_order
-        physical_scale = coordinate_scale^moment_index
-        source[moment_index + 1] += (aggregation_source[moment_index + 1] +
-                                     breakage_source[moment_index + 1]) / physical_scale
-    end
-    return source
+    # growth_integrals[k] = Σᵢ wᵢ xᵢᵏ⁻¹ Gᵢ / coordinate_scale feeds moment k.
+    growth_integrals = _weighted_power_sums(scaled_weights, scaled_nodes,
+                                            growth_rates ./ coordinate_scale, N, Val(2 * N))
+    physical_scales = _ascending_powers(coordinate_scale, Val(2 * N))
+    return SVector{2 * N, element_type}(ntuple(Val(2 * N)) do moment_position
+        # Boundary-at-zero nucleation changes the number moment only.  A finite
+        # nucleus would instead add J * L_nucleus^k to every moment here.
+        kinetic_source = moment_position == 1 ? nucleation_rate_value / weight_scale :
+                         (moment_position - 1) * growth_integrals[moment_position - 1]
+        kinetic_source + (aggregation_source[moment_position] +
+                          breakage_source[moment_position]) / physical_scales[moment_position]
+    end)
+end
+
+"""Solvent derivatives with the exact DQMOM volume-rate concentration coupling."""
+function _dqmom_solvent_derivatives(problem::CrystallisationProblem,
+                                    solvent_dynamics::DefaultSolventDynamics,
+                                    state, parameters, time, growth_rates,
+                                    volume_moment_rate)
+    concentration_rate = _quadrature_concentration_rate(problem, volume_moment_rate)
+    concentration_position = _quadrature_concentration_position(problem)
+    return ntuple(index -> index == concentration_position ? concentration_rate :
+                  zero(concentration_rate),
+                  Val(length(propertynames(problem.initial_solvent_state))))
 end
 
 function _dqmom_solvent_derivatives(problem::CrystallisationProblem,
-                                    state,
-                                    time,
-                                    growth_context,
+                                    solvent_dynamics,
+                                    state, parameters, time, growth_rates,
                                     volume_moment_rate)
-    names = propertynames(problem.initial_solvent_state)
-    n_solvent = length(names)
-    concentration_position = findfirst(==(Symbol(:concentration)), names)
-    concentration_position === nothing &&
-        throw(ArgumentError("initial_solvent_state must define :concentration."))
-
-    element_type = promote_type(eltype(state), typeof(volume_moment_rate))
-    rates = zeros(element_type, n_solvent)
-    concentration_rate = -problem.model.system.crystal_density * problem.model.system.volume_shape_factor *
-                         volume_moment_rate
-    rates[concentration_position] = concentration_rate
-
-    if !(problem.solvent_dynamics isa DefaultSolventDynamics)
-        base_rates = _solvent_derivatives(problem, state, time, growth_context)
-        @inbounds for solvent_index in 1:n_solvent
-            solvent_index == concentration_position ||
-                (rates[solvent_index] = base_rates[solvent_index])
-        end
-    end
-    return rates
+    concentration_rate = _quadrature_concentration_rate(problem, volume_moment_rate)
+    concentration_position = _quadrature_concentration_position(problem)
+    # Length-dependent growth hands custom dynamics the node rates; scalar
+    # growth hands them the scalar net rate.
+    growth_context = _is_length_law(problem.model.growth.law) ? growth_rates :
+                     net_growth_rate(problem.model.growth.law,
+                                     parameters.gr,
+                                     problem.model.dissolution.law,
+                                     parameters.diss,
+                                     problem,
+                                     state,
+                                     time)
+    base_rates = _solvent_derivatives(problem, state, time, growth_context, solvent_dynamics)
+    return ntuple(index -> index == concentration_position ? concentration_rate :
+                  base_rates[index],
+                  Val(length(propertynames(problem.initial_solvent_state))))
 end
 
-"""DQMOM RHS in the normalized weighted-node state."""
-function _dqmom_rhs!(destination,
-                     state,
-                     parameters,
-                     time,
-                     problem::CrystallisationProblem,
-                     feed_population)
+"""DQMOM RHS on the static normalized weighted-node state; `Val(N)` is the node count."""
+function _dqmom_rhs(problem::CrystallisationProblem, state::SVector{S}, parameters, time,
+                    feed_population, quadrature_count_value::Val{N}) where {S, N}
     solver = problem.solver
-    nquadrature = solver.nquadrature
-    n_solvent = length(propertynames(problem.initial_solvent_state))
-    n_reactor = _operation_state_count(problem.operation)
-    n_states = 2 * nquadrature + n_reactor + n_solvent
-    length(destination) == n_states ||
-        throw(ArgumentError("DQMOM RHS received an incompatible state length."))
-
-    if problem.operation isa BatchOperation &&
-       nquadrature == 3 &&
-       !_has_binary_sources(problem)
-        return _dqmom_rhs_no_binary_n3!(destination, state, parameters, time, problem)
-    end
-
-    physical_nodes = Vector{promote_type(eltype(state), eltype(parameters))}(undef,
-                                                                              nquadrature)
-    scaled_nodes = Vector{promote_type(eltype(state), eltype(parameters))}(undef,
-                                                                            nquadrature)
-    scaled_weights = @view state[1:nquadrature]
-    @inbounds for node_index in 1:nquadrature
-        physical_node, _, scaled_node =
-            _dqmom_length_and_weight(state, solver, node_index)
-        physical_nodes[node_index] = physical_node
-        scaled_nodes[node_index] = scaled_node
-    end
-
-    growth_rates = Vector{promote_type(eltype(state), eltype(parameters))}(undef,
-                                                                             nquadrature)
-    @inbounds for node_index in 1:nquadrature
-        growth_rates[node_index] = net_growth_rate_at_length(
-            problem.model.growth.law,
-            parameters.gr,
-            problem.model.dissolution.law,
-            parameters.diss,
-            problem,
-            state,
-            time,
-            physical_nodes[node_index])
-    end
+    scaled_weights, scaled_nodes, physical_nodes =
+        _dqmom_static_nodes(state, solver, quadrature_count_value)
+    growth_rates = map(crystal_length -> net_growth_rate_at_length(problem.model.growth.law,
+                                                                   parameters.gr,
+                                                                   problem.model.dissolution.law,
+                                                                   parameters.diss,
+                                                                   problem,
+                                                                   state,
+                                                                   time,
+                                                                   crystal_length),
+                       physical_nodes)
     nucleation_rate_value = nucleationrate(problem.model.nucleation.law,
                                            parameters.nucl,
                                            problem,
                                            state,
                                            time)
 
-    source = _dqmom_source_vector(problem,
-                                  state,
-                                  parameters,
-                                  time,
-                                  physical_nodes,
-                                  scaled_weights,
-                                  scaled_nodes,
-                                  growth_rates,
-                                  nucleation_rate_value)
-    internal_third_moment_rate = source[4]
+    kinetic_source = _dqmom_moment_source(problem, parameters, physical_nodes,
+                                          scaled_weights, scaled_nodes, growth_rates,
+                                          nucleation_rate_value)
     operation_context = _operation_transport_context(problem, state, time)
-    if !isnothing(operation_context)
-        _dqmom_add_operation_moment_source!(source,
-                                            state,
-                                            problem,
-                                            operation_context,
-                                            feed_population)
-    end
-    projection_matrix = _dqmom_projection_matrix(scaled_nodes)
-    direct_rates = projection_matrix \ source
-
-    @inbounds for node_index in 1:nquadrature
-        destination[node_index] = direct_rates[node_index]
-        destination[nquadrature + node_index] = direct_rates[nquadrature + node_index]
-    end
+    projected_source = _dqmom_operation_moment_source(kinetic_source, state, problem,
+                                                      operation_context, feed_population)
+    direct_rates = _dqmom_projection_matrix(scaled_nodes) \ projected_source
 
     # Solvent exchange is internal to crystallisation. Inlet and washout
     # moments are already included in the projected population derivative but
     # must not be interpreted as crystal growth or dissolution.
     physical_volume_rate = solver.weight_scale * solver.coordinate_scale^3 *
-                            internal_third_moment_rate
-
-    growth_context = if _is_length_law(problem.model.growth.law)
-        growth_rates
-    else
-        net_growth_rate(problem.model.growth.law,
-                        parameters.gr,
-                        problem.model.dissolution.law,
-                        parameters.diss,
-                        problem,
-                        state,
-                        time)
-    end
-    solvent_rates = _dqmom_solvent_derivatives(problem,
-                                               state,
-                                               time,
-                                               growth_context,
+                           kinetic_source[4]
+    solvent_rates = _dqmom_solvent_derivatives(problem, problem.solvent_dynamics, state,
+                                               parameters, time, growth_rates,
                                                physical_volume_rate)
-    _write_solvent_derivatives!(destination, problem, solvent_rates)
-    _dqmom_add_operation_state_rates!(destination,
-                                     state,
-                                     problem,
-                                     operation_context)
-    return nothing
+    reactor_count = _operation_state_count(problem.operation)
+    internal_rates = SVector(ntuple(Val(S)) do state_index
+        state_index <= 2 * N ? direct_rates[state_index] :
+        (state_index <= 2 * N + reactor_count ? zero(direct_rates[1]) :
+         solvent_rates[state_index - 2 * N - reactor_count])
+    end)
+    return _dqmom_operation_state_rates(internal_rates, state, problem, operation_context)
 end
 
 """
@@ -628,42 +302,19 @@ function crystallisation_odeproblem(solver::DQMOM, problem::CrystallisationProbl
     element_type = promote_type(eltype(internal_values), eltype(kinetic_values), Float64)
     initial_values = element_type.(internal_values)
 
-    n_solvent = length(propertynames(problem.initial_solvent_state))
     feed_population = _operation_feed_population(problem)
-    no_binary_sources = !_has_binary_sources(problem)
-    # Static three-node path: SVector state + out-of-place RHS (like the QMOM
-    # fast path), so Tsit5 runs fully unrolled static stages instead of
-    # heap-backed Vector stages.  Restricted to the default concentration-only
-    # solvent coupling, which the RHS writes directly.
-    fast_scalar_path = problem.operation isa BatchOperation &&
-                       no_binary_sources && problem.solver.nquadrature == 3 &&
-                       n_solvent == 1 &&
-                       propertynames(problem.initial_solvent_state) == (:concentration,) &&
-                       problem.solvent_dynamics isa DefaultSolventDynamics
-
-    # Static three-node path: run the ODE on an SVector state so
-    # OrdinaryDiffEq uses fully static Tsit5 stages instead of heap-backed
-    # Vector stages (the QMOM fast-path trick).  The fast model supports both
-    # calling conventions; the solver uses the out-of-place form because an
-    # immutable SVector state cannot be mutated by an in-place integrator.
-    # The gate is a compile-time constant for a concrete problem type.
-    if fast_scalar_path
-        model = DQMOMFastModel(problem)
-        initial_state = SVector(ntuple(index -> initial_values[index], Val(7)))
-        ode_problem = ODEProblem{false}(model,
-                                        initial_state,
-                                        (saveat[1], saveat[end]),
-                                        parameters;
-                                        callback = _dqmom_boundary_callback(problem))
-    else
-        DQMOM_model! = (destination, state, p, time) ->
-            _dqmom_rhs!(destination, state, p, time, problem, feed_population)
-        ode_problem = ODEProblem(DQMOM_model!,
-                                 initial_values,
-                                 (saveat[1], saveat[end]),
-                                 parameters;
-                                 callback = _dqmom_boundary_callback(problem))
-    end
+    # The node count is a type parameter of the closure: the ODE runs on an
+    # SVector state with static Tsit5 stages, and the projection solve is a
+    # static `SMatrix` LU for every node count, operation and binary source.
+    quadrature_count_value = Val(problem.solver.nquadrature)
+    DQMOM_model = (state, p, time) ->
+        _dqmom_rhs(problem, state, p, time, feed_population, quadrature_count_value)
+    initial_state = SVector(ntuple(index -> initial_values[index], Val(length(initial_values))))
+    ode_problem = ODEProblem{false}(DQMOM_model,
+                                    initial_state,
+                                    (saveat[1], saveat[end]),
+                                    parameters;
+                                    callback = _dqmom_boundary_callback(problem))
     return ode_problem, _timestepping_algorithm(solver, Tsit5())
 end
 
@@ -698,43 +349,8 @@ function _wrap_solution(solver::DQMOM, problem::CrystallisationProblem, solution
         end
     end
 
-    if element_type <: AbstractFloat
-        projection_diagnostics = Vector{DQMOMProjectionDiagnostics{element_type}}(
-            undef, n_time_points)
-        @inbounds for time_index in 1:n_time_points
-            scaled_nodes = _dqmom_scaled_nodes_at(node_matrix, solver, time_index)
-            minimum_gap = typemax(element_type)
-            for first_index in 1:(nquadrature - 1)
-                for second_index in (first_index + 1):nquadrature
-                    minimum_gap = min(minimum_gap,
-                                      abs(scaled_nodes[first_index] -
-                                          scaled_nodes[second_index]))
-                end
-            end
-            physical_minimum_gap = solver.coordinate_scale * minimum_gap
-            physical_minimum_gap > solver.node_coalescence_tolerance *
-                                   solver.coordinate_scale ||
-                throw(DomainError(physical_minimum_gap,
-                                  "DQMOM trajectory reached node coalescence; " *
-                                  "active quadrature nodes cannot merge or be reborn."))
-            projection_diagnostics[time_index] = DQMOMProjectionDiagnostics(
-                :ok,
-                minimum(@view weight_matrix[:, time_index]),
-                minimum(@view node_matrix[:, time_index]),
-                physical_minimum_gap,
-                # The 3-node default uses a static 6x6 inverse (zero heap
-                # allocations).  The dense fallback uses `cond(A, 1)`: one LU
-                # + norms instead of a full SVD (gesdd), which dominated the
-                # wrap-solution allocations (~65% of a DQMOM solve).  Both
-                # return a legitimate condition estimate for the projection
-                # matrix diagnostics.
-                _dqmom_projection_condition_estimate(scaled_nodes))
-        end
-    else
-        # SVD-based diagnostics are intentionally omitted for Dual-valued
-        # trajectories; they are not part of the differentiated model.
-        projection_diagnostics = nothing
-    end
+    projection_diagnostics = _dqmom_projection_diagnostics(node_matrix, weight_matrix, solver,
+                                                           Val(nquadrature))
 
     reactor_solution_state = _reactor_solution_state(problem, solution)
     solvent_final = Vector{element_type}(undef, n_solvent)
@@ -768,6 +384,47 @@ function _wrap_solution(solver::DQMOM, problem::CrystallisationProblem, solution
                                                           projection_diagnostics),
                                      _raw_moment_size_metrics(moment_matrix), final_state,
                                      merge(reactor_solution_state, boundary_flow_state))
+end
+
+"""
+    _dqmom_projection_diagnostics(node_matrix, weight_matrix, solver, Val(N))
+
+Projection diagnostics of every saved DQMOM state.  The static projection
+matrix gives a 1-norm condition estimate without heap allocation.  A saved
+node pair closer than the coalescence tolerance throws `DomainError`.
+Diagnostics are omitted (`nothing`) for Dual-valued trajectories; they are
+not part of the differentiated model.
+"""
+_dqmom_projection_diagnostics(node_matrix::AbstractMatrix, weight_matrix, solver::DQMOM,
+                              quadrature_count_value::Val) = nothing
+
+function _dqmom_projection_diagnostics(node_matrix::AbstractMatrix{T}, weight_matrix,
+                                       solver::DQMOM, ::Val{N}) where {T <: AbstractFloat, N}
+    n_time_points = size(node_matrix, 2)
+    projection_diagnostics = Vector{DQMOMProjectionDiagnostics{T}}(undef, n_time_points)
+    @inbounds for time_index in 1:n_time_points
+        scaled_nodes = SVector(ntuple(node_index -> node_matrix[node_index, time_index] /
+                                                    solver.coordinate_scale, Val(N)))
+        minimum_gap = typemax(T)
+        for first_index in 1:(N - 1)
+            for second_index in (first_index + 1):N
+                minimum_gap = min(minimum_gap,
+                                  abs(scaled_nodes[first_index] - scaled_nodes[second_index]))
+            end
+        end
+        physical_minimum_gap = solver.coordinate_scale * minimum_gap
+        physical_minimum_gap > solver.node_coalescence_tolerance * solver.coordinate_scale ||
+            throw(DomainError(physical_minimum_gap,
+                              "DQMOM trajectory reached node coalescence; " *
+                              "active quadrature nodes cannot merge or be reborn."))
+        projection_diagnostics[time_index] = DQMOMProjectionDiagnostics(
+            :ok,
+            minimum(@view weight_matrix[:, time_index]),
+            minimum(@view node_matrix[:, time_index]),
+            physical_minimum_gap,
+            _dqmom_projection_condition_estimate(scaled_nodes))
+    end
+    return projection_diagnostics
 end
 
 """Physical raw moment `µ_order` of a normalized DQMOM state."""

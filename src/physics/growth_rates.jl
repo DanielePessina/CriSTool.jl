@@ -217,7 +217,9 @@ end
            _growth_activation_rate(log10_growth_coefficient, activation_energy,
                                    temperature, gas_constant) *
            (supersaturation_ratio - one(supersaturation_ratio))^growth_order :
-           zero(supersaturation_ratio)
+           zero(promote_type(typeof(log10_growth_coefficient), typeof(growth_order),
+                             typeof(activation_energy), typeof(supersaturation_ratio),
+                             typeof(temperature)))
 end
 
 """Return the signed net crystal growth rate from independent growth and
@@ -372,7 +374,7 @@ function growthrate(gf::EmpiricalGrowth, parameters::T, prob::CrystallisationPro
     p = _named_params(gf, parameters)
     S = supersaturation(prob, state, t)
     temp = temperature(prob.temp_profile, t)
-    return S > 1.001 ? p.growth_coefficient * (S - 1)^p.growth_order : 0.0
+    return S > 1.001 ? p.growth_coefficient * (S - 1)^p.growth_order : _inactive_rate(parameters, S, temp)
 end
 
 @inline function _growth_empirical_length_size_factor_base(
@@ -527,7 +529,7 @@ function growthrate(gf::BCFGrowth, parameters::T, prob::CrystallisationProblem, 
         (S - 1) *
         tanh(p.activation_temperature / (temp * log(S)))
     else
-        0.0
+        _inactive_rate(parameters, S, temp)
     end
 end
 
@@ -564,7 +566,7 @@ function growthrate(gf::BirthSpreadGrowth, parameters::T, prob::CrystallisationP
         (log(S))^(1 / 6) *
         exp(-p.energy_barrier_temperature_squared / (temp^2 * log(S)))
     else
-        0.0
+        _inactive_rate(parameters, S, temp)
     end
 end
 
