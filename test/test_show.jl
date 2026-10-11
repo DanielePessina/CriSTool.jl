@@ -34,7 +34,7 @@ const show_conditions = RunConditions(temperature = 293.15, concentration = 18.0
     @test show_plain(seed_placeholder) == sprint(show, seed_placeholder)
     # d43 of the uniform [10, 20] µm number distribution is (20⁵-10⁵)/(20⁴-10⁴)/5*4 = 16.533… µm.
     @test sprint(show, fixture_uniform_seed()) == "DistributionInitialCrystals(Uniform{Float64}(a=1.0e-5, b=2.0e-5), " *
-          "mass_concentration = 0.25 kg/m³, weighting = number, d43 = 16.53 µm)"
+          "mass_concentration = 0.25 kg/m³, weighting = NumberWeighted(), d43 = 16.53 µm)"
     # A dual temperature shows its primal value.
     dual_conditions = RunConditions(temperature = ConstantTemperature(ForwardDiff.Dual(293.15, 1.0)), concentration = 18.0)
     @test occursin("ConstantTemperature(293.15 K)", show_plain(dual_conditions))
@@ -48,7 +48,7 @@ end
     seeded_feed = CrystallisationFeed(concentration = time -> 1.0 + time, crystals = fixture_uniform_seed())
     @test sprint(show, seeded_feed) == "CrystallisationFeed(concentration = function of time, crystals = " *
           "DistributionInitialCrystals(Uniform{Float64}(a=1.0e-5, b=2.0e-5), mass_concentration = 0.25 kg/m³, " *
-          "weighting = number, d43 = 16.53 µm))"
+          "weighting = NumberWeighted(), d43 = 16.53 µm))"
     @test sprint(show, fixture_msmpr()) == "MSMPROperation(volume = 2.0 m³, inflow = 0.2 m³/s)"
     @test show_plain(fixture_msmpr()) == """
         MSMPROperation

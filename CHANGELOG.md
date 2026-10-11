@@ -19,9 +19,16 @@
   and now accepts `parallel = EnsembleSerial()` to opt out.
 
 - Plotting moved to package extensions: `using CairoMakie` (or another Makie
-  backend) enables `plot_predictions` and `ChainStatsPlots`; `PairPlots`
-  additionally enables `plot_posterior_pairplot`. `using CriSTool` no longer
-  loads Makie.
+  backend) enables `plot_predictions` and `plot_chain_diagnostics` (renamed
+  from `ChainStatsPlots`); `PairPlots` additionally enables
+  `plot_posterior_pairplot`. `using CriSTool` no longer loads Makie. Plotting
+  functions return a `Makie.Figure` and never save or display it; the
+  `savename`, `savedir`, `showplot`, `saveplot`, `savestring` and `show_title`
+  keywords are removed. Save with Makie's `save(path, figure)`.
+- `DistributionInitialCrystals(...; weighting)` takes the singletons
+  `NumberWeighted()` (default) or `VolumeWeighted()` instead of `:number`/`:volume`.
+- `KineticContext` no longer stores a `system` field; `system_properties(context)`
+  returns the material system's additional `properties`.
 - Makie conversion traits for solutions: `lines(solution)`, `lines(solution, :d43)`
   (any `observable_values` name) and `lines(solution, solver, time_index)` for
   mesh size distributions; `plot(solution)` draws concentration against time.

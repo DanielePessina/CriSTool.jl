@@ -200,14 +200,18 @@ simulate(configured_run::CrystallisationProblem; saveat, kwargs...) =
     last(runsimulation(configured_run; save_idx = saveat, kwargs...))
 
 """Context for callable kinetics, with physical values and advanced problem/state access."""
-struct KineticContext{Problem, State, Time, System}
+struct KineticContext{Problem, State, Time}
     problem::Problem
     state::State
     time::Time
-    system::System
 end
-KineticContext(configured_run::CrystallisationProblem, numerical_state, clock_time) =
-    KineticContext(configured_run, numerical_state, clock_time, configured_run.model.system)
+"""
+    system_properties(context::KineticContext)
+
+The additional named material values (`properties`) of the model's material
+system, e.g. `system_properties(context).offset`.
+"""
+system_properties(rate_context::KineticContext) = rate_context.problem.model.system.properties
 supersaturation(rate_context::KineticContext) =
     supersaturation(rate_context.problem, rate_context.state, rate_context.time)
 temperature(rate_context::KineticContext) = temperature(rate_context.problem.temp_profile, rate_context.time)

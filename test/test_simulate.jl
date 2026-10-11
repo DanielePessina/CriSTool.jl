@@ -87,12 +87,16 @@ end
     # [10, 20] µm has d43 = 15 µm exactly.
     number_seed = DistributionInitialCrystals(LogNormal(log(12e-6), 0.2); mass_concentration = 0.25)
     volume_seed = DistributionInitialCrystals(LogNormal(log(12e-6) + 3 * 0.2^2, 0.2);
-        mass_concentration = 0.25, weighting = :volume)
+        mass_concentration = 0.25, weighting = VolumeWeighted())
     @test number_weighted(volume_seed).distribution == number_seed.distribution
+    @test number_weighted(volume_seed).weighting === NumberWeighted()
+    @test number_weighted(number_seed) === number_seed
+    @test_throws TypeError DistributionInitialCrystals(LogNormal(log(12e-6), 0.2);
+        mass_concentration = 0.25, weighting = :volume)
     distribution_conditions(seed_description) = RunConditions(temperature = 293.15, concentration = 20.0, crystals = seed_description)
     @test CrystallisationProblem(fixture_translation_model(), distribution_conditions(number_seed)).initial_population ≈
           CrystallisationProblem(fixture_translation_model(), distribution_conditions(volume_seed)).initial_population rtol = 1e-12
-    @test DistributionInitialCrystals(Uniform(10e-6, 20e-6); mass_concentration = 0.25, weighting = :volume).d43 ≈
+    @test DistributionInitialCrystals(Uniform(10e-6, 20e-6); mass_concentration = 0.25, weighting = VolumeWeighted()).d43 ≈
           15e-6 rtol = 1e-9
 
     # Every entry point resolves a seed the same way: the state built directly
@@ -325,7 +329,7 @@ CriSTool.growthrate(::SimulateLinearGrowth, kinetic_parameters, configured_run::
     # and a law requiring an absent property is rejected up front.
     property_system = CrystallisationSystem(saturation_model = ConstantSolubility(10.0), crystal_density = 1000.0,
         volume_shape_factor = 1.0, properties = (; seed_translation_speed = 1e-8))
-    property_growth(required_names) = CallableGrowth((rate_values, rate_context) -> rate_context.system.properties.seed_translation_speed;
+    property_growth(required_names) = CallableGrowth((rate_values, rate_context) -> system_properties(rate_context).seed_translation_speed;
         parameters = (;), required = required_names)
     property_trajectory = simulate(CrystallisationModel(property_system;
         growth = property_growth((:seed_translation_speed,))), fixture_seeded_conditions(); saveat = [0.0, 100.0])

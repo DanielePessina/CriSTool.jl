@@ -47,9 +47,10 @@ supplied joint distribution rather than sampling independent marginals.
 
 Plotting is a package extension, so `using CriSTool` does not load Makie.
 Load a Makie backend first: `using CairoMakie` enables `plot_predictions` and
-`ChainStatsPlots`, and `using PairPlots` additionally enables
+`plot_chain_diagnostics`, and `using PairPlots` additionally enables
 `plot_posterior_pairplot`. Calling a plotting function without them raises a
-`MethodError` that names the package to load.
+`MethodError` that names the package to load. Each function returns a
+`Makie.Figure` and never saves or displays it; save it with `save(path, figure)`.
 
 `plot_predictions` draws one row per run and one column per observable: the
 median over successful draws and a quantile band (5–95 % by default). Passing
@@ -59,15 +60,16 @@ draw, such as `predict(fit_result)`, plots as a line.
 
 ```julia
 using CairoMakie, PairPlots
-plot_predictions(fitted_runs, experiments; observables = (:concentration, :d43),
-    savename = "posterior", savedir = "results")
-plot_posterior_pairplot(posterior; savename = "posterior", savedir = "results")
+prediction_figure = plot_predictions(fitted_runs, experiments; observables = (:concentration, :d43))
+save(joinpath("results", "posterior predictions.png"), prediction_figure)
+save(joinpath("results", "posterior pairplot.png"), plot_posterior_pairplot(posterior))
 ```
 
 `plot_posterior_pairplot` labels each panel with the named parameter path and,
 for a posterior, overlays the specification's prior marginals. It also takes
 `ParameterSamples` directly, with optional `prior` and `reference` values.
-`ChainStatsPlots(posterior.backend_result)` gives NUTS trace and density plots.
+`plot_chain_diagnostics(posterior.backend_result; burnin = 0, title = "NUTS")` gives
+NUTS trace and density plots.
 Single simulations plot directly, for example `lines(solution, :d43)`; see
 [Plotting and diagnostics](api/plotting.md).
 

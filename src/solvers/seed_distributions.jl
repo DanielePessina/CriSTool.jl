@@ -61,7 +61,7 @@ end
 Normalised number moment `E_n[L^moment_power]` of the seed population (m^k).
 """
 function _seed_raw_moment(seed_description::DistributionInitialCrystals, moment_power::Integer)
-    density_power = seed_description.number_density_power
+    density_power = _number_density_power(seed_description)
     return _seed_integral(seed_description, moment_power + density_power) /
            _seed_integral(seed_description, density_power)
 end
@@ -114,8 +114,9 @@ Return the same physical seed expressed as a number-weighted distribution.
 For a volume-weighted lognormal the conversion is analytic; other distributions
 use a normalised density adapter with checked improper integrals.
 """
-function number_weighted(seed_description::DistributionInitialCrystals)
-    seed_description.number_density_power == 0 && return seed_description
+number_weighted(seed_description::DistributionInitialCrystals{<:Any, <:Any, NumberWeighted}) =
+    seed_description
+function number_weighted(seed_description::DistributionInitialCrystals{<:Any, <:Any, VolumeWeighted})
     return DistributionInitialCrystals(
         _number_weighted_distribution(seed_description.distribution, seed_description);
         mass_concentration = seed_description.mass_concentration,
@@ -140,7 +141,7 @@ seed_domain_diagnostics(configured_run::CrystallisationProblem,
 _seed_domain_diagnostics(solver::AbstractMomentSolver, seed_description) =
     (; omitted_number_fraction = 0.0, omitted_mass_fraction = 0.0)
 function _seed_domain_diagnostics(solver::AbstractDiscretisedSolver, seed_description)
-    density_power = seed_description.number_density_power
+    density_power = _number_density_power(seed_description)
     lower_length, upper_length = solver.lmin, solver.lmax
     number_fraction = _seed_integral(seed_description, density_power, lower_length, upper_length) /
         _seed_integral(seed_description, density_power)
@@ -156,7 +157,7 @@ function _seed_population(solver::AbstractDiscretisedSolver, configured_run::Cry
     domain_report.omitted_mass_fraction <= seed_description.mass_loss_tolerance ||
         throw(ArgumentError("Seed outside mesh: $(domain_report.omitted_number_fraction) number fraction, " *
             "$(domain_report.omitted_mass_fraction) mass fraction; enlarge the mesh or explicitly truncate."))
-    density_power = seed_description.number_density_power
+    density_power = _number_density_power(seed_description)
     number_scale = seed_description.mass_concentration /
         (_solid_mass_factor(configured_run) *
             _seed_integral(seed_description, 3 + density_power))
@@ -169,6 +170,6 @@ function _resolved_condition_value(seed_description::DistributionInitialCrystals
     seed_description.mass_concentration isa FromObservation || return seed_description
     resolved_mass = observation_lookup(seed_description.mass_concentration.observable_name)
     return DistributionInitialCrystals(seed_description.distribution,
-        Float64(_validate_seed_mass(resolved_mass)), seed_description.number_density_power,
+        Float64(_validate_seed_mass(resolved_mass)), seed_description.weighting,
         seed_description.quadrature_rtol, seed_description.mass_loss_tolerance, seed_description.d43)
 end

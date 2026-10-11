@@ -109,15 +109,16 @@ export AbstractSolver, AbstractMomentSolver, FiniteVol, MoM, QMOM, DQMOM, WENO,
 export AbstractABCSampler, ABCDESampler, ABCDETurnerSampler
 export EnsembleSerial, EnsembleThreads
 export PredictionEnsemble, prediction_summary
-export plot_predictions, plot_posterior_pairplot, ChainStatsPlots
+export plot_predictions, plot_posterior_pairplot, plot_chain_diagnostics
 export rename_chain
 export CrystallisationSystem, LysozymeSystem, KineticModel, CrystallisationModel,
-       CallableGrowth, CallableNucleation, CallableLengthGrowth, KineticContext,
+       CallableGrowth, CallableNucleation, CallableLengthGrowth, KineticContext, system_properties,
        required_properties, named_parameters, simulate, OptimisationSpec, BayesianSpec, ABCSpec,
        PreparedFit, prepare_fit, fit, FitResult, InferenceResult, is_likelihood, loss_terms,
        AbstractSimulationMode, TransientMode, SteadyMode,
        ParameterSamples, parameter_samples, predict, PredictionResult, measurement_samples,
-       DistributionInitialCrystals, number_weighted, seed_domain_diagnostics
+       DistributionInitialCrystals, AbstractSeedWeighting, NumberWeighted, VolumeWeighted,
+       number_weighted, seed_domain_diagnostics
 
 # Supported but not exported: documented in the guides and meant to be used
 # qualified (`CriSTool.CRISTOOL_GAS_CONSTANT`) or imported by name. `public`

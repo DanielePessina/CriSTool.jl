@@ -71,8 +71,9 @@ seeded_trajectory = simulate(crystal_model, seeded_run;
     solver = FiniteVol(meshsize = 400, lmax = 100e-6), saveat = [0.0, 3600.0])
 ```
 
-Lengths are metres; solid mass concentration is kg/m³. Number weighting is the
-default. A volume-weighted source uses `weighting=:volume`; `number_weighted(seed)`
+Lengths are metres; solid mass concentration is kg/m³. Number weighting
+(`NumberWeighted()`) is the default. A volume-weighted source uses
+`weighting = VolumeWeighted()`; `number_weighted(seed)`
 provides explicit conversion. Conversion divides density by length cubed and
 fails when its number normalisation diverges. Explicit truncation belongs to
 the supplied distribution. Negative support is rejected.

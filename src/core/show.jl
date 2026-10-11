@@ -68,10 +68,9 @@ Base.show(display_io::IO, seed::GaussianInitialCrystals) =
     print(display_io, "GaussianInitialCrystals(mass_concentration = ", _quantity_text(seed.mass_concentration, "kg/m³"),
         ", d43 = ", _size_text(seed.d43), ", standard_deviation = ", _size_text(seed.standard_deviation), ")")
 
-_weighting_name(seed::DistributionInitialCrystals) = seed.number_density_power == 0 ? "number" : "volume"
 Base.show(display_io::IO, seed::DistributionInitialCrystals) =
     print(display_io, "DistributionInitialCrystals(", seed.distribution, ", mass_concentration = ",
-        _quantity_text(seed.mass_concentration, "kg/m³"), ", weighting = ", _weighting_name(seed),
+        _quantity_text(seed.mass_concentration, "kg/m³"), ", weighting = ", seed.weighting,
         ", d43 = ", _size_text(seed.d43), ")")
 
 Base.show(display_io::IO, ::MIME"text/plain", seed::AbstractInitialCrystals) = show(display_io, seed)

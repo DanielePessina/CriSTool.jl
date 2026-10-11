@@ -36,7 +36,7 @@ Callable laws carry their values and are bound automatically;
 `KineticModel(custom_growth)` binds one explicitly.
 
 `temperature(context)` and `solvent_state(context)` expose physical values;
-`context.system` is the model's material system.
+`system_properties(context)` returns the material system's additional `properties`.
 Advanced callers may inspect `context.problem`, `context.state` and `context.time`.
 `CallableNucleation` has the same two-argument pattern. `CallableLengthGrowth`
 takes an additional length in metres and fills solver-owned buffers internally.
@@ -50,7 +50,7 @@ FromObservation(:pH),)`. Custom observables use local `observable_projections`
 during preparation. Only kinetic parameters are selectable for fitting.
 
 Additional material values can be supplied as `properties=(offset=..., viscosity=...)`
-and read as `context.system.properties.offset`. Declare needed names with a callable law's
+and read as `system_properties(context).offset`. Declare needed names with a callable law's
 `required=(...)` tuple. Missing properties and nonfinite scalar values fail;
 custom laws own the domain rules for their extra properties, including valid
 zero/signed values or supplied callable models. Density, shape factor and the

@@ -1,6 +1,6 @@
 """
 Task-local state, the Turing-extension entry points of
-`fit(::PreparedFit{<:Any, <:BayesianSpec})`, and chain renaming. Chain trace/density plots (`ChainStatsPlots`) live in
+`fit(::PreparedFit{<:Any, <:BayesianSpec})`, and chain renaming. Chain trace/density plots (`plot_chain_diagnostics`) live in
 the Makie extension.
 """
 

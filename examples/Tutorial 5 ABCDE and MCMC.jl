@@ -23,11 +23,16 @@ function main()
     posterior_predictions = predict(posterior)
     println(prediction_summary(posterior_predictions, :concentration))
     # Median and 5-95% band per run and observable, over the measured means.
-    results_dir = joinpath(@__DIR__, "results")
-    plot_predictions(posterior_predictions, measured_runs; observables = (:concentration, :d43),
-        savename = "Tutorial 5 NUTS", savedir = results_dir, showplot = false)
+    # Plotting functions return a figure; saving is the caller's choice.
+    results_dir = mkpath(joinpath(@__DIR__, "results"))
+    prediction_figure = plot_predictions(posterior_predictions, measured_runs;
+        observables = (:concentration, :d43))
+    save(joinpath(results_dir, "Tutorial 5 NUTS Predictions.png"), prediction_figure)
     # Posterior marginals over the BayesianSpec priors, labelled by named path.
-    plot_posterior_pairplot(posterior; savename = "Tutorial 5 NUTS", savedir = results_dir, showplot = false)
+    save(joinpath(results_dir, "Tutorial 5 NUTS Pairplot.png"), plot_posterior_pairplot(posterior))
+    # Trace and density plots of the NUTS chain.
+    save(joinpath(results_dir, "Tutorial 5 NUTS Chain.png"),
+        plot_chain_diagnostics(posterior.backend_result; title = "NUTS"))
 
     # ABC accepts draws whose discrepancy is below an explicit threshold.
     abc_spec = ABCSpec(priors = selected_priors, target = 10.0, n_particles = 16, n_generations = 2)

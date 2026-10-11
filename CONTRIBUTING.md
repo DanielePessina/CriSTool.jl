@@ -108,7 +108,8 @@ Keep each group fast.
 - **Docs and tutorials** (`docs/src/*.md`, `examples/Tutorial *.jl`,
   `CHANGELOG.md`) are the user-facing surface. Update them whenever types or
   signatures change.
-- Nothing writes to disk unless the caller asks for it.
+- Nothing writes to disk unless the caller asks for it. Plotting functions
+  return a `Makie.Figure` and never save or display it; callers save.
 
 ## Documentation
 

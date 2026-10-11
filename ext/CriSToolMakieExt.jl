@@ -6,8 +6,8 @@ loaded alongside CriSTool.
 module CriSToolMakieExt
 
 using CriSTool
-using CriSTool: _plot_output_path, AbstractDiscretisedSolver
-import CriSTool: plot_predictions, ChainStatsPlots
+using CriSTool: AbstractDiscretisedSolver
+import CriSTool: plot_predictions, plot_chain_diagnostics
 import MCMCChains
 import Makie
 using Statistics: median, quantile
@@ -20,19 +20,12 @@ _is_size_observable(observable_name::Symbol) = occursin(r"^d\d+q?$", string(obse
 _observable_axis_label(observable_name::Symbol) =
     _is_size_observable(observable_name) ? "$(observable_name) [µm]" : string(observable_name)
 
-function _save_makie_figure(figure, output_path)
-    output_path === nothing && return nothing
-    mkpath(dirname(output_path))
-    Makie.save(output_path, figure; px_per_unit = 3)
-    return nothing
-end
+_plotted_observables(observable_name::Symbol) = (observable_name,)
+_plotted_observables(observable_names) = Tuple(Symbol.(observable_names))
 
 function plot_predictions(predictions::PredictionResult, experiments = nothing;
-                          observables = (:concentration, :d43), quantiles = (0.05, 0.95),
-                          savename::AbstractString = "",
-                          savedir::Union{Nothing, AbstractString} = nothing,
-                          showplot::Bool = true)
-    plotted_observables = observables isa Symbol ? (observables,) : Tuple(Symbol.(observables))
+                          observables = (:concentration, :d43), quantiles = (0.05, 0.95))
+    plotted_observables = _plotted_observables(observables)
     lower_quantile, upper_quantile = quantiles
     0 <= lower_quantile < upper_quantile <= 1 ||
         throw(ArgumentError("quantiles must be an increasing pair within [0, 1]."))
@@ -76,8 +69,6 @@ function plot_predictions(predictions::PredictionResult, experiments = nothing;
             Makie.scatter!(prediction_axis, measured_time, measured_mean; color = measurement_colour)
         end
     end
-    _save_makie_figure(figure, _plot_output_path(savename, savedir, " Predictions"))
-    showplot && display(figure)
     return figure
 end
 
@@ -116,21 +107,15 @@ end
 
 _chain_colour(chain_index) = Makie.wong_colors()[mod1(chain_index, length(Makie.wong_colors()))]
 
-function ChainStatsPlots(chain::MCMCChains.Chains;
-                         burnin::Int = 0,
-                         title = "",
-                         show_title::Bool = true,
-                         saveplot::Bool = false,
-                         savestring::String = "",
-                         savedir::Union{Nothing, AbstractString} = nothing,
-                         showplot::Bool = true)
+function plot_chain_diagnostics(chain::MCMCChains.Chains; burnin::Integer = 0,
+                                title::AbstractString = "")
     chain_subset = burnin > 0 ? chain[(burnin + 1):end, :, :] : chain
     parameter_names = collect(names(chain_subset, :parameters))
     parameter_count = length(parameter_names)
     chain_iterations = collect(range(chain_subset))
 
     figure = Makie.Figure(size = (1000, 260 * parameter_count))
-    show_title && !isempty(title) && Makie.Label(figure[0, :], title)
+    isempty(title) || Makie.Label(figure[0, :], title)
     for (row_index, parameter_name) in enumerate(parameter_names)
         # Iterations x chains for this parameter.
         parameter_draws = Array(chain_subset[:, parameter_name, :])
@@ -153,8 +138,6 @@ function ChainStatsPlots(chain::MCMCChains.Chains;
             Makie.hidexdecorations!(density_axis; grid = false)
     end
 
-    saveplot && _save_makie_figure(figure, _plot_output_path(savestring, savedir, " ChDensity"))
-    showplot && display(figure)
     return figure
 end
 

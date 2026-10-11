@@ -58,7 +58,7 @@ physical trajectories; adding measurement noise is a separate, explicit step
 Turing is optional: `fit` on a `BayesianSpec` needs `using Turing`.
 
 Plotting is a package extension: run `using CairoMakie` to enable
-`plot_predictions` and `ChainStatsPlots`, and add `using PairPlots` for
+`plot_predictions` and `plot_chain_diagnostics`, and add `using PairPlots` for
 `plot_posterior_pairplot`. `using CriSTool` alone does not load Makie.
 
 Read the [development documentation](https://danielepessina.github.io/CriSTool.jl/dev/),

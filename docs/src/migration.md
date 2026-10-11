@@ -41,7 +41,9 @@ replacements are:
 | `plot_measurements_vs_ensemble`, `plot_ps_measurements_vs_ensemble`, `plot_measurements_vs_simulation`, `plot_ps_measurements_vs_simulation`, `ChainMeasurementPlots`, `ABCplot` | `plot_predictions(predictions, experiments)` |
 | `ChainPairPlots`, DataFrame `plot_posterior_pairplot` methods | `plot_posterior_pairplot(result)` or `plot_posterior_pairplot(samples; prior, reference)` |
 | `CriSTool.forwardsensitivity(problem, saveat)` (SciMLSensitivity `ODEForwardSensitivityProblem`, MoM and FiniteVol batch only) | `ForwardDiff.jacobian(θ -> last(runsimulation(θ, problem; save_idx = saveat)).concentration, θ)`, which covers every solver and operation; see [Sensitivity analysis](sensitivity.md) |
-| `CRISTOOL_PALETTE`, terminal start/end panels, `outputdir` persistence | removed; save results and figures explicitly (`savename`, `savedir`) |
+| `CRISTOOL_PALETTE`, terminal start/end panels, `outputdir` persistence | removed; plotting functions return a `Makie.Figure`; save it with `save(path, figure)` |
+| `ChainStatsPlots(chain; burnin, title, show_title, saveplot, savestring, savedir, showplot)` | `plot_chain_diagnostics(chain; burnin, title)`; an empty `title` draws none |
+| `savename`, `savedir`, `showplot` keywords of `plot_predictions` and `plot_posterior_pairplot` | removed; the figure is returned, never saved or displayed: `save(path, figure)`, `display(figure)` |
 
 ## Run conditions, law binding and study settings
 
@@ -110,7 +112,7 @@ flags became values rather than symbols.
 | `tolerance_mode = :auto` (`:scalar`) | `auto_abstol = true` (`false`) |
 | `QMOM(inversion_algorithm = :wheeler)`, solver `string` fields | removed |
 | `runsimulation(params, nucl, gr, agg, br, c0; ...)`, `runsimulation(params; nucl, gr, ..., initial_crystals)` | `runsimulation(params, problem; save_idx)` or `simulate(model, conditions; solver, saveat)` |
-| `DistributionInitialCrystals(...).weighting` | `number_density_power` (`0` for `:number`, `-3` for `:volume`); the `weighting` keyword is unchanged |
+| `DistributionInitialCrystals(...; weighting = :number)`, `weighting = :volume` | `weighting = NumberWeighted()` (default), `weighting = VolumeWeighted()`; the `weighting` field holds the singleton |
 
 Every seed description now passes through one resolution. Lognormal and
 Gaussian seeds become a `DistributionInitialCrystals`, and mesh solvers
@@ -185,6 +187,7 @@ solid_mass_concentration_threshold)`.
 | `problem.initial_state` (full state vector) | `problem.initial_population` (population block, or `nothing`); reactor and solvent initial values live in the operation and `initial_solvent_state` |
 | `problem.R_gas_constant`, `problem.boltzmann_constant` | module constants `CriSTool.CRISTOOL_GAS_CONSTANT`, `CriSTool.CRISTOOL_BOLTZMANN_CONSTANT` |
 | `crystallisation_odeproblem(solver, problem, saveat)` solver method | `crystallisation_odeproblem(solver, problem, saveat, kinetic_values)`; the kinetic vector becomes the ODE parameter `p` |
-| `system.offset` for an entry of `CrystallisationSystem(properties = (offset = ...,))` | `system.properties.offset` (also `context.system.properties.offset` in callable laws) |
+| `system.offset` for an entry of `CrystallisationSystem(properties = (offset = ...,))` | `system.properties.offset` (`system_properties(context).offset` in callable laws) |
+| `context.system` in callable laws (`KineticContext` field) | removed; `system_properties(context)` for extra properties, `context.problem.model.system` for the system |
 | `CallableNucleation((values, context) -> 0.0; parameters = (;))` to switch nucleation off | `NoNucleation()`, the default `nucleation` of `CrystallisationModel`; built in and time invariant, so steady solves need no `autonomous = true` for it |
 | Unknown `CrystallisationProblem` keywords copied onto the problem | `ArgumentError` naming the unsupported settings |

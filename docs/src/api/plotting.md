@@ -1,8 +1,10 @@
 # Plotting and diagnostics
 
 These functions are defined by package extensions. Run `using CairoMakie` (or
-another Makie backend) to enable `plot_predictions` and `ChainStatsPlots`, and
-`using CairoMakie, PairPlots` to enable `plot_posterior_pairplot`.
+another Makie backend) to enable `plot_predictions` and `plot_chain_diagnostics`, and
+`using CairoMakie, PairPlots` to enable `plot_posterior_pairplot`. These
+functions return a `Makie.Figure` and never save or display it; save it with
+Makie's `save(path, figure)`.
 
 ## Plotting a solution directly
 
@@ -36,5 +38,5 @@ lines(solution, solver, 5)   # size distribution at the fifth saved time
 ```@docs
 plot_predictions
 plot_posterior_pairplot
-ChainStatsPlots
+plot_chain_diagnostics
 ```

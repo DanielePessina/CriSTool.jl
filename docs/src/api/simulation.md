@@ -12,6 +12,7 @@ CallableGrowth
 CallableNucleation
 CallableLengthGrowth
 KineticContext
+system_properties
 required_properties
 named_parameters
 simulate
@@ -31,6 +32,9 @@ AbstractInitialCrystals
 LogNormalInitialCrystals
 GaussianInitialCrystals
 DistributionInitialCrystals
+AbstractSeedWeighting
+NumberWeighted
+VolumeWeighted
 number_weighted
 seed_domain_diagnostics
 initial_state_from_characteristics
