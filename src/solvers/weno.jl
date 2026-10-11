@@ -122,15 +122,13 @@ already nonnegative and never clips or changes the signed growth rate.
     upwind_state <= zero(upwind_state) && return zero(high_order_state + upwind_state)
     high_order_state >= zero(high_order_state) && return high_order_state
 
-    # Linear flux/state blending coefficient.  The resulting state is zero
-    # (up to roundoff) at the positivity boundary; the final guard prevents a
-    # negative last bit from leaking into the flux.
-    blend = -high_order_state / (upwind_state - high_order_state)
-    blend = blend < zero(blend) ? zero(blend) :
-            blend > one(blend) ? one(blend) : blend
-    limited_state = muladd(blend, upwind_state,
-                           (one(blend) - blend) * high_order_state)
-    return limited_state < zero(limited_state) ? zero(limited_state) : limited_state
+    # Negative trace h < 0 < u: the blend weight θ = -h / (u - h) lies in
+    # (0, 1) and gives θu + (1 - θ)h = 0 exactly, so the limited state is
+    # zero. Returning it directly avoids evaluating the blend, whose
+    # ForwardDiff quotient rule squares u - h: on a far-tail face (u ~ 1e-162)
+    # that square underflows to zero and turns zero partials into NaN, which
+    # stops every dual solve as `Unstable`.
+    return zero(high_order_state + upwind_state)
 end
 
 """Fill WENO fluxes for a scalar negative signed growth rate."""
