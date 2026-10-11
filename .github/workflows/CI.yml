@@ -29,8 +29,8 @@ jobs:
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
 
-  jet:
-    name: JET static analysis
+  static:
+    name: Static and allocation checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -39,27 +39,27 @@ jobs:
           version: '1.12'
       - uses: julia-actions/cache@v3
       - uses: julia-actions/julia-buildpkg@v1
-      - name: JET analysis of the MoM solve core
+      - uses: julia-actions/julia-runtest@v1
+        with:
+          test_args: static
+
+  jet:
+    name: JET package report (non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: '1.12'
+      - uses: julia-actions/cache@v3
+      - uses: julia-actions/julia-buildpkg@v1
+      - name: JET report_package
         run: |
           julia --project=. -e '
             using Pkg; Pkg.add("JET")
-            using JET, CriSTool, ComponentArrays
-            res = JET.report_call(() -> CriSTool.runsimulation(
-                    ComponentArrays.ComponentVector(
-                        Float64[38.0, 6e-4, 1e-9/60, 3.0],
-                        ComponentArrays.Axis((nucl = (ln_nucleation_prefactor = 1, surface_energy = 2),
-                                              gr = (growth_coefficient = 1, growth_order = 2))));
-                    nucl = CriSTool.nucl_CNT(), gr = CriSTool.growth_empirical(),
-                    agg = CriSTool.noaggregation(), br = CriSTool.nobreakage(),
-                    solver = CriSTool.MoM(), save_idx = [0.0, 1.0],
-                    temp_profile = CriSTool.ConstantTemperature(293.15)),
-                target_modules = (CriSTool,))
-            reports = JET.get_reports(res)
-            if !isempty(reports)
-                foreach(println, reports)
-                error("JET found $(length(reports)) report(s) in the CriSTool frames of the MoM solve path")
-            end
-            println("JET: 0 reports on the MoM solve core")
+            using JET, CriSTool
+            JET.report_package(CriSTool; target_modules = (CriSTool,))
           '
 
   docs:
