@@ -42,6 +42,7 @@ using Metaheuristics
 
 # Utilities
 using ConcreteStructs
+using PrecompileTools: @setup_workload, @compile_workload
 using MonteCarloMeasurements
 using StaticArrays
 
@@ -181,6 +182,8 @@ include("inference/model_workflows.jl")
 
 # Plotting entry points; their methods live in the Makie/PairPlots extensions.
 include("plotting/plots.jl")
+
+include("precompile_workload.jl")
 
 function __init__()
     Base.Experimental.register_error_hint(_plotting_method_error_hint, MethodError)
