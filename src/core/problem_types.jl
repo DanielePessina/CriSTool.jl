@@ -126,6 +126,10 @@ function _solvent_state_index(problem::CrystallisationProblem, name::Symbol)
     return first(_solvent_state_range(problem)) + position - 1
 end
 
+"""Crystal solid density times the volume shape factor (kg/m³), the mass per unit third moment."""
+_solid_mass_factor(problem::CrystallisationProblem) =
+    problem.model.system.crystal_density * problem.model.system.volume_shape_factor
+
 """
     initial_concentration(problem::CrystallisationProblem) -> Real
 
@@ -141,34 +145,8 @@ The model's bound kinetic values as one vector on the composite
 values `runsimulation(problem)` uses; `runsimulation(parameters, problem)`
 replaces them.
 """
-function kinetic_parameter_vector(problem::CrystallisationProblem)
-    crystal_model = problem.model
-    flat_kinetic_values = Float64[]
-    for slot_name in _MODEL_KINETIC_SLOTS
-        _append_bound_parameter_values!(flat_kinetic_values,
-                                        getfield(crystal_model, slot_name).parameters)
-    end
-    return ComponentArray(flat_kinetic_values, paramaxis(problem))
-end
-
-"""
-    _append_bound_parameter_values!(flat_kinetic_values, bound_parameters)
-
-Append bound kinetic values depth-first in field order, the layout
-`ComponentArray(; bound_parameters...)` gives: nested tuples recurse and
-vector leaves contribute their elements.
-"""
-function _append_bound_parameter_values!(flat_kinetic_values::Vector{Float64},
-                                         bound_parameters::NamedTuple)
-    for bound_value in values(bound_parameters)
-        _append_bound_parameter_values!(flat_kinetic_values, bound_value)
-    end
-    return flat_kinetic_values
-end
-_append_bound_parameter_values!(flat_kinetic_values::Vector{Float64}, bound_value::Real) =
-    push!(flat_kinetic_values, bound_value)
-_append_bound_parameter_values!(flat_kinetic_values::Vector{Float64}, bound_values::AbstractVector) =
-    append!(flat_kinetic_values, bound_values)
+kinetic_parameter_vector(problem::CrystallisationProblem) =
+    ComponentArray(Vector{Float64}(ComponentArray(; _model_named_values(problem.model)...)), paramaxis(problem))
 
 function _validate_solid_mass_concentration_threshold(problem::CrystallisationProblem)
     threshold = problem.solid_mass_concentration_threshold
@@ -277,15 +255,11 @@ function solvent_state(prob::CrystallisationProblem, state)
     return NamedTuple{names}(values)
 end
 
-function _solvent_state_index(prob::CrystallisationProblem, state, name::Symbol)
-    return _solvent_state_index(prob, name)
-end
-
 """
     supersaturation(prob::CrystallisationProblem, state, t) -> Real
 
 Supersaturation ratio from the named `:concentration` solvent-state variable.
 """
 supersaturation(prob::CrystallisationProblem, state, t) =
-    state[_solvent_state_index(prob, state, :concentration)] /
+    state[_solvent_state_index(prob, :concentration)] /
     saturation_concentration(prob, t)

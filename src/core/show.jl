@@ -165,9 +165,6 @@ Base.show(display_io::IO, bound_kinetic::KineticModel) =
 Base.show(display_io::IO, ::MIME"text/plain", bound_kinetic::KineticModel) = show(display_io, bound_kinetic)
 
 # Slots left at their `No...` default are omitted from the compact model form.
-_is_empty_kinetic(bound_kinetic::KineticModel) = bound_kinetic.law isa
-    Union{NoNucleation, NoDissolution, NoAggregation, NoBreakage}
-
 function Base.show(display_io::IO, ::MIME"text/plain", crystal_model::CrystallisationModel)
     material_system = crystal_model.system
     model_rows = ["density" => string(_number_text(material_system.crystal_density), " kg/m³; shape factor ",
@@ -181,7 +178,7 @@ end
 
 function Base.show(display_io::IO, crystal_model::CrystallisationModel)
     active_slots = [slot_name for slot_name in _MODEL_KINETIC_SLOTS
-        if !_is_empty_kinetic(getproperty(crystal_model, slot_name))]
+        if !_is_null_kinetic(getproperty(crystal_model, slot_name).law)]
     print(display_io, "CrystallisationModel(", join((string(slot_name, " = ", getproperty(crystal_model, slot_name))
         for slot_name in active_slots), ", "), ")")
 end

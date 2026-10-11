@@ -183,10 +183,8 @@ function CrystallisationProblem(crystal_model::CrystallisationModel, run_conditi
         nothing, run_conditions.operation, solver, solvent_dynamics, Float64(solid_mass_concentration_threshold))
     _validate_crystallisation_problem(configured_run)
     run_conditions.crystals === nothing && return configured_run
-    seeded_state = initial_state_from_characteristics(configured_run, run_conditions.crystals)
-    seeded_run = _problem_with_initial_values(configured_run,
-        Vector{Float64}(seeded_state[_population_state_range(configured_run)]), configured_run.initial_solvent_state)
-    return _validate_crystallisation_problem(seeded_run)
+    return _problem_with_initial_values(configured_run,
+        _initial_population(configured_run, run_conditions.crystals), configured_run.initial_solvent_state)
 end
 
 """

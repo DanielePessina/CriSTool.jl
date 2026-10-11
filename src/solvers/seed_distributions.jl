@@ -158,7 +158,7 @@ function _seed_population(solver::AbstractDiscretisedSolver, configured_run::Cry
             "$(domain_report.omitted_mass_fraction) mass fraction; enlarge the mesh or explicitly truncate."))
     density_power = seed_description.number_density_power
     number_scale = seed_description.mass_concentration /
-        (configured_run.model.system.crystal_density * configured_run.model.system.volume_shape_factor *
+        (_solid_mass_factor(configured_run) *
             _seed_integral(seed_description, 3 + density_power))
     return [number_scale * _seed_integral(seed_description, density_power,
         solver.cell_face[cell_index], solver.cell_face[cell_index + 1]) /

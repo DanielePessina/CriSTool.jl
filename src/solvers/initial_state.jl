@@ -152,7 +152,7 @@ _require_fourth_raw_moment(solver::AbstractMomentSolver) =
 """Raw moments `µ0..µ_{count-1}` (SI) of a seed scaled to its solid mass concentration."""
 function _seed_raw_moments(problem::CrystallisationProblem, seed_description::DistributionInitialCrystals,
                            moment_total::Integer)
-    target_mu3 = seed_description.mass_concentration / (problem.model.system.crystal_density * problem.model.system.volume_shape_factor)
+    target_mu3 = seed_description.mass_concentration / _solid_mass_factor(problem)
     number_scale = target_mu3 / _seed_raw_moment(seed_description, 3)
     return [number_scale * _seed_raw_moment(seed_description, moment_index)
             for moment_index in 0:(moment_total - 1)]
@@ -226,18 +226,21 @@ be paired with zero mass concentration.
 """
 initial_state_from_characteristics(problem::CrystallisationProblem,
                                    initial_crystals::AbstractInitialCrystals) =
-    _initial_state_from_seed(problem, _checked_seed_description(initial_crystals))
+    vcat(_initial_population(problem, initial_crystals),
+         _operation_initial_state(problem.operation),
+         Float64.(collect(values(problem.initial_solvent_state))))
 
-function _initial_state_from_seed(problem::CrystallisationProblem, seed_description::Nothing)
-    return vcat(zeros(Float64, _population_state_count(problem.solver)),
-                _operation_initial_state(problem.operation),
-                Float64.(collect(values(problem.initial_solvent_state))))
-end
+"""
+    _initial_population(problem, initial_crystals) -> Vector{Float64}
 
-function _initial_state_from_seed(problem::CrystallisationProblem,
-                                  seed_description::DistributionInitialCrystals)
+Population block of the initial state for `initial_crystals`, after the
+solver-specific seed check. An empty seed gives zeros.
+"""
+_initial_population(problem::CrystallisationProblem, initial_crystals::AbstractInitialCrystals) =
+    _initial_population(problem, _checked_seed_description(initial_crystals))
+_initial_population(problem::CrystallisationProblem, seed_description::Nothing) =
+    zeros(Float64, _population_state_count(problem.solver))
+function _initial_population(problem::CrystallisationProblem, seed_description::DistributionInitialCrystals)
     _validate_seed_for_solver(problem.solver, seed_description.d43)
-    return vcat(_seed_population(problem.solver, problem, seed_description),
-                _operation_initial_state(problem.operation),
-                Float64.(collect(values(problem.initial_solvent_state))))
+    return Vector{Float64}(_seed_population(problem.solver, problem, seed_description))
 end
