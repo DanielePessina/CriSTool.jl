@@ -179,20 +179,20 @@ end
 
 """
     aggregationrate(::NoAggregation, parameters::AbstractVector,
-                    problem::CrystallisationProblem, state, t) -> Real
+                    problem::DiscretisedProblem, state, t) -> Real
 
 Return zero aggregation rate (placeholder for no aggregation).
 
 # Returns
 - 0.0
 """
-function aggregationrate(::NoAggregation, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
+function aggregationrate(::NoAggregation, parameters::T, prob::DiscretisedProblem, state, t) where {T <: AbstractVector}
     return 0.0
 end
 
 """
     aggregationrate(aggregationfunction, parameters::AbstractVector,
-                    problem::CrystallisationProblem, state, t) -> Vector
+                    problem::DiscretisedProblem, state, t) -> Vector
 
 Number-density aggregation rate on the solver mesh for the built-in kernels
 `ConstantAggregation`, `SizeSumAggregation`, `VolumeSumAggregation` and
@@ -211,7 +211,7 @@ fixed-pivot deposition of the products.
 - Vector of aggregation rates at each cell
 """
 function aggregationrate(aggregationfunction::FixedPivotAggregationLaw, parameters::T,
-                         prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
+                         prob::DiscretisedProblem, state, t) where {T <: AbstractVector}
     numberdensity = crystal_state(prob, state)
     kernel_scale = exp10(_named_params(aggregationfunction, parameters).
                          log10_aggregation_coefficient)
@@ -292,20 +292,20 @@ end
 
 """
     breakagerate(::NoBreakage, parameters::AbstractVector,
-                 problem::CrystallisationProblem, state, t) -> Real
+                 problem::DiscretisedProblem, state, t) -> Real
 
 Return zero breakage rate (placeholder for no breakage).
 
 # Returns
 - 0.0
 """
-function breakagerate(::NoBreakage, parameters::T, prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
+function breakagerate(::NoBreakage, parameters::T, prob::DiscretisedProblem, state, t) where {T <: AbstractVector}
     return 0.0
 end
 
 """
     breakagerate(breakagefunction, parameters::AbstractVector,
-                 problem::CrystallisationProblem, state, t) -> Vector
+                 problem::DiscretisedProblem, state, t) -> Vector
 
 Number-density breakage rate (daughter birth minus parent death) on the solver
 mesh for `EmpiricalBreakage` and `UniformBreakage`, whose binary daughters are
@@ -323,7 +323,7 @@ uniform in crystal volume.
 - Vector of breakage rates at each cell
 """
 function breakagerate(breakagefunction::UniformVolumeBreakageLaw, parameters::T,
-                      prob::CrystallisationProblem, state, t) where {T <: AbstractVector}
+                      prob::DiscretisedProblem, state, t) where {T <: AbstractVector}
     numberdensity = crystal_state(prob, state)
     rate_type = promote_type(eltype(numberdensity), eltype(parameters))
     breakage_rate = zeros(rate_type, length(numberdensity))

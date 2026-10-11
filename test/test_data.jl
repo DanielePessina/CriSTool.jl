@@ -91,9 +91,10 @@ end
     @test seeded_run.conditions.crystals ==
           GaussianInitialCrystals(mass_concentration = 0.25, d43 = 12e-6, standard_deviation = 2e-6)
     # The mapped seed carries its mass and d43 into the moment state (rho*kv = 1000).
-    seeded_problem = CrystallisationProblem(fixture_translation_model(), merge(seeded_run.conditions; concentration = 18.0))
-    @test 1000.0 * seeded_problem.initial_population[4] ≈ 0.25 rtol = 1e-12
-    @test seeded_problem.initial_population[5] / seeded_problem.initial_population[4] ≈ 12e-6 rtol = 1e-12
+    seeded_population = CriSTool.DiscretisedProblem(CrystallisationProblem(fixture_translation_model(),
+        merge(seeded_run.conditions; concentration = 18.0), (0.0, 1.0)), MoM()).initial_population
+    @test 1000.0 * seeded_population[4] ≈ 0.25 rtol = 1e-12
+    @test seeded_population[5] / seeded_population[4] ≈ 12e-6 rtol = 1e-12
 
     # Temperature comes from exactly one place.
     @test_throws ArgumentError experiments_from_table(seed_table; metadata_cols = (temperature = :Temperature,),
@@ -180,7 +181,7 @@ end
     for (gold_run, gold_ensemble) in zip(data_fixture_runs, gold_predictions.ensembles)
         final_concentration, final_d43 = gold_final_values[gold_run.exp_id]
         gold_concentration = vec(observable_values(gold_ensemble, :concentration))
-        @test gold_ensemble.time == gold_run.observables.concentration.time
+        @test gold_ensemble.t == gold_run.observables.concentration.time
         @test gold_concentration[end] ≈ final_concentration rtol = 1e-10
         @test observable_values(gold_ensemble, :d43)[1, end] ≈ final_d43 rtol = 1e-10
         # Unseeded batch: starts at the measured C0 and only consumes solute.

@@ -54,11 +54,15 @@ function paramaxis(nucl::AbstractNucleationFunction,
                       paramaxis(br)))
 end
 
-paramaxis(prob::CrystallisationProblem) = paramaxis(prob.model.nucleation.law,
-                                                    prob.model.growth.law,
-                                                    prob.model.dissolution.law,
-                                                    prob.model.aggregation.law,
-                                                    prob.model.breakage.law)
+"""
+    paramaxis(problem::CrystallisationProblem) -> Axis
+
+Composite kinetic parameter axis of the problem's model. It does not depend on
+the solver, so `problem.p` is laid out on it before any solve.
+"""
+paramaxis(prob::Union{CrystallisationProblem, DiscretisedProblem}) =
+    paramaxis(prob.model.nucleation.law, prob.model.growth.law, prob.model.dissolution.law,
+              prob.model.aggregation.law, prob.model.breakage.law)
 
 
 """
@@ -70,5 +74,5 @@ states, excluding optional reactor and solvent blocks.
 """
 crystal_state(state::ComponentArrays.ComponentVector) = state.n
 crystal_state(state::AbstractVector) = @view state[1:(end - 1)]
-crystal_state(problem::CrystallisationProblem, state) =
+crystal_state(problem::DiscretisedProblem, state) =
     @view state[_population_state_range(problem)]

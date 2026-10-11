@@ -661,7 +661,7 @@ end
                                          growth_parameters,
                                          dissolutionfunction::AbstractDissolutionFunction,
                                          dissolution_parameters,
-                                         problem::CrystallisationProblem,
+                                         problem::DiscretisedProblem,
                                          state,
                                          time)
     return map(crystal_length -> net_growth_rate_at_length(growthfunction,
@@ -733,7 +733,7 @@ auxiliary-state laws remain source-compatible.  The concentration component is
 replaced with the exact quadrature volume rate; the built-in dynamics use the
 same expression directly.
 """
-function _quadrature_solvent_derivatives(problem::CrystallisationProblem,
+function _quadrature_solvent_derivatives(problem::DiscretisedProblem,
                                          solvent_dynamics::DefaultSolventDynamics,
                                          state, time, growth_context, quadrature_volume_rate)
     concentration_rate = _quadrature_concentration_rate(problem, quadrature_volume_rate)
@@ -744,7 +744,7 @@ function _quadrature_solvent_derivatives(problem::CrystallisationProblem,
         concentration_rate)
 end
 
-function _quadrature_solvent_derivatives(problem::CrystallisationProblem,
+function _quadrature_solvent_derivatives(problem::DiscretisedProblem,
                                          solvent_dynamics,
                                          state, time, growth_context, quadrature_volume_rate)
     concentration_rate = _quadrature_concentration_rate(problem, quadrature_volume_rate)
@@ -752,12 +752,12 @@ function _quadrature_solvent_derivatives(problem::CrystallisationProblem,
     return _with_quadrature_concentration_rate(problem, base_rates, concentration_rate)
 end
 
-@inline _quadrature_concentration_rate(problem::CrystallisationProblem, quadrature_volume_rate) =
+@inline _quadrature_concentration_rate(problem::DiscretisedProblem, quadrature_volume_rate) =
     -problem.model.system.crystal_density * problem.model.system.volume_shape_factor *
     quadrature_volume_rate
 
 """Solvent `base_rates` with the concentration entry replaced by `concentration_rate`."""
-@inline function _with_quadrature_concentration_rate(problem::CrystallisationProblem,
+@inline function _with_quadrature_concentration_rate(problem::DiscretisedProblem,
                                                      base_rates, concentration_rate)
     concentration_position = _solvent_state_index(problem, :concentration) -
                              first(_solvent_state_range(problem)) + 1
@@ -774,14 +774,14 @@ when µ₃ crosses the solid-mass threshold downward.  Shared by MoM and QMOM,
 whose population blocks both start with the raw moments µ₀:µ₃.  Only built for
 signed (dissolving) kinetics; the ordinary positive-growth path gets no callback.
 """
-function _solid_mass_extinction_callback(problem::CrystallisationProblem)
+function _solid_mass_extinction_callback(problem::DiscretisedProblem)
     _dissolution_enabled(problem) || return nothing
     population_count = _population_state_count(problem.solver)
     population_count >= 4 || return nothing
 
     concentration_index = _solvent_state_index(problem, :concentration)
     state_count = last(_solvent_state_range(problem))
-    threshold = _validate_solid_mass_concentration_threshold(problem)
+    threshold = _validate_solid_mass_concentration_threshold(problem.solid_mass_concentration_threshold)
     condition = (state, time, integrator) -> problem.model.system.crystal_density * problem.model.system.volume_shape_factor * state[4] - threshold
     affect! = integrator -> nothing
     affect_neg! = integrator -> begin
@@ -862,7 +862,7 @@ When the removed node is the last one, the population is set exactly to zero
 and the remaining `ρ kᵥ M₃` is released, matching the solid-mass extinction
 callback.
 """
-function _qmom_vanishing_node_callback(problem::CrystallisationProblem,
+function _qmom_vanishing_node_callback(problem::DiscretisedProblem,
                                        moment_count_value::Val{M}) where {M}
     _dissolution_enabled(problem) || return nothing
     solver = problem.solver
@@ -907,7 +907,7 @@ function _qmom_vanishing_node_callback(problem::CrystallisationProblem,
                               save_positions = (false, false))
 end
 
-function _validate_qmom_problem(problem::CrystallisationProblem)
+function _validate_qmom_problem(problem::DiscretisedProblem)
     _validate_qmom_solver(problem.solver)
     for rate_law in (problem.model.growth.law, problem.model.dissolution.law)
         _is_length_law(rate_law) &&
@@ -963,7 +963,7 @@ aggregation or breakage the moment equations close exactly on the scalar
 growth rate and need no inversion; binary sources are evaluated on the
 quadrature reconstructed from the current stage.
 """
-@inline _qmom_moment_rates(::NoAggregation, ::NoBreakage, problem::CrystallisationProblem,
+@inline _qmom_moment_rates(::NoAggregation, ::NoBreakage, problem::DiscretisedProblem,
                            moment_values::SVector, state, parameters, time, scalar_growth_rate,
                            nucleation_rate_value) =
     (_qmom_scalar_growth_moment_source(moment_values, scalar_growth_rate,
@@ -972,7 +972,7 @@ quadrature reconstructed from the current stage.
 
 function _qmom_moment_rates(aggregationfunction::AbstractAggregationFunction,
                             breakagefunction::AbstractBreakageFunction,
-                            problem::CrystallisationProblem,
+                            problem::DiscretisedProblem,
                             moment_values::SVector{M}, state, parameters, time,
                             scalar_growth_rate, nucleation_rate_value) where {M}
     reconstructed_rule = _qmom_stage_quadrature(moment_values, problem.solver)
@@ -998,7 +998,7 @@ function _qmom_moment_rates(aggregationfunction::AbstractAggregationFunction,
 end
 
 """QMOM right-hand side on the static state; `Val(M)` is the raw-moment count."""
-function _qmom_rhs(problem::CrystallisationProblem, state::SVector{S}, parameters, time,
+function _qmom_rhs(problem::DiscretisedProblem, state::SVector{S}, parameters, time,
                    feed_population, moment_count_value::Val{M}) where {S, M}
     moment_values = SVector(ntuple(moment_index -> state[moment_index], moment_count_value))
     scalar_growth_rate = net_growth_rate(problem.model.growth.law,
@@ -1035,7 +1035,7 @@ function _qmom_rhs(problem::CrystallisationProblem, state::SVector{S}, parameter
 end
 
 """Construct the QMOM ODE problem and selected time-stepping algorithm."""
-function crystallisation_odeproblem(solver::QMOM, problem::CrystallisationProblem, saveat, kinetic_values)
+function crystallisation_odeproblem(solver::QMOM, problem::DiscretisedProblem, tspan, kinetic_values)
     _validate_qmom_problem(problem)
     n_moments = moment_count(problem.solver)
     n_solvent = length(propertynames(problem.initial_solvent_state))
@@ -1062,12 +1062,12 @@ function crystallisation_odeproblem(solver::QMOM, problem::CrystallisationProble
     initial_state = SVector(ntuple(index -> initial_values[index], Val(n_states)))
     ode_problem = ODEProblem{false}(QMOM_model,
                                     initial_state,
-                                    (saveat[1], saveat[end]),
+                                    tspan,
                                     parameters)
     return ode_problem, _timestepping_algorithm(solver, Tsit5())
 end
 
-_solver_callbacks(solver::QMOM, problem::CrystallisationProblem, odeproblem) =
+_solver_callbacks(solver::QMOM, problem::DiscretisedProblem, odeproblem) =
     CallbackSet(_solid_mass_extinction_callback(problem),
                 _qmom_vanishing_node_callback(problem, Val(moment_count(solver))))
 
@@ -1093,7 +1093,7 @@ function _qmom_saved_quadratures(moment_matrix::AbstractMatrix, solver::QMOM, ::
     return node_matrix, weight_matrix, diagnostics
 end
 
-function _wrap_solution(solver::QMOM, problem::CrystallisationProblem, solution,
+function _wrap_solution(solver::QMOM, problem::DiscretisedProblem, solution,
                         boundary_flow_state::NamedTuple)
     moment_matrix = Array(solution[1:moment_count(solver), :])
     _validate_qmom_solver(solver)
@@ -1117,7 +1117,7 @@ saved time). Inactive QMOM nodes are dropped; DQMOM rules keep every node.
 quadrature(solution::CrystallisationSolution{<:QuadraturePopulation}, time_index::Integer) =
     _saved_quadrature(solution.population, time_index)
 quadrature(solution::CrystallisationSolution{<:QuadraturePopulation}) =
-    [quadrature(solution, time_index) for time_index in eachindex(solution.time)]
+    [quadrature(solution, time_index) for time_index in eachindex(solution.t)]
 
 function _saved_quadrature(population::QuadraturePopulation, time_index::Integer)
     checkbounds(population.nodes, :, time_index)

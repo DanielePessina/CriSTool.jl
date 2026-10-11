@@ -149,7 +149,7 @@ end
     # predict(fit) uses the fitted draw, experiments, solver and observation times.
     fitted_prediction = predict(lbfgs_fit)
     @test fitted_prediction.experiments == [31]
-    @test only(fitted_prediction.ensembles).time == fitpredict_times
+    @test only(fitted_prediction.ensembles).t == fitpredict_times
     @test vec(observable_values(only(fitted_prediction.ensembles), :concentration)) ≈
           fixture_translation_concentration.(fitpredict_times; speed = fitted_speed) atol = 1e-8
     @test vec(observable_values(only(fitted_prediction.ensembles), :d43)) ≈ fixture_translation_d43.(fitpredict_times; speed = fitted_speed) rtol = 1e-7
@@ -351,6 +351,7 @@ end
     failed_predictions = predict(fitpredict_model, [fitpredict_experiment], user_draws; solver = MoM(),
         solve_options = (maxiters = 1,), observables = (:concentration,))
     @test failed_predictions.ensembles[1].success == [false, false, false]
+    @test all(==(ReturnCode.MaxIters), getproperty.(failed_predictions.ensembles[1].diagnostics, :retcode))
     @test_throws ArgumentError prediction_summary(failed_predictions, :concentration)
     @test_throws ArgumentError prediction_summary(failed_predictions, :concentration; skip_failed = true)
 

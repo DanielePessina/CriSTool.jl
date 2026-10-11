@@ -186,9 +186,11 @@ function _run_conditions(::SteadyMode, experiment_run::CrystallisationExperiment
     return experiment_run.conditions
 end
 
-_model_experiment_problem(crystal_model, experiment_run, selected_solver, simulation_mode; problem_options...) =
-    CrystallisationProblem(crystal_model, _run_conditions(simulation_mode, experiment_run);
-        solver = selected_solver, problem_options...)
+# Prepared runs integrate over their observation times; the span records the same range.
+_model_experiment_problem(crystal_model, experiment_run, simulation_mode; problem_options...) =
+    CrystallisationProblem(crystal_model, _run_conditions(simulation_mode, experiment_run),
+        _observation_tspan(_observation_times(experiment_run)); problem_options...)
+_observation_tspan(requested_times::AbstractVector) = (0.0, max(0.0, maximum(requested_times; init = 0.0)))
 
 """Likelihood studies need supplied positive variances for every scored, weighted measurement."""
 _validate_likelihood_noise(::AbstractPELossFunction, prepared_setup::LossSetup) = nothing
@@ -243,9 +245,9 @@ function prepare_fit(crystal_model::CrystallisationModel, measured_runs::Abstrac
     isempty(measured_runs) && throw(ArgumentError("Supply at least one experiment."))
     kinetic_selection = _kinetic_selection(crystal_model, _selected_tree(fit_specification))
     _validate_specification(fit_specification)
-    physical_runs = [_model_experiment_problem(crystal_model, experiment_run, solver, mode; problem_options...)
+    physical_runs = [_model_experiment_problem(crystal_model, experiment_run, mode; problem_options...)
         for experiment_run in measured_runs]
-    prepared_setup = prepare_loss(physical_runs, measured_runs; mode, loss_function = fit_specification.loss,
+    prepared_setup = prepare_loss(physical_runs, measured_runs; solver, mode, loss_function = fit_specification.loss,
         observable_order, observable_projections, algorithm, solve_options, callback_factory, parallel)
     _validate_likelihood_noise(fit_specification.loss, prepared_setup)
     return PreparedFit(crystal_model, fit_specification, kinetic_selection, prepared_setup, solver, problem_options)
@@ -607,27 +609,30 @@ function predict(crystal_model::CrystallisationModel, prediction_runs::AbstractV
     sample_selection = _kinetic_selection(crystal_model, joint_samples.names)
     expanded_draws = reduce(hcat, [_expanded_parameters(sample_selection, view(joint_samples.values, :, draw_index))
         for draw_index in axes(joint_samples.values, 2)])
-    prediction_specs = [_prediction_run(prediction_run, run_index, crystal_model, solver, mode, saveat, problem_options)
+    prediction_specs = [_prediction_run(prediction_run, run_index, crystal_model, mode, saveat, problem_options)
         for (run_index, prediction_run) in enumerate(prediction_runs)]
     prepared_solves = _prepare_solves(first.(prediction_specs), getindex.(prediction_specs, 2), mode;
-        algorithm, solve_options, callback_factory)
+        solver, algorithm, solve_options, callback_factory)
     ensemble_predictions = run_ensemble(expanded_draws, prepared_solves; observables, parallel)
     return PredictionResult(joint_samples, last.(prediction_specs), ensemble_predictions)
 end
 
 """`(problem, requested times, run id)` for one prediction run."""
 function _prediction_run(experiment_run::CrystallisationExperiment, run_index::Int, crystal_model,
-                         solver, simulation_mode, saveat, problem_options)
+                         simulation_mode, saveat, problem_options)
     requested_times = saveat === nothing ? _observation_times(experiment_run) : collect(Float64, saveat)
-    return (_model_experiment_problem(crystal_model, experiment_run, solver, simulation_mode; problem_options...),
+    return (CrystallisationProblem(crystal_model, _run_conditions(simulation_mode, experiment_run),
+            _observation_tspan(requested_times); problem_options...),
         requested_times, experiment_run.exp_id)
 end
 
 function _prediction_run(run_conditions::RunConditions, run_index::Int, crystal_model,
-                         solver, simulation_mode, saveat, problem_options)
+                         simulation_mode, saveat, problem_options)
     saveat === nothing && throw(ArgumentError("Predictions from run conditions need saveat."))
-    return (CrystallisationProblem(crystal_model, run_conditions; solver, problem_options...),
-        collect(Float64, saveat), run_index)
+    requested_times = collect(Float64, saveat)
+    return (CrystallisationProblem(crystal_model, run_conditions, _observation_tspan(requested_times);
+            problem_options...),
+        requested_times, run_index)
 end
 
 """Summarise physical trajectory uncertainty, requiring explicit exclusion of failures."""
@@ -646,9 +651,9 @@ function measurement_samples(predictions::PredictionResult, observable_name::Sym
         noise, rng = Random.default_rng())
     return map(enumerate(predictions.ensembles)) do (experiment_index, ensemble_prediction)
         measurement_matrix = copy(observable_values(ensemble_prediction, observable_name))
-        for time_index in eachindex(ensemble_prediction.time)
+        for time_index in eachindex(ensemble_prediction.t)
             noise_distribution = _noise_distribution(noise, predictions.experiments[experiment_index],
-                observable_name, ensemble_prediction.time[time_index])
+                observable_name, ensemble_prediction.t[time_index])
             noise_distribution isa Distributions.UnivariateDistribution || throw(ArgumentError("Supply a univariate additive noise distribution."))
             for draw_index in axes(measurement_matrix, 1)
                 ensemble_prediction.success[draw_index] || continue

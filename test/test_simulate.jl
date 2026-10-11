@@ -1,4 +1,4 @@
-# End-to-end simulation: model → conditions → simulate across every solver,
+# End-to-end simulation: model → conditions → problem → solve across every solver,
 # checked against closed forms (rigid translation, constant-kernel
 # aggregation, constant-rate breakage), mass balances and one frozen nonlinear
 # regression. Small meshes and short horizons keep the file fast; each
@@ -14,6 +14,10 @@ simulate_raw_moment(trajectory::CrystallisationSolution{<:QuadraturePopulation},
     trajectory.population.moments[order + 1, :]
 simulate_raw_moment(trajectory::CrystallisationSolution{<:MeshPopulation}, solver, order) =
     simulate_mesh_moment(trajectory, solver, order)
+# Solve over exactly the saved span, as most checks below save at both ends.
+simulate_saved_span(saveat) = (first(saveat), last(saveat))
+simulate_solve(model, conditions, solver; saveat, problem_settings...) =
+    solve(CrystallisationProblem(model, conditions, simulate_saved_span(saveat); problem_settings...), solver; saveat)
 
 @testset "Translation closed form on every solver" begin
     # Constant G = 1e-8 m/s for 100 s shifts the uniform [10, 20] µm seed by
@@ -32,8 +36,8 @@ simulate_raw_moment(trajectory::CrystallisationSolution{<:MeshPopulation}, solve
     for (solver, drop_rtol, d43_rtol) in ((MoM(), 1e-6, 1e-8), (QMOM(), 1e-5, 1e-6), (DQMOM(), 1e-5, 1e-6),
             (simulate_mesh_solvers[1], 5e-2, 1.5e-2), (simulate_mesh_solvers[2], 5e-2, 1.5e-2),
             (FiniteVol(meshsize = 160, lmax = 40e-6), 8e-3, 3e-3))
-        translation_trajectory = simulate(fixture_translation_model(), fixture_seeded_conditions();
-            solver, saveat = simulate_translation_times)
+        translation_trajectory = simulate_solve(fixture_translation_model(), fixture_seeded_conditions(), solver;
+            saveat = simulate_translation_times)
         @test maximum(abs.(translation_trajectory.concentration .- expected_concentration)) <=
               drop_rtol * concentration_drop
         @test translation_trajectory.d43 ≈ expected_d43 rtol = d43_rtol
@@ -50,14 +54,20 @@ simulate_raw_moment(trajectory::CrystallisationSolution{<:MeshPopulation}, solve
         end
     end
 
-    # The low-level parameter-vector interface agrees with simulate for the
-    # same configured problem, and a replaced parameter takes effect: doubling
-    # the speed doubles the shift (closed form at 2 µm).
-    translation_problem = CrystallisationProblem(fixture_translation_model(), fixture_seeded_conditions())
-    _, lowlevel_trajectory = runsimulation([0.02], translation_problem; save_idx = [0.0, 100.0])
-    @test lowlevel_trajectory.concentration[end] ≈ fixture_translation_concentration(100.0; speed = 0.02) rtol = 1e-9
-    @test simulate(translation_problem; saveat = [0.0, 100.0]).concentration[end] ≈ expected_concentration[end] rtol = 1e-9
-    @test_throws ArgumentError runsimulation([0.01, 0.0], translation_problem; save_idx = [0.0, 1.0])
+    # Replacing the kinetic values with remake takes effect: doubling the speed
+    # doubles the shift (closed form at 2 µm), and the problem's own values are kept.
+    translation_problem = CrystallisationProblem(fixture_translation_model(), fixture_seeded_conditions(), (0.0, 100.0))
+    remade_trajectory = solve(remake(translation_problem; p = [0.02]), MoM(); saveat = [0.0, 100.0])
+    @test remade_trajectory.concentration[end] ≈ fixture_translation_concentration(100.0; speed = 0.02) rtol = 1e-9
+    @test solve(translation_problem, MoM(); saveat = [0.0, 100.0]).concentration[end] ≈ expected_concentration[end] rtol = 1e-9
+    @test collect(kinetic_parameter_vector(translation_problem)) == [0.01]
+    @test_throws ArgumentError remake(translation_problem; p = [0.01, 0.0])
+    # A step saveat saves t0, every step and tf, as in OrdinaryDiffEq.
+    @test solve(translation_problem, MoM(); saveat = 40.0).t == [0.0, 40.0, 80.0, 100.0]
+    # Named access reads the same trajectories as the fields.
+    @test remade_trajectory[:concentration] == remade_trajectory.concentration
+    @test remade_trajectory[:d43] == remade_trajectory.d43
+    @test remade_trajectory.retcode == ReturnCode.Success && successful_retcode(remade_trajectory)
 end
 
 @testset "Seed descriptions become solver states" begin
@@ -72,9 +82,9 @@ end
                 (simulate_mesh_solvers[1], 5e-3, 5e-2), (simulate_mesh_solvers[2], 5e-3, 5e-2))
             # Zero speed keeps the compiled translation RHS but freezes the seed.
             seeded_problem = CrystallisationProblem(fixture_translation_model(speed = 0.0),
-                RunConditions(temperature = 293.15, concentration = 20.0, crystals = seed_description); solver)
-            seeded_start = simulate(seeded_problem; saveat = [0.0, 1.0])
-            seeded_mass = solver isa MoM ? 1000.0 * seeded_problem.initial_population[4] :
+                RunConditions(temperature = 293.15, concentration = 20.0, crystals = seed_description), (0.0, 1.0))
+            seeded_start = solve(seeded_problem, solver; saveat = [0.0, 1.0])
+            seeded_mass = solver isa MoM ? 1000.0 * CriSTool.DiscretisedProblem(seeded_problem, solver).initial_population[4] :
                           1000.0 * first(simulate_raw_moment(seeded_start, solver, 3))
             @test seeded_mass ≈ 0.25 rtol = mass_rtol
             @test seeded_start.d43 ≈ [12e-6, 12e-6] rtol = d43_rtol
@@ -94,8 +104,9 @@ end
     @test_throws TypeError DistributionInitialCrystals(LogNormal(log(12e-6), 0.2);
         mass_concentration = 0.25, weighting = :volume)
     distribution_conditions(seed_description) = RunConditions(temperature = 293.15, concentration = 20.0, crystals = seed_description)
-    @test CrystallisationProblem(fixture_translation_model(), distribution_conditions(number_seed)).initial_population ≈
-          CrystallisationProblem(fixture_translation_model(), distribution_conditions(volume_seed)).initial_population rtol = 1e-12
+    distribution_population(seed_description) = CriSTool.DiscretisedProblem(CrystallisationProblem(
+        fixture_translation_model(), distribution_conditions(seed_description), (0.0, 1.0)), MoM()).initial_population
+    @test distribution_population(number_seed) ≈ distribution_population(volume_seed) rtol = 1e-12
     @test DistributionInitialCrystals(Uniform(10e-6, 20e-6); mass_concentration = 0.25, weighting = VolumeWeighted()).d43 ≈
           15e-6 rtol = 1e-9
 
@@ -104,22 +115,22 @@ end
     # (cell integrals) and for moments.
     for solver in (simulate_mesh_solvers[1], MoM())
         unseeded_problem = CrystallisationProblem(fixture_translation_model(),
-            RunConditions(temperature = 293.15, concentration = 20.0); solver)
-        @test initial_state_from_characteristics(unseeded_problem, lognormal_seed) ==
-              CriSTool._get_initial_state(CrystallisationProblem(fixture_translation_model(),
-                  distribution_conditions(lognormal_seed); solver))
+            RunConditions(temperature = 293.15, concentration = 20.0), (0.0, 1.0))
+        @test initial_state_from_characteristics(unseeded_problem, solver, lognormal_seed) ==
+              CriSTool._get_initial_state(CriSTool.DiscretisedProblem(CrystallisationProblem(fixture_translation_model(),
+                  distribution_conditions(lognormal_seed), (0.0, 1.0)), solver))
     end
 
     # A single save time returns the initial state on every moment solver.
-    single_save_start = simulate(fixture_translation_model(), fixture_seeded_conditions();
-        solver = QMOM(), saveat = [0.0])
-    @test single_save_start.time == [0.0]
+    single_save_start = simulate_solve(fixture_translation_model(), fixture_seeded_conditions(), QMOM(); saveat = [0.0])
+    @test single_save_start.t == [0.0]
     @test single_save_start.concentration == [20.0]
     @test single_save_start.d43 ≈ [fixture_translation_d43(0.0)] rtol = 1e-10
 
     # An empty seed (zero mass) is a valid empty population.
-    empty_seed_start = simulate(fixture_translation_model(), RunConditions(temperature = 293.15, concentration = 18.0,
-        crystals = LogNormalInitialCrystals(mass_concentration = 0.0, d43 = 0.0, geometric_std = 1.25)); saveat = [0.0, 10.0])
+    empty_seed_start = simulate_solve(fixture_translation_model(), RunConditions(temperature = 293.15, concentration = 18.0,
+        crystals = LogNormalInitialCrystals(mass_concentration = 0.0, d43 = 0.0, geometric_std = 1.25)), MoM();
+        saveat = [0.0, 10.0])
     @test empty_seed_start.concentration == [18.0, 18.0]
 end
 
@@ -146,7 +157,7 @@ end
     # µ3 6e-3.
     for (solver, number_rtol, volume_rtol) in ((QMOM(), 1e-6, 1e-7), (DQMOM(), 1e-6, 1e-7),
             (simulate_mesh_solvers[1], 2e-4, 2e-2))
-        event_trajectory = simulate(event_model, fixture_seeded_conditions(); solver, saveat = simulate_translation_times)
+        event_trajectory = simulate_solve(event_model, fixture_seeded_conditions(), solver; saveat = simulate_translation_times)
         event_number = simulate_raw_moment(event_trajectory, solver, 0)
         @test event_number ≈ logistic_number.(event_number[1], simulate_translation_times) rtol = number_rtol
         @test simulate_raw_moment(event_trajectory, solver, 3) ≈ fill(fixture_seed_mass / 1000.0, 3) rtol = volume_rtol
@@ -164,16 +175,20 @@ end
     two_atom_weights = [1e10, 1e10]
     two_atom_model = CrystallisationModel(fixture_system;
         growth = EmpiricalGrowth(growth_coefficient = 1e-8, growth_order = 2.0))
-    two_atom_problem = CriSTool._problem_with_initial_values(
-        CrystallisationProblem(two_atom_model, RunConditions(temperature = 293.15, concentration = 20.0); solver = QMOM()),
+    # No seed description yields two atoms, so the raw moments replace the
+    # population block of the solve-time problem.
+    two_atom_configured = CrystallisationProblem(two_atom_model, RunConditions(temperature = 293.15, concentration = 20.0),
+        (0.0, 200.0))
+    two_atom_problem = CriSTool._problem_with_initial_values(CriSTool.DiscretisedProblem(two_atom_configured, QMOM()),
         [sum(two_atom_weights .* two_atom_nodes .^ order) for order in 0:5], (; concentration = 20.0))
-    two_atom_trajectory = simulate(two_atom_problem; saveat = collect(0.0:20.0:200.0))
+    two_atom_trajectory = CriSTool._solve_discretised(two_atom_problem, two_atom_configured.tspan,
+        two_atom_configured.p; saveat = collect(0.0:20.0:200.0))
     two_atom_rules = quadrature(two_atom_trajectory)
     @test all(rule -> rule.active_nodes == 2, two_atom_rules)
     @test all(rule -> isapprox(sort(rule.weights), two_atom_weights; rtol = 1e-6), two_atom_rules)
     @test all(rule -> isapprox(-(extrema(rule.nodes)...), -10e-6; rtol = 1e-6), two_atom_rules)
     @test two_atom_trajectory.concentration .+ 1000.0 .* two_atom_trajectory.population.moments[4, :] ≈
-          fill(20.09, length(two_atom_trajectory.time)) rtol = 1e-12
+          fill(20.09, length(two_atom_trajectory.t)) rtol = 1e-12
     # The atoms did move: C fell, so the measure is not frozen.
     @test two_atom_trajectory.concentration[end] < 19.99
 end
@@ -186,9 +201,9 @@ end
         growth = EmpiricalGrowth(growth_coefficient = 1e-8, growth_order = 1.0),
         dissolution = ArrheniusDissolution(dissolution_coefficient = 1e-6, activation_energy = 0.0, dissolution_order = 1.0))
     extinction_conditions = fixture_seeded_conditions(concentration = 5.0)
-    extinction_problem(solver) = CrystallisationProblem(extinction_model, extinction_conditions;
-        solver, solid_mass_concentration_threshold = 5e-4)
-    moment_extinction(end_time) = simulate(extinction_problem(MoM()); saveat = [0.0, end_time])
+    extinction_problem(end_time; solid_mass_concentration_threshold = 5e-4) = CrystallisationProblem(
+        extinction_model, extinction_conditions, (0.0, end_time); solid_mass_concentration_threshold)
+    moment_extinction(end_time) = solve(extinction_problem(end_time), MoM(); saveat = [0.0, end_time])
     moment_extinction_trajectory = moment_extinction(60.0)
     @test moment_extinction_trajectory.concentration[end] ≈ 5.25 rtol = 1e-10
     # The moment state is reset to an exactly empty population.
@@ -203,13 +218,13 @@ end
     # Extinction happens either through the solid-mass threshold (5e-4) or,
     # with the default 1e-12 threshold, through the last node's removal.
     for extinction_threshold in (5e-4, 1e-12)
-        quadrature_extinction = simulate(CrystallisationProblem(extinction_model, extinction_conditions;
-            solver = QMOM(), solid_mass_concentration_threshold = extinction_threshold); saveat = [0.0, 10.0, 30.0, 60.0])
+        quadrature_extinction = solve(extinction_problem(60.0; solid_mass_concentration_threshold = extinction_threshold),
+            QMOM(); saveat = [0.0, 10.0, 30.0, 60.0])
         @test quadrature_extinction.concentration[end] ≈ 5.25 rtol = 1e-12
         @test quadrature_extinction.concentration .+ 1000.0 .* quadrature_extinction.population.moments[4, :] ≈
-              fill(5.25, length(quadrature_extinction.time)) rtol = 1e-12
+              fill(5.25, length(quadrature_extinction.t)) rtol = 1e-12
         @test all(iszero, quadrature_extinction.final_state[1:6])
-        @test quadrature_extinction.concentration[findfirst(==(10.0), quadrature_extinction.time)] ≈
+        @test quadrature_extinction.concentration[findfirst(==(10.0), quadrature_extinction.t)] ≈
               moment_extinction(10.0).concentration[end] rtol = 1e-7
         # Without nucleation dissolution only removes nodes, one at a time.
         active_node_counts = [rule.active_nodes for rule in quadrature(quadrature_extinction)]
@@ -226,7 +241,7 @@ end
     # 0.25 kg/m³), and at 60 s the first-order tail still holds ≤ 1.2e-5
     # kg/m³, so C itself is within 0.2% of the seed mass of 5.25 (measured 0.1%).
     for mesh_solver in simulate_mesh_solvers
-        mesh_extinction = simulate(extinction_problem(mesh_solver); saveat = [0.0, 30.0, 60.0])
+        mesh_extinction = solve(extinction_problem(60.0), mesh_solver; saveat = [0.0, 30.0, 60.0])
         mesh_inventory = mesh_extinction.concentration .+
                          1000.0 .* simulate_mesh_moment(mesh_extinction, mesh_solver, 3)
         @test mesh_inventory ≈ fill(mesh_inventory[1], 3) rtol = 1e-11
@@ -236,7 +251,7 @@ end
     # boundary crossing (inside the run, where the other solvers report
     # extinction) and names the solvers that can dissolve completely.
     dqmom_extinction_error = try
-        simulate(extinction_model, extinction_conditions; solver = DQMOM(), saveat = [0.0, 60.0])
+        simulate_solve(extinction_model, extinction_conditions, DQMOM(); saveat = [0.0, 60.0])
         nothing
     catch caught_error
         caught_error
@@ -259,8 +274,8 @@ end
         nucleation = fixture_constant_nucleation(birth_rate = 1e10),
         growth = EmpiricalGrowth(growth_coefficient = 1e-8, growth_order = 1.0))
     for mesh_solver in simulate_mesh_solvers
-        growing_trajectory = simulate(growing_model, fixture_seeded_conditions(concentration = 20.0);
-            solver = mesh_solver, saveat = [0.0, 30.0, 60.0])
+        growing_trajectory = simulate_solve(growing_model, fixture_seeded_conditions(concentration = 20.0), mesh_solver;
+            saveat = [0.0, 30.0, 60.0])
         growing_inventory = growing_trajectory.concentration .+
                             1000.0 .* simulate_mesh_moment(growing_trajectory, mesh_solver, 3)
         # Guard against a vacuous invariant: solute is really consumed.
@@ -275,13 +290,13 @@ end
     # independently frozen WENO-era fixture (11.017412693766), so these
     # numbers guard nonlinear nucleation-growth kinetics end to end.
     lysozyme_times = [0.0, 3600.0, 7200.0]
-    lysozyme_trajectory = simulate(fixture_lysozyme_model, fixture_lysozyme_conditions; saveat = lysozyme_times)
+    lysozyme_trajectory = simulate_solve(fixture_lysozyme_model, fixture_lysozyme_conditions, MoM(); saveat = lysozyme_times)
     @test lysozyme_trajectory.concentration ≈ [18.0, 16.03303066517201, 11.017412694123134] rtol = 1e-7
     @test lysozyme_trajectory.d43[2:3] ≈ [1.102526806574247e-5, 1.5618879025512232e-5] rtol = 1e-6
     # Moment closure identity: (µ0, µ1, µ2, C) is closed, so tracking only
     # µ0..µ2 gives the same concentration; d43 needs µ4 and is NaN without it.
-    closure_trajectory = simulate(fixture_lysozyme_model, fixture_lysozyme_conditions;
-        solver = MoM(nmoments = 2), saveat = lysozyme_times)
+    closure_trajectory = simulate_solve(fixture_lysozyme_model, fixture_lysozyme_conditions, MoM(nmoments = 2);
+        saveat = lysozyme_times)
     @test closure_trajectory.concentration ≈ lysozyme_trajectory.concentration rtol = 1e-8
     @test all(isnan, closure_trajectory.d43)
 end
@@ -297,7 +312,7 @@ CriSTool.saturation_concentration(solubility::SimulateLinearSolubility, temperat
 
 struct SimulateLinearGrowth <: AbstractScalarGrowthFunction end
 CriSTool.paramaxis(::SimulateLinearGrowth) = CriSTool.ComponentArrays.Axis(linear_growth_coefficient = 1)
-CriSTool.growthrate(::SimulateLinearGrowth, kinetic_parameters, configured_run::CrystallisationProblem, ode_state, elapsed_time) =
+CriSTool.growthrate(::SimulateLinearGrowth, kinetic_parameters, configured_run, ode_state, elapsed_time) =
     kinetic_parameters[1] * (supersaturation(configured_run, ode_state, elapsed_time) - 1)
 
 @testset "Custom solubility, kinetic law and solvent species" begin
@@ -315,14 +330,16 @@ CriSTool.growthrate(::SimulateLinearGrowth, kinetic_parameters, configured_run::
     end
     custom_conditions = RunConditions(temperature = 303.15, concentration = 10.0, solvent = (; tracer = 1.0),
         crystals = fixture_uniform_seed())
-    custom_problem = CrystallisationProblem(custom_model, custom_conditions; solvent_dynamics = tracer_dynamics)
-    custom_trajectory = simulate(custom_problem; saveat = [0.0, 50.0, 400.0])
+    custom_problem = CrystallisationProblem(custom_model, custom_conditions, (0.0, 400.0); solvent_dynamics = tracer_dynamics)
+    custom_trajectory = solve(custom_problem, MoM(); saveat = [0.0, 50.0, 400.0])
     # dC/dt ≈ -3ρkv·k·µ2·(C/9.5 - 1) gives a relaxation time ≲ 20 s, so after
     # 400 s the solute sits at the custom solubility (residual ~e^{-20}).
     @test custom_trajectory.concentration[end] ≈ 9.5 rtol = 1e-6
     @test observable_values(custom_trajectory, :tracer) ≈
           1.0 .- 1e4 .* (custom_trajectory.d10 .- custom_trajectory.d10[1]) rtol = 1e-6
+    @test custom_trajectory[:tracer] == observable_values(custom_trajectory, :tracer)
     @test_throws ArgumentError observable_values(custom_trajectory, :unknown_species)
+    @test_throws ArgumentError custom_trajectory[:unknown_species]
 
     # Extra material properties reach callable laws through the context:
     # a speed stored on the system reproduces the translation closed form,
@@ -331,29 +348,31 @@ CriSTool.growthrate(::SimulateLinearGrowth, kinetic_parameters, configured_run::
         volume_shape_factor = 1.0, properties = (; seed_translation_speed = 1e-8))
     property_growth(required_names) = CallableGrowth((rate_values, rate_context) -> system_properties(rate_context).seed_translation_speed;
         parameters = (;), required = required_names)
-    property_trajectory = simulate(CrystallisationModel(property_system;
-        growth = property_growth((:seed_translation_speed,))), fixture_seeded_conditions(); saveat = [0.0, 100.0])
+    property_trajectory = simulate_solve(CrystallisationModel(property_system;
+        growth = property_growth((:seed_translation_speed,))), fixture_seeded_conditions(), MoM(); saveat = [0.0, 100.0])
     @test property_trajectory.concentration[end] ≈ fixture_translation_concentration(100.0) rtol = 1e-9
     propertyless_model = CrystallisationModel(fixture_system;
         growth = property_growth((:seed_translation_speed,)))
-    @test_throws ArgumentError CrystallisationProblem(propertyless_model, fixture_seeded_conditions())
+    @test_throws ArgumentError CrystallisationProblem(propertyless_model, fixture_seeded_conditions(), (0.0, 1.0))
 
     # Solvent dynamics also apply to an empty population: a constant rate of
     # -1 kg/m³/s over 2 s, integrated with fixed Runge-Kutta steps, is exact.
     draining_problem = CrystallisationProblem(fixture_translation_model(speed = 0.0),
-        RunConditions(temperature = 293.15, concentration = 20.0);
+        RunConditions(temperature = 293.15, concentration = 20.0), (0.0, 2.0);
         solvent_dynamics = (configured_run, ode_state, elapsed_time, growth_rate) -> (; concentration = -1.0))
     euler_options(iteration_budget) = (; dt = 0.25, adaptive = false, maxiters = iteration_budget)
-    drained_trajectory = simulate(draining_problem; saveat = [0.0, 2.0], algorithm = Tsit5(),
+    drained_trajectory = solve(draining_problem, MoM(); saveat = [0.0, 2.0], alg = Tsit5(),
         solve_options = euler_options(8))
-    @test drained_trajectory.success
+    @test drained_trajectory.retcode == ReturnCode.Success
     @test drained_trajectory.concentration ≈ [20.0, 18.0] atol = 1e-12
     # Eight steps are needed; a budget of four fails and is reported, not thrown.
-    @test !simulate(draining_problem; saveat = [0.0, 2.0], algorithm = Tsit5(),
-        solve_options = euler_options(4)).success
+    starved_trajectory = solve(draining_problem, MoM(); saveat = [0.0, 2.0], alg = Tsit5(),
+        solve_options = euler_options(4))
+    @test starved_trajectory.retcode == ReturnCode.MaxIters
+    @test !successful_retcode(starved_trajectory)
     # Options owned by the package are refused instead of silently overridden.
-    @test_throws ArgumentError simulate(draining_problem; saveat = [0.0, 2.0], solve_options = (; callback = nothing))
-    @test_throws ArgumentError simulate(draining_problem; saveat = [0.0, 2.0], solve_options = (; save_idxs = [1]))
+    @test_throws ArgumentError solve(draining_problem, MoM(); saveat = [0.0, 2.0], solve_options = (; callback = nothing))
+    @test_throws ArgumentError solve(draining_problem, MoM(); saveat = [0.0, 2.0], solve_options = (; save_idxs = [1]))
 end
 
 @testset "WENO applies a solve-local physical timestep cap" begin
@@ -365,31 +384,33 @@ end
     accepted_times = Float64[]
     step_observer = odeproblem -> CriSTool.DiscreteCallback((ode_state, elapsed_time, integrator) -> true,
         integrator -> push!(accepted_times, integrator.t); save_positions = (false, false))
-    function largest_accepted_step(cfl_problem; saveat = [0.0, 100.0], solve_options = (;))
+    function largest_accepted_step(cfl_problem, cfl_solver; saveat = [0.0, 100.0], solve_options = (;))
         empty!(accepted_times)
         push!(accepted_times, 0.0)
-        cfl_trajectory = simulate(cfl_problem; saveat, callback_factory = step_observer, solve_options)
+        cfl_trajectory = solve(remake(cfl_problem; tspan = simulate_saved_span(saveat)), cfl_solver;
+            saveat, callback_factory = step_observer, solve_options)
         @test cfl_trajectory.concentration == fill(2.0, length(saveat))
         return maximum(diff(accepted_times))
     end
     for transport_speed in (1.0, -1.0)
         cfl_problem = CrystallisationProblem(
             CrystallisationModel(cfl_system; growth = fixture_constant_growth(speed = transport_speed)),
-            cfl_conditions; solver = WENO(meshsize = 10, lmax = 100e-6, timestepping_algorithm = transport_speed < 0 ? SSPRK43() : nothing))
-        @test largest_accepted_step(cfl_problem) <= 9.0 + 1e-12
+            cfl_conditions, (0.0, 100.0))
+        cfl_solver = WENO(meshsize = 10, lmax = 100e-6, timestepping_algorithm = transport_speed < 0 ? SSPRK43() : nothing)
+        @test largest_accepted_step(cfl_problem, cfl_solver) <= 9.0 + 1e-12
         # A tighter user dtmax wins; it must not leak into the next solve.
-        @test largest_accepted_step(cfl_problem; solve_options = (; dtmax = 2.0)) <= 2.0 + 1e-12
-        @test 2.0 < largest_accepted_step(cfl_problem) <= 9.0 + 1e-12
+        @test largest_accepted_step(cfl_problem, cfl_solver; solve_options = (; dtmax = 2.0)) <= 2.0 + 1e-12
+        @test 2.0 < largest_accepted_step(cfl_problem, cfl_solver) <= 9.0 + 1e-12
         # A fixed user dt larger than the cap is still capped.
-        @test largest_accepted_step(cfl_problem; solve_options = (; adaptive = false, dt = 50.0)) <= 9.0 + 1e-12
+        @test largest_accepted_step(cfl_problem, cfl_solver; solve_options = (; adaptive = false, dt = 50.0)) <= 9.0 + 1e-12
     end
     # Length-dependent G = 2 µm/s · L/10 µm peaks at the last centre (95 µm):
     # Gmax = 19 µm/s, cap 9/19 s.
     length_cfl_problem = CrystallisationProblem(CrystallisationModel(cfl_system;
             growth = CallableLengthGrowth((rate_values, rate_context, crystal_length) ->
                 rate_values.speed * 1e-6 * 2 * crystal_length / 10e-6; parameters = (; speed = 1.0))),
-        cfl_conditions; solver = WENO(meshsize = 10, lmax = 100e-6))
-    @test largest_accepted_step(length_cfl_problem; saveat = [0.0, 10.0]) <= 9 / 19 + 1e-12
+        cfl_conditions, (0.0, 10.0))
+    @test largest_accepted_step(length_cfl_problem, WENO(meshsize = 10, lmax = 100e-6); saveat = [0.0, 10.0]) <= 9 / 19 + 1e-12
 end
 
 @testset "Input contracts that guard user mistakes" begin
@@ -401,26 +422,35 @@ end
     # CNT needs a molecular volume the fixture system does not define.
     @test_throws ArgumentError CrystallisationProblem(CrystallisationModel(fixture_system;
         nucleation = CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4), growth = fixture_constant_growth()),
-        fixture_seeded_conditions())
+        fixture_seeded_conditions(), (0.0, 1.0))
     # Missing concentration is an unresolved observation placeholder.
-    @test_throws ArgumentError CrystallisationProblem(fixture_translation_model(), RunConditions(temperature = 293.15))
+    @test_throws ArgumentError CrystallisationProblem(fixture_translation_model(), RunConditions(temperature = 293.15), (0.0, 1.0))
     @test_throws ArgumentError RunConditions(temperature = 293.15, concentration = 20.0, solvent = (; concentration = 20.0))
-    # The seed comes from the conditions; a raw state override is refused.
-    @test_throws ArgumentError CrystallisationProblem(fixture_translation_model(), fixture_seeded_conditions(); initial_state = zeros(6))
+    # The seed comes from the conditions and the solver from solve; both overrides are refused.
+    @test_throws ArgumentError CrystallisationProblem(fixture_translation_model(), fixture_seeded_conditions(), (0.0, 1.0);
+        initial_state = zeros(6))
+    @test_throws ArgumentError CrystallisationProblem(fixture_translation_model(), fixture_seeded_conditions(), (0.0, 1.0);
+        solver = MoM())
+    contract_problem = CrystallisationProblem(fixture_translation_model(), fixture_seeded_conditions(), (0.0, 1.0))
     # Seeds: negative support, and a mesh that would drop most of the seed.
     @test_throws ArgumentError DistributionInitialCrystals(Normal(12e-6, 1e-6); mass_concentration = 0.25)
-    @test_throws ArgumentError CrystallisationProblem(fixture_translation_model(), fixture_seeded_conditions();
-        solver = FiniteVol(meshsize = 40, lmax = 13e-6))
-    @test_throws ArgumentError CrystallisationProblem(fixture_translation_model(), RunConditions(temperature = 293.15,
-        concentration = 20.0, crystals = LogNormalInitialCrystals(mass_concentration = 0.25, d43 = 12e-6, geometric_std = 1.0)))
+    @test_throws ArgumentError solve(contract_problem, FiniteVol(meshsize = 40, lmax = 13e-6); saveat = [0.0, 1.0])
+    @test_throws ArgumentError solve(CrystallisationProblem(fixture_translation_model(), RunConditions(temperature = 293.15,
+        concentration = 20.0, crystals = LogNormalInitialCrystals(mass_concentration = 0.25, d43 = 12e-6, geometric_std = 1.0)),
+        (0.0, 1.0)), MoM())
     # Length-dependent laws need a size coordinate: no MoM.
-    @test_throws ArgumentError CrystallisationProblem(CrystallisationModel(fixture_system;
+    @test_throws ArgumentError solve(CrystallisationProblem(CrystallisationModel(fixture_system;
         growth = CallableLengthGrowth((rate_values, rate_context, crystal_length) -> rate_values.speed * 1e-6;
-            parameters = (; speed = 0.01))), fixture_seeded_conditions())
+            parameters = (; speed = 0.01))), fixture_seeded_conditions(), (0.0, 1.0)), MoM())
     # DQMOM has no empty-population representation.
-    @test_throws ArgumentError simulate(fixture_translation_model(), RunConditions(temperature = 293.15, concentration = 20.0);
-        solver = DQMOM(), saveat = [0.0, 1.0])
-    # Save times must be nonnegative and strictly increasing.
-    @test_throws ArgumentError simulate(fixture_translation_model(), fixture_seeded_conditions(); saveat = [10.0, 5.0])
-    @test_throws ArgumentError simulate(fixture_translation_model(), fixture_seeded_conditions(); saveat = [-1.0, 5.0])
+    @test_throws ArgumentError simulate_solve(fixture_translation_model(), RunConditions(temperature = 293.15, concentration = 20.0),
+        DQMOM(); saveat = [0.0, 1.0])
+    # The span is finite, nonnegative and ordered; save times are strictly
+    # increasing inside it, and a save step is positive.
+    @test_throws ArgumentError CrystallisationProblem(fixture_translation_model(), fixture_seeded_conditions(), (10.0, 5.0))
+    @test_throws ArgumentError CrystallisationProblem(fixture_translation_model(), fixture_seeded_conditions(), (-1.0, 5.0))
+    @test_throws ArgumentError CrystallisationProblem(fixture_translation_model(), fixture_seeded_conditions(), 5.0)
+    @test_throws ArgumentError solve(contract_problem, MoM(); saveat = [1.0, 0.5])
+    @test_throws ArgumentError solve(contract_problem, MoM(); saveat = [0.0, 2.0])
+    @test_throws ArgumentError solve(contract_problem, MoM(); saveat = 0.0)
 end

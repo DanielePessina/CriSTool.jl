@@ -79,7 +79,7 @@ data live in `population` (`MeshPopulation`, `MomentPopulation` or
 `QuadraturePopulation`); everything else is common.
 
 Fields:
-- `time`: saved times (s).
+- `t`: saved times (s).
 - `concentration`: solute concentration trajectory (kg/m³), also available as
   `solvent_state.concentration`.
 - `population`: solver-specific population trajectory.
@@ -92,15 +92,18 @@ Fields:
   of the size domain.
 - `final_state`: the public numerical state at the last saved time.
 - `ode_stats`: ODE solver statistics.
-- `success`: whether the ODE solve finished successfully.
+- `retcode::ReturnCode.T`: return code of the ODE solve; check it with
+  `successful_retcode(solution)`.
 
-Use `state_vars`, `size_metrics`, `reactor_vars` and `observable_values` for
-named access that does not depend on the solver.
+Named access does not depend on the solver: `solution[:concentration]`,
+`solution[:d43]`, `solution[:d50q]` or any solvent-state name index the
+trajectories, as do `state_vars`, `size_metrics`, `reactor_vars` and
+`observable_values`.
 """
 struct CrystallisationSolution{Population <: AbstractPopulationTrajectory, TTime, TConcentration,
                                TSize, TSolvent <: NamedTuple, TReactor <: NamedTuple,
                                TFinal, TStats} <: AbstractSolution
-    time::TTime
+    t::TTime
     concentration::TConcentration
     population::Population
     d10::TSize
@@ -111,5 +114,5 @@ struct CrystallisationSolution{Population <: AbstractPopulationTrajectory, TTime
     reactor_state::TReactor
     final_state::TFinal
     ode_stats::TStats
-    success::Bool
+    retcode::SciMLBase.ReturnCode.T
 end

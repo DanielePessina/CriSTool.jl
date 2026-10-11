@@ -60,27 +60,28 @@ end
 @testset "FiniteVol (30 cells) final concentration gradient" begin
     # Tight solve tolerances: the finite-difference reference differences two adaptive
     # solves, so the default reltol (1e-4) would put step-size noise into the oracle.
-    finite_volume_problem = CrystallisationProblem(fixture_lysozyme_model, fixture_lysozyme_conditions;
-        solver = FiniteVol(meshsize = 30, lmax = 50e-6, reltol = 1e-10, abstol = 1e-14))
-    finite_volume_objective = scaled_values -> last(runsimulation(gradient_lysozyme_values(scaled_values),
-        finite_volume_problem; save_idx = [0.0, 7200.0, 14400.0])).concentration[end]
+    finite_volume_problem = CrystallisationProblem(fixture_lysozyme_model, fixture_lysozyme_conditions, (0.0, 14400.0))
+    finite_volume_solver = FiniteVol(meshsize = 30, lmax = 50e-6, reltol = 1e-10, abstol = 1e-14)
+    finite_volume_objective = scaled_values -> solve(remake(finite_volume_problem;
+        p = gradient_lysozyme_values(scaled_values)), finite_volume_solver;
+        saveat = [0.0, 7200.0, 14400.0]).concentration[end]
     @test DI.gradient(finite_volume_objective, gradient_forward_backend, gradient_lysozyme_scaled_point) ≈
           DI.gradient(finite_volume_objective, gradient_difference_backend, gradient_lysozyme_scaled_point) rtol = 1e-3 atol = 1e-8
 end
 
 @testset "Time-resolved sensitivity dC(t)/dθ (MoM) equals finite differences" begin
-    # Forward sensitivities are ForwardDiff through `runsimulation`: one Jacobian
-    # row per save time, one column per parameter.
-    sensitivity_problem = CrystallisationProblem(fixture_lysozyme_model,
-        RunConditions(temperature = 290.15, concentration = 14.67))
+    # Forward sensitivities are ForwardDiff through `solve(remake(problem; p))`:
+    # one Jacobian row per save time, one column per parameter.
     sensitivity_times = [0.0, 3600.0, 7200.0, 10800.0]
+    sensitivity_problem = CrystallisationProblem(fixture_lysozyme_model,
+        RunConditions(temperature = 290.15, concentration = 14.67), (0.0, last(sensitivity_times)))
     sensitivity_values = collect(kinetic_parameter_vector(sensitivity_problem))
     # Only the O(1) parameters (ln prefactor, growth order) are differenced directly.
     sensitivity_indices = [1, 4]
     function concentration_trajectory_of(order_one_values)
         kinetic_values = collect(eltype(order_one_values), sensitivity_values)
         kinetic_values[sensitivity_indices] = order_one_values
-        return last(runsimulation(kinetic_values, sensitivity_problem; save_idx = sensitivity_times)).concentration
+        return solve(remake(sensitivity_problem; p = kinetic_values), MoM(); saveat = sensitivity_times).concentration
     end
     sensitivity_point = sensitivity_values[sensitivity_indices]
     forward_jacobian = DI.jacobian(concentration_trajectory_of, gradient_forward_backend, sensitivity_point)
@@ -97,13 +98,12 @@ end
     # With no outflow every seed crystal stays: C V = C0 V0 + F Cf t − V0 m0 (E[(L+Gt)^3]/E[L^3] − 1).
     fed_batch_volume, fed_batch_inflow, fed_batch_time = 2.0, 0.002, 1000.0
     fed_batch_problem = CrystallisationProblem(fixture_translation_model(),
-        fixture_seeded_conditions(operation = fixture_fed_batch(inflow = fed_batch_inflow));
-        solver = MoM(reltol = 1e-12, abstol = 1e-20))
+        fixture_seeded_conditions(operation = fixture_fed_batch(inflow = fed_batch_inflow)), (0.0, fed_batch_time))
     fed_batch_closed_form(trial_speed) = (20.0 * fed_batch_volume + fed_batch_inflow * 2.0 * fed_batch_time -
         fed_batch_volume * fixture_seed_mass * (fixture_uniform_moment(3, trial_speed * 1e-6 * fed_batch_time) /
         fixture_uniform_moment(3) - 1)) / (fed_batch_volume + fed_batch_inflow * fed_batch_time)
-    fed_batch_concentration(trial_speed) = last(runsimulation([trial_speed], fed_batch_problem;
-        save_idx = [0.0, fed_batch_time])).concentration[end]
+    fed_batch_concentration(trial_speed) = solve(remake(fed_batch_problem; p = [trial_speed]),
+        MoM(reltol = 1e-12, abstol = 1e-20); saveat = [0.0, fed_batch_time]).concentration[end]
     @test fed_batch_concentration(0.01) ≈ fed_batch_closed_form(0.01) rtol = 1e-9
     @test DI.derivative(fed_batch_concentration, gradient_forward_backend, 0.01) ≈
           ForwardDiff.derivative(fed_batch_closed_form, 0.01) rtol = 1e-7
@@ -113,14 +113,14 @@ end
     # Clear feed Cf, residence time tau: C = Cf + (C0 − Cf + m0 − m0 E[(L+Gt)^3]/E[L^3]) e^{−t/tau}.
     msmpr_time = 4.0
     msmpr_problem = CrystallisationProblem(fixture_translation_model(),
-        fixture_seeded_conditions(operation = fixture_msmpr());
-        solver = DQMOM(nquadrature = 3, coordinate_scale = 1e-6, weight_scale = 1e12, reltol = 1e-10, abstol = 1e-12))
+        fixture_seeded_conditions(operation = fixture_msmpr()), (0.0, msmpr_time))
+    msmpr_solver = DQMOM(nquadrature = 3, coordinate_scale = 1e-6, weight_scale = 1e12, reltol = 1e-10, abstol = 1e-12)
     msmpr_residence = 2.0 / 0.2
     msmpr_closed_form(trial_speed) = 2.0 + (20.0 - 2.0 - fixture_seed_mass *
         (fixture_uniform_moment(3, trial_speed * 1e-6 * msmpr_time) / fixture_uniform_moment(3) - 1)) *
         exp(-msmpr_time / msmpr_residence)
-    msmpr_concentration(trial_values) = last(runsimulation(trial_values, msmpr_problem;
-        save_idx = [0.0, msmpr_time])).concentration[end]
+    msmpr_concentration(trial_values) = solve(remake(msmpr_problem; p = trial_values), msmpr_solver;
+        saveat = [0.0, msmpr_time]).concentration[end]
     @test msmpr_concentration([1.0]) ≈ msmpr_closed_form(1.0) rtol = 1e-7
     @test only(DI.gradient(msmpr_concentration, gradient_forward_backend, [1.0])) ≈
           ForwardDiff.derivative(msmpr_closed_form, 1.0) rtol = 1e-5
@@ -134,21 +134,21 @@ end
         CrystallisationModel(fixture_system; growth = fixture_constant_growth(),
             aggregation = ConstantAggregation(log10_aggregation_coefficient = -13.0),
             breakage = UniformBreakage(ln_breakage_coefficient = -12.0, breakage_size_exponent = 1.0)),
-        fixture_seeded_conditions(); solver = QMOM(reltol = 1e-10, abstol = 1e-12))
-    binary_d43(binary_coefficients) = 1e6 * last(runsimulation(
-        [0.01, binary_coefficients[1], binary_coefficients[2], 1.0], binary_problem;
-        save_idx = [0.0, 200.0])).d43[end]
+        fixture_seeded_conditions(), (0.0, 200.0))
+    binary_d43(binary_coefficients) = 1e6 * solve(remake(binary_problem;
+            p = [0.01, binary_coefficients[1], binary_coefficients[2], 1.0]),
+        QMOM(reltol = 1e-10, abstol = 1e-12); saveat = [0.0, 200.0]).d43[end]
     binary_point = [-13.0, -12.0]
     @test DI.gradient(binary_d43, gradient_forward_backend, binary_point) ≈
           DI.gradient(binary_d43, gradient_difference_backend, binary_point) rtol = 1e-6
 end
 
 @testset "WENO (30 cells) seeded transport gradient" begin
-    weno_problem = CrystallisationProblem(fixture_translation_model(), fixture_seeded_conditions();
-        solver = WENO(meshsize = 30, lmax = 40e-6, reltol = 1e-6, abstol = 1e-10))
     weno_time = 20.0
-    weno_concentration(trial_values) = last(runsimulation(trial_values, weno_problem;
-        save_idx = [0.0, weno_time])).concentration[end]
+    weno_problem = CrystallisationProblem(fixture_translation_model(), fixture_seeded_conditions(), (0.0, weno_time))
+    weno_solver = WENO(meshsize = 30, lmax = 40e-6, reltol = 1e-6, abstol = 1e-10)
+    weno_concentration(trial_values) = solve(remake(weno_problem; p = trial_values), weno_solver;
+        saveat = [0.0, weno_time]).concentration[end]
     weno_forward = DI.gradient(weno_concentration, gradient_forward_backend, [0.1])
     @test weno_forward ≈ DI.gradient(weno_concentration, gradient_difference_backend, [0.1]) rtol = 2e-5
     # The 30-cell discretisation only approximates the moving seed, so the
@@ -161,13 +161,13 @@ end
     # Nucleation into an empty mesh leaves a WENO tail of ~1e-160 densities;
     # dual solves used to stop there as `Unstable` and return a zero gradient.
     # Default solver tolerances, so the finite-difference oracle is loose.
-    empty_start_problem = CrystallisationProblem(fixture_lysozyme_model, fixture_lysozyme_conditions;
-        solver = WENO(meshsize = 200))
     empty_start_times = collect(0.0:300.0:14400.0)
+    empty_start_problem = CrystallisationProblem(fixture_lysozyme_model, fixture_lysozyme_conditions,
+        (0.0, last(empty_start_times)))
     empty_start_concentration(scaled_values) = begin
-        trajectory = last(runsimulation(gradient_lysozyme_values(scaled_values), empty_start_problem;
-            save_idx = empty_start_times))
-        trajectory.success || error("WENO solve failed")
+        trajectory = solve(remake(empty_start_problem; p = gradient_lysozyme_values(scaled_values)),
+            WENO(meshsize = 200); saveat = empty_start_times)
+        successful_retcode(trajectory) || error("WENO solve failed")
         trajectory.concentration[end]
     end
     @test DI.gradient(empty_start_concentration, gradient_forward_backend, gradient_lysozyme_scaled_point) ≈
@@ -197,12 +197,12 @@ end
 
 @testset "Rate-kernel gradients (length growth, binary moment sources)" begin
     kernel_mesh = [0.5e-6, 1.0e-6, 2.0e-6]
-    kernel_problem = CrystallisationProblem(CrystallisationModel(
+    kernel_problem = CriSTool.DiscretisedProblem(CrystallisationProblem(CrystallisationModel(
             LysozymeSystem(saturation_model = ConstantSolubility(10.0));
             growth = EmpiricalLengthGrowth(Lref = 1e-6, growth_coefficient = 3e-8, growth_order = 1.4,
                 size_dependence_coefficient = 0.45, size_dependence_exponent = 1.3)),
-        RunConditions(temperature = 293.15, concentration = 10.0);
-        solver = FiniteVol(meshsize = length(kernel_mesh), lmax = 3e-6))
+        RunConditions(temperature = 293.15, concentration = 10.0), (0.0, 1.0)),
+        FiniteVol(meshsize = length(kernel_mesh), lmax = 3e-6))
     kernel_state = [zeros(length(kernel_mesh)); 15.0]
     function length_growth_objective(growth_values)
         growth_destination = similar(kernel_mesh, eltype(growth_values))

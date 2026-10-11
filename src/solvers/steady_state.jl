@@ -7,8 +7,8 @@
 Settings for an MSMPR steady-state relaxation, validated on construction.
 
 - `relaxation_horizon` (s): longest relaxation time; `nothing` uses 100
-  residence times in `solve_steadystate` and the template ODE span in prepared
-  inference.
+  residence times in a direct steady solve and the template ODE span in
+  prepared inference.
 - `minimum_relaxation` (s): earliest time at which the residual stop may fire.
 - `residual_reltol`, `residual_abstol`: the run is converged when every scaled
   RHS component is at most their sum.
@@ -69,7 +69,7 @@ end
 Result of relaxing an autonomous MSMPR to a numerically checked steady state.
 
 `steady.equilibrium` holds the equilibrium values as one named tuple:
-`time`, `concentration`, `d43`, `d32`, other solvent and size scalars, and
+`t`, `concentration`, `d43`, `d32`, other solvent and size scalars, and
 population vectors such as `moments` or `numberdensity`. The underlying
 one-sample physical solver result is `steady.solution`; `observable_values`,
 `state_vars` and `size_metrics` return its one-sample trajectories, so a
@@ -83,12 +83,16 @@ Fields:
 - `hydraulics`: `(; volume, inflow, outflow, residence_time)`.
 - `product`: `(; dissolved_solute_flow, solid_mass_flow)` outlet flows (kg/s).
 - `diagnostics`: convergence (`converged`, residual norms and limit), physical
-  state, total-API balance and integration details. For discretised solvers,
+  state, total-API balance and integration details, including the relaxation
+  solve's own `ode_retcode`. For discretised solvers,
   `population_density_diagnostics` records the raw density minimum, peak scale,
   negative-cell count and machine-roundoff tolerance; accepted undershoots stay
   in the raw state and are labeled in `physical_state_status`.
-- `ode_stats`, `retcode`: from the relaxation solve.
-- `success`: solver, residual, physical and balance checks all passed.
+- `ode_stats`: from the relaxation solve.
+- `retcode::ReturnCode.T`: `Success` when the solver, residual, physical and
+  balance checks all passed; otherwise the failed relaxation solve's own code,
+  `MaxIters` when the residual did not converge within the relaxation
+  horizon, or `Failure` when the physical state or flow balance is invalid.
 """
 @concrete struct CrystallisationSteadyStateSolution <: AbstractSolution
     solution
@@ -99,8 +103,22 @@ Fields:
     product
     diagnostics
     ode_stats
-    retcode
-    success::Bool
+    retcode::SciMLBase.ReturnCode.T
+end
+
+"""
+    _steady_retcode(ode_retcode, converged, physical_valid, balance_valid)
+
+Return code of a steady relaxation: the ODE code when the integration failed,
+`MaxIters` when the horizon ran out before the residual converged, `Failure`
+for an invalid physical state or flow balance, and `Success` otherwise.
+"""
+function _steady_retcode(ode_retcode::SciMLBase.ReturnCode.T, converged::Bool,
+                         physical_valid::Bool, balance_valid::Bool)
+    SciMLBase.successful_retcode(ode_retcode) || return ode_retcode
+    converged || return SciMLBase.ReturnCode.MaxIters
+    physical_valid && balance_valid || return SciMLBase.ReturnCode.Failure
+    return SciMLBase.ReturnCode.Success
 end
 
 """A direct steady solve ended without a validated physical equilibrium."""
@@ -126,7 +144,7 @@ _steady_point_value(value) = value
 # Equilibrium values of a one-sample solution: `time`, the solvent and reactor
 # variables, population arrays as vectors and size metrics as scalars.
 _equilibrium_values(endpoint_solution) =
-    map(_steady_point_value, merge((; time = endpoint_solution.time), state_vars(endpoint_solution),
+    map(_steady_point_value, merge((; t = endpoint_solution.t), state_vars(endpoint_solution),
                                    size_metrics(endpoint_solution)))
 
 state_vars(steady::CrystallisationSteadyStateSolution) = state_vars(steady.solution)
@@ -142,7 +160,7 @@ Resolved population fields keep their population-by-time matrix shape.
 observable_values(steady::CrystallisationSteadyStateSolution, name::Symbol) =
     observable_values(steady.solution, name)
 
-function _steady_state_autonomy_issues(problem::CrystallisationProblem)
+function _steady_state_autonomy_issues(problem::DiscretisedProblem)
     operation = problem.operation
     issues = Symbol[]
     _is_time_invariant(operation.inflow) || push!(issues, :inflow)
@@ -165,11 +183,11 @@ function _steady_state_autonomy_issues(problem::CrystallisationProblem)
     return unique(issues)
 end
 
-function _validate_steadystate_problem(problem::CrystallisationProblem;
+function _validate_steadystate_problem(problem::DiscretisedProblem;
                                        autonomous::Bool = false)
     problem.operation isa MSMPROperation ||
-        throw(ArgumentError("solve_steadystate only supports fixed-volume MSMPROperation problems."))
-    _validate_crystallisation_problem(problem)
+        throw(ArgumentError("A steady-state solve only supports fixed-volume MSMPROperation problems."))
+    _validate_discretised_problem(problem)
     flow = operation_flows(problem.operation, 0.0).inflow
     flow > 0.0 ||
         throw(ArgumentError("A steady MSMPR solve requires a strictly positive constant inflow."))
@@ -460,19 +478,19 @@ _default_steady_relaxation_horizon(problem) =
     100.0 * (problem.operation.volume / operation_flows(problem.operation, 0.0).inflow)
 
 """
-    _solve_steadystate_ode(problem, ode_problem, algorithm;
+    _steady_relaxation_solve(problem, ode_problem, algorithm;
                            steady_options=SteadyStateOptions(), solve_options=(;),
                            callback_factory=nothing)
 
 Internal prepared-loss entry point. `ode_problem` is authoritative: in
 particular, its `p` may be a candidate-specific `ComponentArray` with Dual
 values. Without an explicit `relaxation_horizon` the ODE span is the horizon.
-The returned result records failure in `success` and `diagnostics` instead of
-discarding the solver retcode. Callers validate `problem` with
-`_validate_steadystate_problem` once: `solve_steadystate` per call, prepared
-inference when it builds the run template.
+The returned result records failure in `retcode` and `diagnostics` instead of
+throwing. Callers validate `problem` with `_validate_steadystate_problem` once:
+a direct steady `solve` per call, prepared inference when it builds the run
+template.
 """
-function _solve_steadystate_ode(problem::CrystallisationProblem, ode_problem,
+function _steady_relaxation_solve(problem::DiscretisedProblem, ode_problem,
                                 algorithm;
                                 steady_options::SteadyStateOptions = SteadyStateOptions(),
                                 solve_options::NamedTuple = (;),
@@ -550,58 +568,88 @@ function _solve_steadystate_ode(problem::CrystallisationProblem, ode_problem,
                         equilibrium_time = final_time,
                         ode_final_state = raw_state,
                         integration_options = steady_solve_options,
-                        solver_success)
+                        solver_success,
+                        ode_retcode = raw_solution.retcode)
 
         return CrystallisationSteadyStateSolution(physical_result, _equilibrium_values(physical_result),
                                                    residual, scaled_residual,
                                                    hydraulics, product, diagnostics,
-                                                   raw_solution.stats, raw_solution.retcode,
-                                                   solver_success && converged &&
-                                                       physical_valid && balance_valid)
+                                                   raw_solution.stats,
+                                                   _steady_retcode(raw_solution.retcode, converged,
+                                                                   physical_valid, balance_valid))
     end
 end
 
 """
-    solve_steadystate(problem::CrystallisationProblem;
-                      options=SteadyStateOptions(), initial_guess=nothing,
-                      algorithm=nothing, solve_options=(;),
-                      callback_factory=nothing)
+    CrystallisationSteadyStateProblem(problem::CrystallisationProblem;
+                                      u0=nothing, options=SteadyStateOptions())
 
-Relax a constant, autonomous fixed-volume MSMPR to a stable steady state.
-The solver integrates the generated ODE and stops early only when the scaled
-full-state RHS residual is within tolerance. It returns a distinct
-`CrystallisationSteadyStateSolution`; `success` is false if the relaxation
-horizon, residual, physical constraints, or total-API flow balance fails.
-If those checks fail, the direct call throws `SteadyStateConvergenceError`,
-which carries the unsuccessful result and its diagnostics. `steady.equilibrium`
-holds the equilibrium values (`steady.equilibrium.concentration`, `.d43`).
+Steady-state counterpart of a transient `problem`, solved with
+`solve(steady_problem, solver)`: relax a constant, autonomous fixed-volume
+MSMPR to a stable steady state. `u0` is an optional initial guess as a complete
+state vector in the solver's layout; without it the relaxation starts from the
+problem's conditions. `options` sets the relaxation horizon, residual
+tolerances and the `autonomous` declaration. The problem's `tspan` is not used:
+the relaxation runs from `t0` over the relaxation horizon.
+
+SciMLBase's `SteadyStateProblem` wraps an `ODEFunction` and an initial state,
+both of which depend on the solver here, so CriSTool owns this steady type.
+"""
+struct CrystallisationSteadyStateProblem{Problem <: CrystallisationProblem,
+                                         Guess <: Union{Nothing, Vector{Float64}}} <:
+       SciMLBase.AbstractSciMLProblem
+    problem::Problem
+    u0::Guess
+    options::SteadyStateOptions
+end
+
+CrystallisationSteadyStateProblem(problem::CrystallisationProblem; u0::Union{Nothing, AbstractVector} = nothing,
+                                  options::SteadyStateOptions = SteadyStateOptions()) =
+    CrystallisationSteadyStateProblem(problem, _steady_initial_guess(u0), options)
+
+_steady_initial_guess(::Nothing) = nothing
+_steady_initial_guess(initial_guess::AbstractVector) = collect(Float64, initial_guess)
+
+"""The solve-time problem, starting from the steady initial guess when one is given."""
+_steady_initial_problem(discretised_problem::DiscretisedProblem, ::Nothing) = discretised_problem
+_steady_initial_problem(discretised_problem::DiscretisedProblem, initial_guess::Vector{Float64}) =
+    _validate_discretised_problem(_problem_with_initial_state(discretised_problem, initial_guess))
+
+"""
+    solve(steady_problem::CrystallisationSteadyStateProblem, solver::AbstractSolver;
+          alg=nothing, solve_options=(;), callback_factory=nothing)
+        -> CrystallisationSteadyStateSolution
+
+Integrate the generated ODE of `solver` and stop early only when the scaled
+full-state RHS residual is within tolerance. The result's `retcode` reports
+the outcome; when it is unsuccessful (relaxation horizon, residual, physical
+constraints or total-API flow balance) the direct solve throws
+`SteadyStateConvergenceError`, which carries the unsuccessful result and its
+diagnostics. `steady.equilibrium` holds the equilibrium values
+(`steady.equilibrium.concentration`, `.d43`).
 
 Opaque time profiles and user-defined kinetics require
 `SteadyStateOptions(autonomous = true)` as an explicit declaration that their
 behavior is time invariant. Batch and fed-batch problems remain transient
-`runsimulation` workflows.
+`solve(problem, solver)` workflows.
 """
-function solve_steadystate(problem::CrystallisationProblem;
-                           options::SteadyStateOptions = SteadyStateOptions(),
-                           initial_guess::Union{Nothing, AbstractVector} = nothing,
-                           algorithm = nothing,
-                           solve_options::NamedTuple = (;),
-                           callback_factory = nothing)
-    _validate_steadystate_problem(problem; autonomous = options.autonomous)
-    horizon = something(options.relaxation_horizon, _default_steady_relaxation_horizon(problem))
-
-    solve_problem = if isnothing(initial_guess)
-        problem
-    else
-        guessed_problem = _problem_with_initial_state(problem, collect(initial_guess))
-        _validate_crystallisation_problem(guessed_problem)
-        guessed_problem
-    end
+function SciMLBase.solve(steady_problem::CrystallisationSteadyStateProblem, solver::AbstractSolver;
+                         alg = nothing, solve_options::NamedTuple = (;),
+                         callback_factory = nothing)
+    options = steady_problem.options
+    transient_problem = steady_problem.problem
+    discretised_problem = _steady_initial_problem(DiscretisedProblem(transient_problem, solver),
+                                                  steady_problem.u0)
+    _validate_steadystate_problem(discretised_problem; autonomous = options.autonomous)
+    kinetic_values = _validate_kinetic_values(discretised_problem, transient_problem.p)
+    horizon = something(options.relaxation_horizon,
+                        _default_steady_relaxation_horizon(discretised_problem))
+    start_time = first(transient_problem.tspan)
     ode_problem, default_algorithm = crystallisation_odeproblem(
-        solve_problem, (0.0, horizon))
-    steady = _solve_steadystate_ode(
-        solve_problem, ode_problem, something(algorithm, default_algorithm);
+        solver, discretised_problem, (start_time, start_time + horizon), kinetic_values)
+    steady = _steady_relaxation_solve(
+        discretised_problem, ode_problem, something(alg, default_algorithm);
         steady_options = options, solve_options, callback_factory)
-    steady.success || throw(SteadyStateConvergenceError(steady))
+    SciMLBase.successful_retcode(steady) || throw(SteadyStateConvergenceError(steady))
     return steady
 end

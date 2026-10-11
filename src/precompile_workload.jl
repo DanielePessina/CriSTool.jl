@@ -1,6 +1,6 @@
 """
 Precompile workload: one short simulation per solver with the built-in kinetic
-laws and one prepared-fit loss evaluation, so the first `simulate` or `loss`
+laws and one prepared-fit loss evaluation, so the first `solve` or `loss`
 call in a session reuses cached native code instead of compiling the solver
 stack. Callable laws (`CallableGrowth`, ...)
 are user closures and still compile on first use.
@@ -13,18 +13,20 @@ are user closures and still compile on first use.
     workload_seed = LogNormalInitialCrystals(mass_concentration = 0.1, d43 = 20e-6, geometric_std = 1.2)
     workload_seeded_run = RunConditions(temperature = 293.15, concentration = 18.0, crystals = workload_seed)
     workload_unseeded_run = RunConditions(temperature = 293.15, concentration = 18.0)
+    workload_tspan = (0.0, 60.0)
     workload_save_times = 0.0:30.0:60.0
     # WENO is meant for sharp growth fronts; nucleation into its first cell is slow.
     workload_growth_model = CrystallisationModel(LysozymeSystem();
         growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
     @compile_workload begin
+        workload_seeded_problem = CrystallisationProblem(workload_model, workload_seeded_run, workload_tspan)
         for workload_solver in (MoM(), QMOM(), DQMOM(), FiniteVol(meshsize = 8, lmax = 100e-6))
-            simulate(workload_model, workload_seeded_run; solver = workload_solver,
-                     saveat = workload_save_times)
+            solve(workload_seeded_problem, workload_solver; saveat = workload_save_times)
         end
-        simulate(workload_growth_model, workload_seeded_run; solver = WENO(meshsize = 8, lmax = 100e-6),
-                 saveat = workload_save_times)
-        simulate(workload_model, workload_unseeded_run; saveat = workload_save_times)
+        solve(CrystallisationProblem(workload_growth_model, workload_seeded_run, workload_tspan),
+              WENO(meshsize = 8, lmax = 100e-6); saveat = workload_save_times)
+        solve(CrystallisationProblem(workload_model, workload_unseeded_run, workload_tspan), MoM();
+              saveat = workload_save_times)
         # One prepared-fit loss evaluation (the objective every fit calls).
         workload_experiment = CrystallisationExperiment(exp_id = 1,
             observables = (concentration = Observable(time = [0.0, 30.0, 60.0],

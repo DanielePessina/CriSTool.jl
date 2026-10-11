@@ -182,13 +182,32 @@ function Base.show(display_io::IO, crystal_model::CrystallisationModel)
         for slot_name in active_slots), ", "), ")")
 end
 
+# --- problems ---------------------------------------------------------------
+
+_tspan_text(tspan::Tuple{Float64, Float64}) =
+    string(_number_text(first(tspan)), " … ", _number_text(last(tspan)), " s")
+
+function Base.show(display_io::IO, ::MIME"text/plain", problem::CrystallisationProblem)
+    problem_rows = ["model" => sprint(show, problem.model), "conditions" => sprint(show, problem.conditions),
+        "tspan" => _tspan_text(problem.tspan), "p" => string(length(problem.p), "-entry kinetic vector")]
+    print(display_io, _labelled_summary("CrystallisationProblem", problem_rows))
+end
+Base.show(display_io::IO, problem::CrystallisationProblem) =
+    print(display_io, "CrystallisationProblem(", problem.conditions, ", ", _tspan_text(problem.tspan), ")")
+
+Base.show(display_io::IO, steady_problem::CrystallisationSteadyStateProblem) =
+    print(display_io, "CrystallisationSteadyStateProblem(", steady_problem.problem.conditions,
+        isnothing(steady_problem.u0) ? "" : ", initial guess", ")")
+Base.show(display_io::IO, ::MIME"text/plain", steady_problem::CrystallisationSteadyStateProblem) =
+    show(display_io, steady_problem)
+
 # --- solutions --------------------------------------------------------------
 
 _population_description(population::MeshPopulation) = string(size(population.numberdensity, 1), "-cell mesh")
 _population_description(population::MomentPopulation) = string("moments µ0 … µ", size(population.moments, 1) - 1)
 _population_description(population::QuadraturePopulation) = string(size(population.nodes, 1), "-node quadrature")
 
-_success_text(success::Bool) = success ? "success" : "failed"
+_retcode_text(retcode::SciMLBase.ReturnCode.T) = string("retcode = ", retcode)
 
 _ode_stats_text(stats::SciMLBase.DEStats) = string(stats.nf, " RHS evaluations, ", stats.naccept,
     " accepted / ", stats.nreject, " rejected steps")
@@ -204,25 +223,25 @@ _size_trajectory_text(size_series::AbstractVector) = any(isnan, size_series) ? "
     _first_last_text(size_series, size_value -> _number_text(_display_real(size_value) * _METRES_TO_MICROMETRES)) * " µm"
 
 function Base.show(display_io::IO, ::MIME"text/plain", solution::CrystallisationSolution)
-    solution_rows = ["time" => _time_range_text(solution.time),
+    solution_rows = ["t" => _time_range_text(solution.t),
         "concentration" => _first_last_text(solution.concentration, _number_text) * " kg/m³",
         "d43" => _size_trajectory_text(solution.d43),
         "ODE" => _ode_stats_text(solution.ode_stats)]
     heading = string("CrystallisationSolution{", nameof(typeof(solution.population)), "} — ",
-        _population_description(solution.population), ", ", _success_text(solution.success))
+        _population_description(solution.population), ", ", _retcode_text(solution.retcode))
     print(display_io, _labelled_summary(heading, solution_rows))
 end
 
 function Base.show(display_io::IO, solution::CrystallisationSolution)
-    saved_times = solution.time
+    saved_times = solution.t
     time_text = isempty(saved_times) ? "no saves" :
         string(_number_text(first(saved_times)), "–", _number_text(last(saved_times)), " s")
     print(display_io, "CrystallisationSolution(", nameof(typeof(solution.population)), ", ",
-        length(saved_times), " saves, ", time_text, ", ", _success_text(solution.success), ")")
+        length(saved_times), " saves, ", time_text, ", ", _retcode_text(solution.retcode), ")")
 end
 
 _steady_status_text(steady::CrystallisationSteadyStateSolution) =
-    steady.success ? "converged" : "not converged"
+    SciMLBase.successful_retcode(steady) ? "converged" : "not converged"
 _steady_scalar_text(scalar_value::Real, to_text) = to_text(scalar_value)
 _steady_scalar_text(other_value, to_text) = "not a scalar"
 
@@ -303,7 +322,7 @@ function Base.show(display_io::IO, ::MIME"text/plain", predictions::PredictionRe
     print(display_io, "PredictionResult — ", length(predictions.experiments), " runs, ",
         _draw_count(predictions.samples), " draws")
     for (run_id, ensemble) in zip(predictions.experiments, predictions.ensembles)
-        print(display_io, "\n  run ", run_id, ": ", length(ensemble.time), " saves, observables (",
+        print(display_io, "\n  run ", run_id, ": ", length(ensemble.t), " saves, observables (",
             join(keys(ensemble.predictions), ", "), "), ", count(ensemble.success), "/", length(ensemble.success),
             " draws succeeded")
     end

@@ -5,7 +5,7 @@
 mesh transport needs a per-cell net growth-rate field; `Val(false)` when one
 scalar rate drives every cell. Evaluated once per ODE construction.
 """
-_mesh_growth_layout(problem::CrystallisationProblem) = Val(_uses_length_rates(problem))
+_mesh_growth_layout(problem::DiscretisedProblem) = Val(_uses_length_rates(problem))
 
 """
     _mesh_net_growth(growth_layout, growth_rate_cache, parameters, problem, state, time)
@@ -144,7 +144,7 @@ function _mesh_boundary_flow_state(solver::AbstractDiscretisedSolver, problem, o
 end
 
 """Physical mesh solution shared by the `FiniteVol` and `WENO` solvers."""
-function _wrap_solution(solver::AbstractDiscretisedSolver, problem::CrystallisationProblem,
+function _wrap_solution(solver::AbstractDiscretisedSolver, problem::DiscretisedProblem,
                         ode_solution, boundary_flow_state::NamedTuple)
     cell_centre = solver.cell_centre
     nd_matrix = ode_solution[_population_state_range(problem), :]
@@ -186,7 +186,7 @@ net growth, face flux (`_fill_mesh_flux!`), transport divergence, aggregation,
 breakage, solvent and operation terms. The caches are `DiffCache` buffers so
 ForwardDiff dual states retype them.
 """
-function _mesh_population_rhs(CryProblem::CrystallisationProblem, flux_cache_dc,
+function _mesh_population_rhs(CryProblem::DiscretisedProblem, flux_cache_dc,
                               growth_rate_cache_dc, solver_cache_dc)
     solver = CryProblem.solver
     feed_population = _operation_feed_population(CryProblem)
@@ -220,15 +220,15 @@ function _mesh_population_rhs(CryProblem::CrystallisationProblem, flux_cache_dc,
 end
 
 """
-    crystallisation_odeproblem(solver::FiniteVol, problem, saveat, kinetic_values)
+    crystallisation_odeproblem(solver::FiniteVol, problem, tspan, kinetic_values)
 
 High-resolution (OSPRE-limited) transport for a scalar net growth rate,
 first-order signed upwinding when growth or dissolution depends on length
 (see `_fill_fv_flux!`). The default time stepper is `Tsit5` for
 scalar growth laws and `SSPRK43` for length-dependent growth laws.
 """
-function crystallisation_odeproblem(solver::FiniteVol, CryProblem::CrystallisationProblem,
-                                    saveat, kinetic_values)
+function crystallisation_odeproblem(solver::FiniteVol, CryProblem::DiscretisedProblem,
+                                    tspan, kinetic_values)
     flux_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 1))
     growth_rate_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize))
     finite_volume_rhs! = _mesh_population_rhs(CryProblem, flux_cache_dc, growth_rate_cache_dc,
@@ -237,7 +237,7 @@ function crystallisation_odeproblem(solver::FiniteVol, CryProblem::Crystallisati
     # Plain state at the parameter element type (do NOT convert to the
     # ComponentArray parameter container).
     u0_typed = eltype(kinetic_values).(_get_initial_state(CryProblem))
-    ODEprob = ODEProblem(finite_volume_rhs!, u0_typed, (saveat[1], saveat[end]),
+    ODEprob = ODEProblem(finite_volume_rhs!, u0_typed, tspan,
                          kinetic_values)
     default_algorithm = _is_length_law(CryProblem.model.growth.law) ? SSPRK43() : Tsit5()
     return (ODEprob, _timestepping_algorithm(solver, default_algorithm))
