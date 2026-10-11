@@ -257,6 +257,8 @@ end
     @test default_spec.sampler === nothing
     turing_extension = Base.get_extension(CriSTool, :CriSToolTuringExt)
     @test turing_extension !== nothing
+    # `using CriSTool, Turing` must not make `predict` ambiguous: both export StatsAPI.predict.
+    @test CriSTool.predict === Turing.predict
     @test turing_extension._nuts_sampler(default_spec.sampler) isa Turing.NUTS
     explicit_sampler = Turing.NUTS(7, 0.8)
     @test turing_extension._nuts_sampler(explicit_sampler) === explicit_sampler
