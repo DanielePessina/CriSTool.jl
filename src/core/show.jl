@@ -252,7 +252,10 @@ _algorithm_label(algorithm::Metaheuristics.Algorithm) = string(nameof(typeof(alg
 
 _specification_label(specification::OptimisationSpec) =
     string("OptimisationSpec(", _algorithm_label(specification.algorithm), ")")
-_specification_label(specification::BayesianSpec) = string("BayesianSpec(", _algorithm_label(specification.sampler), ")")
+_specification_label(specification::BayesianSpec) = string("BayesianSpec(", _bayesian_sampler_label(specification.sampler), ")")
+# `sampler = nothing` is resolved to `Turing.NUTS()` by the Turing extension.
+_bayesian_sampler_label(::Nothing) = "NUTS"
+_bayesian_sampler_label(sampler) = _algorithm_label(sampler)
 _specification_label(specification::ABCSpec) = string("ABCSpec(", _algorithm_label(specification.sampler), ")")
 
 # Only Optimization.jl results report a convergence status.
