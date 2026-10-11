@@ -183,6 +183,7 @@ function crystallisation_odeproblem(solver::FiniteVol, CryProblem::Crystallisati
     aggregation_table = _mesh_aggregation_table(CryProblem.model.aggregation.law,
                                                 CryProblem.solver)
     growth_layout = _mesh_growth_layout(CryProblem)
+    cell_centre_cubed = CryProblem.solver.cell_centre .^ 3
 
     function finite_volume_rhs!(dstdt, st, p, t)
         face_flux = get_tmp(flux_cache_dc, st)
@@ -194,7 +195,7 @@ function crystallisation_odeproblem(solver::FiniteVol, CryProblem::Crystallisati
 
         population_derivative = crystal_state(CryProblem, dstdt)
         solid_volume_rate = _mesh_transport_divergence!(population_derivative, face_flux,
-                                                        CryProblem.solver)
+                                                        CryProblem.solver, cell_centre_cubed)
         _add_aggregation_rate!(population_derivative, CryProblem.model.aggregation.law, p.agg,
                                CryProblem, st, t, aggregation_table)
         _add_breakage_rate!(population_derivative, CryProblem.model.breakage.law, p.br,
