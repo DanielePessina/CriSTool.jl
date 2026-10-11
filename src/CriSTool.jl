@@ -30,10 +30,7 @@ import Base.Iterators
 import CSV
 import JSON
 
-# Visualization
-import PairPlots
-import CairoMakie
-import Makie
+# MCMC chain types (vendored KissABC resolves a FlexiChains dispatch ambiguity).
 import FlexiChains
 
 # Optimization
@@ -180,8 +177,12 @@ include("uncertainty/sensitivity.jl")
 include("inference/workflow_interfaces.jl")
 include("inference/model_workflows.jl")
 
-# Plotting is included last because it consumes all public solution and
-# inference interfaces.
+# Plotting entry points; their methods live in the Makie/PairPlots extensions.
 include("plotting/plots.jl")
+
+function __init__()
+    Base.Experimental.register_error_hint(_plotting_method_error_hint, MethodError)
+    return nothing
+end
 
 end

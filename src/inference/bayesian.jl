@@ -1,6 +1,7 @@
 """
-Turing model construction for `fit(::PreparedFit{<:Any, <:BayesianSpec})`,
-chain renaming, and native-chain trace/density diagnostics.
+Turing model construction for `fit(::PreparedFit{<:Any, <:BayesianSpec})`
+and chain renaming. Chain trace/density plots (`ChainStatsPlots`) live in
+the Makie extension.
 """
 
 """Build a task-local memoized initializer of element type `T`.
@@ -80,84 +81,4 @@ function rename_chain(chain::MCMCChains.Chains, symbols::Vector{Symbol})
                             "$(length(symbols)) symbols were given."))
     rename_dict = Dict(old_names[i] => symbols[i] for i in eachindex(old_names))
     return MCMCChains.replacenames(chain, rename_dict)
-end
-
-function _mcmcchain_to_flexichain(chain::MCMCChains.Chains)
-    params = collect(names(chain, :parameters))
-    niters = size(chain.value, 1)
-    nchains = size(chain.value, 3)
-    dict = Dict{FlexiChains.ParameterOrExtra{Symbol}, Matrix{Float64}}()
-    for (j, p) in enumerate(params)
-        dict[FlexiChains.Parameter(p)] = chain.value[:, j, :]
-    end
-    return FlexiChains.FlexiChain{Symbol}(niters, nchains, dict)
-end
-
-"""
-    ChainStatsPlots(chain; burnin=0, title="", show_title=true, saveplot=false,
-                    savestring="", savedir=nothing, showplot=true)
-
-Create trace and density plots for MCMC chain diagnostics (Makie backend).
-
-# Arguments
-- `chain`: `MCMCChains.Chains` object.
-- `burnin`: number of initial iterations to discard.
-- `title`, `show_title`: figure title controls.
-- `saveplot`, `savestring`, `savedir`: save the figure to
-  `joinpath(savedir, savestring * " ChDensity.png")`. With `saveplot=true`
-  and `savedir=nothing` the figure is not saved.
-- `showplot`: display the figure.
-
-# Returns
-The generated `Makie.Figure`.
-"""
-function ChainStatsPlots(chain::MCMCChains.Chains;
-                         burnin::Int = 0,
-                         title = "",
-                         show_title::Bool = true,
-                         saveplot::Bool = false,
-                         savestring::String = "",
-                         savedir::Union{Nothing, AbstractString} = nothing,
-                         showplot::Bool = true)
-
-    chain_subset = burnin > 0 ? chain[(burnin + 1):end, :, :] : chain
-    fc = _mcmcchain_to_flexichain(chain_subset)
-    param_names = collect(names(chain_subset, :parameters))
-    n_params = length(param_names)
-
-    fig = Makie.Figure(size = (1000, 260 * n_params))
-    if show_title && !isempty(title)
-        Makie.Label(fig[0, :], title)
-    end
-
-    for (i, param) in enumerate(param_names)
-        ax_trace = Makie.Axis(fig[i, 1])
-        FlexiChains.mtraceplot!(ax_trace, fc, param)
-        if i < n_params
-            Makie.hidexdecorations!(ax_trace; grid = false)
-        else
-            ax_trace.xlabel = "Iteration"
-        end
-
-        ax_density = Makie.Axis(fig[i, 2])
-        Makie.density!(ax_density, fc, param)
-        Makie.hideydecorations!(ax_density)
-        if i < n_params
-            Makie.hidexdecorations!(ax_density; grid = false)
-        else
-            ax_density.xlabel = "Parameter estimate"
-        end
-    end
-
-    if saveplot && savedir !== nothing
-        outdir = String(savedir)
-        mkpath(outdir)
-        Makie.save(joinpath(outdir, "$(savestring) ChDensity.png"), fig, px_per_unit = 3)
-    end
-
-    if showplot
-        display(fig)
-    end
-
-    return fig
 end

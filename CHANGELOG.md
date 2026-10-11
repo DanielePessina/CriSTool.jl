@@ -2,6 +2,10 @@
 
 ## 0.1.0 — unreleased
 
+- Plotting moved to package extensions: `using CairoMakie` (or another Makie
+  backend) enables `plot_predictions` and `ChainStatsPlots`; `PairPlots`
+  additionally enables `plot_posterior_pairplot`. `using CriSTool` no longer
+  loads Makie.
 - Named material and kinetic models reused across simulation, selected-parameter
   optimisation, explicit-prior Bayesian/ABC inference and joint predictions.
 - Callable scalar/node-dependent kinetics with supported named parameter and

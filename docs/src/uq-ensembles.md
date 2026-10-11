@@ -41,6 +41,12 @@ supplied joint distribution rather than sampling independent marginals.
 
 ## Plotting predictions and posteriors
 
+Plotting is a package extension, so `using CriSTool` does not load Makie.
+Load a Makie backend first: `using CairoMakie` enables `plot_predictions` and
+`ChainStatsPlots`, and `using PairPlots` additionally enables
+`plot_posterior_pairplot`. Calling a plotting function without them raises a
+`MethodError` that names the package to load.
+
 `plot_predictions` draws one row per run and one column per observable: the
 median over successful draws and a quantile band (5–95 % by default). Passing
 the experiments overlays their measured means with ± one standard deviation
@@ -48,6 +54,7 @@ error bars, matched by `exp_id`. Time is in minutes and sizes in µm. A single
 draw, such as `predict(fit_result)`, plots as a line.
 
 ```julia
+using CairoMakie, PairPlots
 plot_predictions(fitted_runs, experiments; observables = (:concentration, :d43),
     savename = "posterior", savedir = "results")
 plot_posterior_pairplot(posterior; savename = "posterior", savedir = "results")

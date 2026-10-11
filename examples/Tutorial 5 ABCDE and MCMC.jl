@@ -2,6 +2,8 @@
 Sampling is intentionally small for a runnable example; increase counts for a study.
 =#
 using CriSTool, Distributions, Turing, Random
+# Loading CairoMakie and PairPlots enables CriSTool's plotting functions.
+using CairoMakie, PairPlots
 
 function main()
     crystal_model = CrystallisationModel(LysozymeSystem();
