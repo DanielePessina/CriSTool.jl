@@ -195,7 +195,7 @@ end
 @testset "NSGA2 (threaded): non-dominated Pareto set within bounds" begin
     pareto_prepared = prepare_fit(fitpredict_model, [fitpredict_experiment], OptimisationSpec(bounds = fitpredict_bounds,
         algorithm = Metaheuristics.NSGA2(N = 12, options = Metaheuristics.Options(iterations = 3, seed = 42)), loss = MeanAbsoluteError()))
-    pareto_results = fit(pareto_prepared; threaded = true)
+    pareto_results = fit(pareto_prepared; parallel = EnsembleThreads())
     pareto_objectives = [collect(values(pareto_result.objectives)) for pareto_result in pareto_results]
     @test all(pareto_result -> 0.001 <= pareto_result.parameters.growth.speed <= 0.03, pareto_results)
     @test all(pareto_result -> pareto_result.model.growth.parameters.held_order == 2.0, pareto_results)
@@ -275,7 +275,7 @@ end
     # log p(theta | data) = log prior - negative log likelihood.
     @test Turing.DynamicPPL.logjoint(CriSTool.nuts_model(bayesian_prepared), (θ = [0.015],)) ≈
           logpdf(Uniform(0.001, 0.03), 0.015) - loss(bayesian_prepared, [0.015]) rtol = 1e-10
-    tiny_posterior = fit(bayesian_prepared; rng = MersenneTwister(72), threaded = true, progress = false)
+    tiny_posterior = fit(bayesian_prepared; rng = MersenneTwister(72), parallel = EnsembleThreads(), progress = false)
     @test tiny_posterior.samples.names == ["growth.speed"]
     @test size(tiny_posterior.samples.values) == (1, 10)
     @test tiny_posterior.samples.values ==
@@ -302,7 +302,7 @@ end
 
     abc_prepared = prepare_fit(fitpredict_model, [fitpredict_experiment], ABCSpec(priors = abc_priors,
         target = 1.0, n_particles = 8, n_generations = 1))
-    tiny_abc = fit(abc_prepared; threaded = true)
+    tiny_abc = fit(abc_prepared; parallel = EnsembleThreads())
     @test vec(tiny_abc.samples.values) == collect(tiny_abc.backend_result.P.particles)
     @test all(0.005 .<= tiny_abc.samples.values .<= 0.02)
     unreachable_result = CriSTool._runsampler(ABCDESampler(),
@@ -444,4 +444,37 @@ end
     end
     @test_throws ArgumentError loss(prepare_fit(fitpredict_model, parallel_experiments, parallel_specification;
         parallel = CriSTool.SciMLBase.EnsembleDistributed()), [0.01])
+end
+
+# One parallel setting: the specification picks the level that receives it, the other runs serially.
+@testset "parallel level: candidates or experiments, chosen by the specification" begin
+    seeded_de() = Metaheuristics.DE(; N = 8, options = Metaheuristics.Options(; iterations = 3, seed = 314))
+    abc_level_priors = (growth = (speed = Uniform(0.005, 0.02),),)
+    expected_levels = [
+        OptimisationSpec(bounds = fitpredict_bounds, algorithm = seeded_de()) => CriSTool.ParallelCandidates(),
+        OptimisationSpec(bounds = fitpredict_bounds, algorithm = Metaheuristics.NSGA2(N = 12)) => CriSTool.ParallelCandidates(),
+        OptimisationSpec(bounds = fitpredict_bounds, algorithm = OptimizationOptimJL.LBFGS()) => CriSTool.ParallelExperiments(),
+        BayesianSpec(priors = abc_level_priors, n_chains = 1) => CriSTool.ParallelExperiments(),
+        BayesianSpec(priors = abc_level_priors, n_chains = 4) => CriSTool.ParallelCandidates(),
+        ABCSpec(priors = abc_level_priors, target = 1.0) => CriSTool.ParallelCandidates(),
+    ]
+    for (level_specification, expected_level) in expected_levels
+        @test CriSTool._parallel_level(level_specification) === expected_level
+    end
+    # The chosen level gets the supplied ensemble; the loss of the other level is serial.
+    candidate_prepared = prepare_fit(fitpredict_model, [fitpredict_experiment],
+        OptimisationSpec(bounds = fitpredict_bounds, algorithm = seeded_de()); parallel = EnsembleThreads())
+    candidate_ensemble, candidate_split = CriSTool._split_parallel(candidate_prepared, EnsembleThreads())
+    @test (candidate_ensemble, candidate_split.setup.parallel) === (EnsembleThreads(), EnsembleSerial())
+    experiment_prepared = prepare_fit(fitpredict_model, [fitpredict_experiment],
+        OptimisationSpec(bounds = fitpredict_bounds, algorithm = OptimizationOptimJL.LBFGS()))
+    experiment_ensemble, experiment_split = CriSTool._split_parallel(experiment_prepared, EnsembleThreads())
+    @test (experiment_ensemble, experiment_split.setup.parallel) === (EnsembleSerial(), EnsembleThreads())
+    # A seeded DE run evaluates the same candidates serially and on threads.
+    serial_de_fit = fit(candidate_prepared; parallel = EnsembleSerial())
+    threaded_de_fit = fit(candidate_prepared; parallel = EnsembleThreads())
+    @test threaded_de_fit.parameters == serial_de_fit.parameters
+    @test threaded_de_fit.objectives == serial_de_fit.objectives
+    # Unsupported ensembles are rejected at the candidate level as well.
+    @test_throws ArgumentError fit(candidate_prepared; parallel = CriSTool.SciMLBase.EnsembleDistributed())
 end

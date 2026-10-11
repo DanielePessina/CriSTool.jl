@@ -278,25 +278,64 @@ struct FitResult{Model, Parameters, Objectives, Backend, Preparation}
     preparation::Preparation
 end
 
+"""Parallel level of a fit: candidates (population, particles or chains) run under `parallel`."""
+struct ParallelCandidates end
+"""Parallel level of a fit: the experiments inside each loss evaluation run under `parallel`."""
+struct ParallelExperiments end
+
 """
-    fit(prepared_fit; threaded=false, parallel=prepared_fit.setup.parallel)
+    _parallel_level(fit_specification) -> ParallelCandidates() or ParallelExperiments()
+
+The one level of a fit that receives `fit(...; parallel)`; the other level runs
+serially, since threading both levels only adds scheduling overhead.
+"""
+_parallel_level(fit_specification::OptimisationSpec) = _parallel_level(fit_specification.algorithm)
+_parallel_level(::Metaheuristics.Algorithm) = ParallelCandidates()
+_parallel_level(optimiser) = ParallelExperiments()
+_parallel_level(::ABCSpec) = ParallelCandidates()
+_parallel_level(fit_specification::BayesianSpec) =
+    fit_specification.n_chains > 1 ? ParallelCandidates() : ParallelExperiments()
+
+_candidate_parallel(::ParallelCandidates, parallel::SciMLBase.BasicEnsembleAlgorithm) = parallel
+_candidate_parallel(::ParallelExperiments, parallel::SciMLBase.BasicEnsembleAlgorithm) = EnsembleSerial()
+_experiment_parallel(::ParallelCandidates, parallel::SciMLBase.BasicEnsembleAlgorithm) = EnsembleSerial()
+_experiment_parallel(::ParallelExperiments, parallel::SciMLBase.BasicEnsembleAlgorithm) = parallel
+
+"""Split `parallel` by level: the candidate ensemble, and the fit whose loss solves experiments under the other."""
+function _split_parallel(supplied_fit::PreparedFit, parallel::SciMLBase.BasicEnsembleAlgorithm)
+    parallel_level = _parallel_level(supplied_fit.specification)
+    return _candidate_parallel(parallel_level, parallel),
+           _with_parallel(supplied_fit, _experiment_parallel(parallel_level, parallel))
+end
+
+# Backends that take a Bool (Metaheuristics `parallel_evaluation`, KissABC `HPC`) or a
+# pool size convert the candidate ensemble here.
+_threads_candidates(::EnsembleSerial) = false
+_threads_candidates(::EnsembleThreads) = true
+_threads_candidates(unsupported::SciMLBase.BasicEnsembleAlgorithm) = _unsupported_parallel(unsupported)
+_candidate_copy_count(::EnsembleSerial) = 0
+_candidate_copy_count(::EnsembleThreads) = Threads.nthreads()
+_candidate_copy_count(unsupported::SciMLBase.BasicEnsembleAlgorithm) = _unsupported_parallel(unsupported)
+
+"""
+    fit(prepared_fit; parallel=prepared_fit.setup.parallel)
 
 Optimise the selected kinetic parameters with the specification's algorithm.
 A scalar objective returns a `FitResult`; NSGA2 returns one `FitResult` per
-Pareto candidate. `threaded` evaluates Metaheuristics populations in parallel,
-each task on a private copy of the solve templates. `parallel = EnsembleThreads()`
-solves the experiments of each loss evaluation on threads, which also speeds up
-gradient-based algorithms; it takes effect for this call only.
+Pareto candidate. `parallel = EnsembleThreads()` evaluates a Metaheuristics
+population on threads, each task on a private copy of the solve templates;
+for Optimization.jl solvers it solves the experiments of each loss evaluation
+on threads instead. It takes effect for this call only.
 """
-function fit(supplied_fit::PreparedFit{<:Any, <:OptimisationSpec}; threaded::Bool = false,
+function fit(supplied_fit::PreparedFit{<:Any, <:OptimisationSpec};
              parallel::SciMLBase.BasicEnsembleAlgorithm = supplied_fit.setup.parallel)
-    prepared_fit = _with_parallel(supplied_fit, parallel)
+    candidate_parallel, prepared_fit = _split_parallel(supplied_fit, parallel)
     bound_pairs = last.(_named_parameter_leaves(prepared_fit.specification.bounds))
     lower_bounds, upper_bounds = first.(bound_pairs), last.(bound_pairs)
     starting_values = _selected_baseline(prepared_fit.selection)
     all(lower_bounds .<= starting_values .<= upper_bounds) || throw(ArgumentError("Current selected values must lie within bounds."))
     return _optimise(prepared_fit.specification.algorithm, prepared_fit, lower_bounds, upper_bounds,
-        starting_values; threaded)
+        starting_values, candidate_parallel)
 end
 
 # Preserve caller configuration while isolating mutable status, parameters and RNG.
@@ -316,8 +355,9 @@ function _configured_mh_algorithm(supplied_algorithm::Metaheuristics.Algorithm;
     return run_algorithm
 end
 
-"""Optimization.jl solvers: search from the model's current values; `threaded` does not apply."""
-function _optimise(optimiser, prepared_fit, lower_bounds, upper_bounds, starting_values; threaded::Bool)
+"""Optimization.jl solvers: search from the model's current values; candidates are always serial."""
+function _optimise(optimiser, prepared_fit, lower_bounds, upper_bounds, starting_values,
+                   ::SciMLBase.BasicEnsembleAlgorithm)
     fit_specification = prepared_fit.specification
     optimization_function = OptimizationBase.OptimizationFunction(
         (candidate_values, fit_context) -> loss(fit_context, candidate_values), fit_specification.adtype)
@@ -329,9 +369,10 @@ end
 
 """Metaheuristics algorithms: population search inside the bounds on a private algorithm copy."""
 function _optimise(supplied_algorithm::Metaheuristics.Algorithm, prepared_fit, lower_bounds, upper_bounds,
-                   starting_values; threaded::Bool)
-    private_algorithm = _configured_mh_algorithm(supplied_algorithm; parallel_evaluation = threaded)
-    private_fits = _private_copy_pool(prepared_fit, threaded ? Threads.nthreads() : 0)
+                   starting_values, candidate_parallel::SciMLBase.BasicEnsembleAlgorithm)
+    private_algorithm = _configured_mh_algorithm(supplied_algorithm;
+        parallel_evaluation = _threads_candidates(candidate_parallel))
+    private_fits = _private_copy_pool(prepared_fit, _candidate_copy_count(candidate_parallel))
     candidate_objective = _MetaheuristicsObjective(private_algorithm.parameters, prepared_fit, private_fits)
     final_state = Metaheuristics.optimize(candidate_objective,
         Metaheuristics.boxconstraints(lower_bounds, upper_bounds), private_algorithm)
@@ -436,22 +477,19 @@ struct InferenceResult{Model, Samples, Backend, Preparation}
 end
 
 """
-    fit(bayesian_prepared; rng=default_rng(), threaded=false,
-        parallel=bayesian_prepared.setup.parallel, kwargs...)
+    fit(bayesian_prepared; rng=default_rng(), parallel=bayesian_prepared.setup.parallel, kwargs...)
 
-Sample the posterior with the specification's sampler and counts. `threaded`
-runs chains in parallel (`MCMCThreads`); `parallel = EnsembleThreads()` solves
-the experiments inside each log-density evaluation on threads. Both share
-Julia's thread pool, so use `parallel` for few chains and many experiments, and
-`threaded` when chains are at least as many as threads. Other keywords go to
+Sample the posterior with the specification's sampler and counts. With
+`n_chains > 1`, `parallel = EnsembleThreads()` runs the chains on threads
+(`MCMCThreads`); with one chain it solves the experiments inside each
+log-density evaluation on threads instead. Other keywords go to
 `Turing.sample` (e.g. `progress`). Requires `using Turing`.
 """
-function fit(supplied_fit::PreparedFit{<:Any, <:BayesianSpec};
-        rng = Random.default_rng(), threaded::Bool = false,
+function fit(supplied_fit::PreparedFit{<:Any, <:BayesianSpec}; rng = Random.default_rng(),
         parallel::SciMLBase.BasicEnsembleAlgorithm = supplied_fit.setup.parallel, kwargs...)
     _require_turing_extension()
-    prepared_fit = _with_parallel(supplied_fit, parallel)
-    posterior_chain = _nuts_posterior_chain(prepared_fit, rng, threaded; kwargs...)
+    chain_parallel, prepared_fit = _split_parallel(supplied_fit, parallel)
+    posterior_chain = _nuts_posterior_chain(prepared_fit, rng, chain_parallel; kwargs...)
     posterior_chain = rename_chain(posterior_chain, Symbol.(prepared_fit.selection.names))
     posterior_draws = ParameterSamples(prepared_fit.selection.names,
         chains_to_matrix(posterior_chain; params = Symbol.(prepared_fit.selection.names)); source = :nuts)
@@ -459,22 +497,22 @@ function fit(supplied_fit::PreparedFit{<:Any, <:BayesianSpec};
 end
 
 """
-    fit(abc_prepared; threaded=false, parallel=abc_prepared.setup.parallel)
+    fit(abc_prepared; parallel=abc_prepared.setup.parallel)
 
-Sample under the specification's discrepancy threshold. `threaded` evaluates
-particles in parallel; `parallel = EnsembleThreads()` solves the experiments of
-each discrepancy evaluation on threads.
+Sample under the specification's discrepancy threshold.
+`parallel = EnsembleThreads()` evaluates particles on threads, each on a private
+copy of the solve templates; the experiments of one discrepancy run serially.
 """
-function fit(supplied_fit::PreparedFit{<:Any, <:ABCSpec}; threaded::Bool = false,
+function fit(supplied_fit::PreparedFit{<:Any, <:ABCSpec};
              parallel::SciMLBase.BasicEnsembleAlgorithm = supplied_fit.setup.parallel)
-    prepared_fit = _with_parallel(supplied_fit, parallel)
+    particle_parallel, prepared_fit = _split_parallel(supplied_fit, parallel)
     fit_specification = prepared_fit.specification
     joint_prior = product_distribution(last.(_named_parameter_leaves(fit_specification.priors)))
     reference_values = _selected_baseline(prepared_fit.selection)
     abc_result = _runsampler(fit_specification.sampler, joint_prior,
-        _particle_discrepancy(prepared_fit, Val(threaded)), fit_specification.target,
+        _particle_discrepancy(prepared_fit, particle_parallel), fit_specification.target,
         () -> loss(prepared_fit, reference_values); nparticles = fit_specification.n_particles,
-        generations = fit_specification.n_generations, HPC = threaded, earlystop = fit_specification.early_stop)
+        generations = fit_specification.n_generations, HPC = _threads_candidates(particle_parallel), earlystop = fit_specification.early_stop)
     sample_matrix = _abc_particles_matrix(abc_result.P)
     sample_matrix === nothing && throw(ArgumentError("ABC returned no posterior particles."))
     posterior_draws = ParameterSamples(prepared_fit.selection.names, sample_matrix; source = :abc)
@@ -483,9 +521,11 @@ end
 
 # Threaded ABC evaluates particles concurrently; each borrows a private copy so mesh
 # solvers never share their in-place caches across threads.
-_particle_discrepancy(prepared_fit::PreparedFit, ::Val{false}) =
+_particle_discrepancy(prepared_fit::PreparedFit, ::EnsembleSerial) =
     candidate_values -> loss(prepared_fit, collect(candidate_values))
-function _particle_discrepancy(prepared_fit::PreparedFit, ::Val{true})
+_particle_discrepancy(prepared_fit::PreparedFit, unsupported::SciMLBase.BasicEnsembleAlgorithm) =
+    _unsupported_parallel(unsupported)
+function _particle_discrepancy(prepared_fit::PreparedFit, ::EnsembleThreads)
     private_fits = _private_copy_pool(prepared_fit, Threads.nthreads())
     return candidate_values -> _with_private_copy(private_fits) do private_fit
         loss(private_fit, collect(candidate_values))

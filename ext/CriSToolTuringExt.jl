@@ -9,7 +9,8 @@ module CriSToolTuringExt
 import AbstractMCMC
 import Random
 import Turing
-using CriSTool: CriSTool, BayesianSpec, PreparedFit, loss
+using CriSTool: CriSTool, BayesianSpec, PreparedFit, loss, EnsembleSerial, EnsembleThreads
+using CriSTool.SciMLBase: SciMLBase
 using CriSTool: nuts_model, _nuts_posterior_chain, _cristool_once_per_task,
                 _named_parameter_leaves
 using CriSTool.KissABC: AIS
@@ -64,7 +65,9 @@ _fit_per_task(prepared_fit, ::Turing.MCMCThreads) =
         deepcopy(prepared_fit)
     end
 
-_chain_ensemble(threaded::Bool) = threaded ? Turing.MCMCThreads() : Turing.MCMCSerial()
+_chain_ensemble(::EnsembleSerial) = Turing.MCMCSerial()
+_chain_ensemble(::EnsembleThreads) = Turing.MCMCThreads()
+_chain_ensemble(unsupported::SciMLBase.BasicEnsembleAlgorithm) = CriSTool._unsupported_parallel(unsupported)
 
 CriSTool.nuts_model(prepared_fit::PreparedFit{<:Any, <:BayesianSpec}) =
     nuts_model(prepared_fit, Turing.MCMCSerial())
@@ -76,9 +79,9 @@ function CriSTool.nuts_model(prepared_fit::PreparedFit{<:Any, <:BayesianSpec},
 end
 
 function CriSTool._nuts_posterior_chain(prepared_fit::PreparedFit{<:Any, <:BayesianSpec},
-        rng::Random.AbstractRNG, threaded::Bool; kwargs...)
+        rng::Random.AbstractRNG, chain_parallel::SciMLBase.BasicEnsembleAlgorithm; kwargs...)
     fit_specification = prepared_fit.specification
-    ensemble = _chain_ensemble(threaded)
+    ensemble = _chain_ensemble(chain_parallel)
     return Turing.sample(rng, nuts_model(prepared_fit, ensemble), _nuts_sampler(fit_specification.sampler),
         ensemble, fit_specification.n_samples, fit_specification.n_chains; kwargs...)
 end

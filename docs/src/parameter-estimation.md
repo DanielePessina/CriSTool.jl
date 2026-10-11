@@ -12,7 +12,7 @@ fit_specification = OptimisationSpec(bounds = (
     loss = GaussianNLL())
 prepared_fit = prepare_fit(crystal_model, experiments, fit_specification;
     solver = MoM(), solve_options = (reltol = 1e-7,))
-fitted_result = fit(prepared_fit; threaded = true)
+fitted_result = fit(prepared_fit; parallel = EnsembleThreads())
 fitted_result.model
 fitted_result.parameters
 fitted_result.objectives
@@ -24,16 +24,27 @@ values. Bounds are required for bounded optimisation and current selected values
 must be in bounds. The input model is not mutated. Native backend diagnostics
 are retained. The algorithm belongs to the specification; for an Optimization.jl
 algorithm also set `adtype` and `searchoptions` there. Numerical solve options
-belong to preparation. `fit(prepared; threaded=true)` evaluates Metaheuristics
-populations in parallel, each candidate on a private copy of the solve templates.
-`problem_options` passes extra numerical problem settings to every run.
+belong to preparation. `problem_options` passes extra numerical problem settings to every run.
 
-### Threads across experiments
+### Threads
 
-Each loss evaluation solves one ODE per experiment. With Julia started with
-several threads (`julia -t 4`), `parallel = EnsembleThreads()` (re-exported from
-SciMLBase) solves those experiments concurrently, for the loss and for its
-ForwardDiff gradient alike:
+`fit(prepared; parallel = EnsembleThreads())` (re-exported from SciMLBase) is the
+single parallelism setting. Start Julia with several threads (`julia -t 4`).
+A fit has two levels that could run on threads: the candidates (a Metaheuristics
+population, ABC particles or NUTS chains) and the experiments solved inside one
+loss evaluation. Threading both only adds scheduling overhead once the outer
+level fills the threads, so the specification decides which level receives
+`parallel`; the other runs serially:
+
+| Specification | Level that receives `parallel` |
+| --- | --- |
+| `OptimisationSpec` with a Metaheuristics algorithm (`DE`, `PSO`, `SA`, `NSGA2`) | population candidates, each on a private copy of the solve templates |
+| `OptimisationSpec` with an Optimization.jl algorithm (`LBFGS`, ...) | experiments of each loss and ForwardDiff gradient evaluation |
+| `BayesianSpec` with `n_chains > 1` | chains (`MCMCThreads`) |
+| `BayesianSpec` with `n_chains = 1` | experiments of each log-density evaluation |
+| `ABCSpec` | particles, each on a private copy of the solve templates |
+
+The setting can be stored at preparation and overridden for one call:
 
 ```julia
 prepared_fit = prepare_fit(crystal_model, experiments, fit_specification;
@@ -42,13 +53,11 @@ fitted_result = fit(prepared_fit)                          # uses the prepared s
 fitted_result = fit(prepared_fit; parallel = EnsembleSerial())  # override for one call
 ```
 
-The default is `EnsembleSerial()`. Scores are reduced in experiment order, so
-threaded and serial losses, gradients and fits are bitwise identical. The
-speed-up is bounded by the number of experiments and by the slowest one, and it
-composes with `threaded = true` (population or chain parallelism) through
-Julia's shared thread pool: prefer `parallel` when there are few candidates or
-chains and many experiments, and `threaded` otherwise. Any other ensemble type
-raises an `ArgumentError`.
+The default is `EnsembleSerial()`, which runs every level serially. Scores are
+reduced in experiment order, so threaded and serial losses, gradients and fits
+are bitwise identical. Experiment-level speed-up is bounded by the number of
+experiments and by the slowest one. Any other ensemble type raises an
+`ArgumentError`.
 
 Transient experiments read their initial values from time-zero observations
 through `FromObservation` placeholders in their `RunConditions`; by default only
@@ -78,7 +87,7 @@ bayesian_spec = BayesianSpec(priors = (
     growth = (growth_coefficient = Uniform(1e-12, 1e-9),),),
     sampler = NUTS(), n_samples = 1000, n_chains = 4)
 bayesian_fit = prepare_fit(crystal_model, experiments, bayesian_spec; solver = MoM())
-posterior = fit(bayesian_fit; threaded = true, progress = false)
+posterior = fit(bayesian_fit; parallel = EnsembleThreads(), progress = false)
 joint_draws = posterior.samples
 posterior_predictions = predict(posterior)
 ```
@@ -91,8 +100,9 @@ that Turing exports, so `using CriSTool, Turing` works without a name clash.
 ABC fitting and everything else do not need Turing.
 
 Priors are explicit and never automatically centred on a fitted optimum.
-`threaded` runs chains in parallel (`MCMCThreads`) and `parallel = EnsembleThreads()`
-solves the experiments inside each log-density evaluation on threads; other keywords such as `rng` and `progress`
+With several chains `parallel = EnsembleThreads()` runs them in parallel
+(`MCMCThreads`); with one chain it solves the experiments inside each
+log-density evaluation on threads. Other keywords such as `rng` and `progress`
 go to `Turing.sample`. Prepared mutable state is private per sampling task. The
 native chain is kept in `posterior.backend_result`. See [ABCDE](abcde.md) for
 likelihood-free sampling and [Uncertainty](uq-ensembles.md) for predictions.

@@ -12,7 +12,7 @@ function main()
         bounds = (nucleation = (ln_nucleation_prefactor = (20.0, 50.0), surface_energy = (0.0001, 0.002)),
                   growth = (growth_coefficient = (1e-12, 1e-9), growth_order = (1.0, 4.0))),
         algorithm = DE(N = 16, options = Options(iterations = 4, seed = 42)))
-    fitted_result = fit(prepare_fit(crystal_model, measured_runs, fit_specification); threaded = true)
+    fitted_result = fit(prepare_fit(crystal_model, measured_runs, fit_specification); parallel = EnsembleThreads())
     println("Named estimates: ", fitted_result.parameters)
     println("Observable objectives: ", fitted_result.objectives)
     # The fit remembers its experiments, solver and settings.

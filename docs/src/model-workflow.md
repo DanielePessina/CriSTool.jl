@@ -30,8 +30,10 @@ No initial condition, material property or noise parameter can be selected.
 names and constructs solve templates once (`mode` is `TransientMode()` or
 `SteadyMode(SteadyStateOptions(...))`); `loss(prepared, values)` exposes the
 selected-vector objective for advanced users and autodiff. `fit(prepared;
-threaded=false, parallel=EnsembleSerial())` runs the study; `parallel = EnsembleThreads()`
-(also accepted by `prepare_fit`) solves the experiments of each loss evaluation on threads.
+parallel=EnsembleSerial())` runs the study; `parallel = EnsembleThreads()` (also
+accepted by `prepare_fit`) threads either the candidates (Metaheuristics
+population, ABC particles, several NUTS chains) or the experiments of each loss
+evaluation (Optimization.jl solvers, one NUTS chain), never both.
 
 `fit` returns a `FitResult` for optimisation or `InferenceResult` for sampling.
 An optimisation result contains a new fitted model, named estimates, observable

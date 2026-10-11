@@ -62,7 +62,8 @@ moved study settings into the specifications.
 | `fit(prepared; algorithm = DE(...), adtype, searchoptions)` | `OptimisationSpec(; bounds, algorithm = DE(...), adtype, searchoptions)`, then `fit(prepared)` |
 | `fit(prepared; sampler = NUTS(), n_samples, n_chains)` | `BayesianSpec(; priors, sampler = NUTS(), n_samples, n_chains)`; requires `using Turing` (a weak dependency; `sampler = nothing` means `NUTS()`) |
 | `fit(prepared; sampler, nparticles, generations, earlystop)` | `ABCSpec(; priors, target, sampler, n_particles, n_generations, early_stop)` |
-| `HPC = true` | `fit(prepared; threaded = true)` |
+| `HPC = true` | `fit(prepared; parallel = EnsembleThreads())` |
+| `fit(prepared; threaded = true)` | `fit(prepared; parallel = EnsembleThreads())`; the specification picks candidate or experiment threading |
 | ABC target derived by a Wilks test from `confidenceinterval` | `ABCSpec(target = ...)` takes an explicit finite number |
 | `parameter_samples(posterior)` | `posterior.samples` |
 | `predict(model, runs, samples)` with a default solver | `predict(result)` or `predict(result, runs)` reuse the fit's solver, mode and options; `predict(model, runs, samples; solver)` requires `solver` |

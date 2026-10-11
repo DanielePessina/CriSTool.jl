@@ -31,7 +31,7 @@ function main()
 
     # ABC accepts draws whose discrepancy is below an explicit threshold.
     abc_spec = ABCSpec(priors = selected_priors, target = 10.0, n_particles = 16, n_generations = 2)
-    abc_posterior = fit(prepare_fit(crystal_model, measured_runs, abc_spec); threaded = true)
+    abc_posterior = fit(prepare_fit(crystal_model, measured_runs, abc_spec); parallel = EnsembleThreads())
     # Predict a new isothermal run from the same posterior draws.
     predict(abc_posterior, [RunConditions(temperature = 293.15, concentration = 18.0)];
         saveat = 0.0:600.0:21600.0)
