@@ -2,6 +2,65 @@
 
 ## 0.1.0 — unreleased
 
+- Opt-in `static` test group (`test_args = ["static"]`, also in `"all"`): asserts zero
+  allocations per ODE right-hand-side call for Float64 and ForwardDiff dual state and
+  parameters on every solver, plus JET optimisation analysis of those right-hand sides.
+  CI runs it as its own job and adds a non-blocking `JET.report_package` job.
+- REPL display: run conditions, seeds, solvers, operations and feeds, kinetic
+  and crystallisation models, solutions (transient and steady), fits,
+  inference results and predictions print a readable summary, with a compact
+  one-line form inside containers. Sizes are shown in µm; stored values are
+  unchanged.
+- Opt-in multithreading across experiments: `prepare_fit`, `fit` and `predict`
+  accept `parallel = EnsembleThreads()` (`EnsembleSerial()` and `EnsembleThreads()`
+  are re-exported from SciMLBase). Loss values, ForwardDiff gradients, fits and
+  predictions are bitwise identical to serial. Losses and fits default to
+  `EnsembleSerial()`; `predict` keeps threading its (run, draw) pairs by default
+  and now accepts `parallel = EnsembleSerial()` to opt out.
+
+- Plotting moved to package extensions: `using CairoMakie` (or another Makie
+  backend) enables `plot_predictions` and `plot_chain_diagnostics` (renamed
+  from `ChainStatsPlots`); `PairPlots` additionally enables
+  `plot_posterior_pairplot`. `using CriSTool` no longer loads Makie. Plotting
+  functions return a `Makie.Figure` and never save or display it; the
+  `savename`, `savedir`, `showplot`, `saveplot`, `savestring` and `show_title`
+  keywords are removed. Save with Makie's `save(path, figure)`.
+- `DistributionInitialCrystals(...; weighting)` takes the singletons
+  `NumberWeighted()` (default) or `VolumeWeighted()` instead of `:number`/`:volume`.
+- `KineticContext` no longer stores a `system` field; `system_properties(context)`
+  returns the material system's additional `properties`.
+- Makie conversion traits for solutions: `lines(solution)`, `lines(solution, :d43)`
+  (any `observable_values` name) and `lines(solution, solver, time_index)` for
+  mesh size distributions; `plot(solution)` draws concentration against time.
+- Turing is a weak dependency: `fit` on a `BayesianSpec` needs `using Turing`
+  (`CriSToolTuringExt`), and `BayesianSpec`'s default `sampler` is now `nothing`,
+  meaning `Turing.NUTS()`. `using CriSTool` no longer loads Turing, and
+  `predict` extends `StatsAPI.predict` (the function Turing exports), so
+  `using CriSTool, Turing` has no name clash. The AIS-versus-
+  DynamicPPL ambiguity guard moved into the extension.
+- Depend on `OrdinaryDiffEqTsit5`, `OrdinaryDiffEqSSPRK` and `SciMLBase` instead
+  of the full `OrdinaryDiffEq`. Other time steppers come from the user's own
+  environment (for example `OrdinaryDiffEqSDIRK` or `OrdinaryDiffEq`).
+- FlexiChains is a weak dependency; `CriSToolFlexiChainsExt` resolves the
+  vendored AIS `bundle_samples` dispatch ambiguity when FlexiChains is loaded.
+- Removed the unexported `forwardsensitivity` helper and the SciMLSensitivity
+  dependency. Differentiate `runsimulation(parameters, problem)` with
+  ForwardDiff for local sensitivities; it covers every solver and operation.
+- Named material and kinetic models reused across simulation, selected-parameter
+  optimisation, explicit-prior Bayesian/ABC inference and joint predictions.
+- Callable scalar/node-dependent kinetics with supported named parameter and
+  physical context interfaces; generic material properties fail when required
+  values are missing instead of inheriting lysozyme values.
+- Time-zero initial-observation mappings and explicit seed shapes, preserved by
+  data loading, balancing and bootstrap. Likelihood scoring requires supplied
+  positive variances; no default noise variance is invented.
+- Distribution-based seed populations with number/volume conversion, checked
+  improper moments and mesh mass-loss diagnostics without silent renormalisation.
+- Fitted models returned without input mutation, named joint uncertainty draws,
+  retained failed samples and explicit optional future-measurement noise.
+- Positional inference/ensemble routines are no longer exported; see the named
+  workflow and migration guides. Low-level numerical interfaces remain available.
+
 - Dynamic batch, fixed-volume MSMPR, and variable-volume fed-batch population
   balances, with independent initial seeds and crystal-bearing or clear feeds.
 - Explicit autonomous MSMPR steady solving by dynamic relaxation, checked with
@@ -52,3 +111,9 @@ adapters and multidimensional/multivessel models remain outside this release.
 
 This version has not been registered, tagged or published. Release gates and
 the final tested commit must be accepted before publication.
+- `Compat.jl` is a dependency; supported but non-exported names
+  (`CRISTOOL_GAS_CONSTANT`, `CRISTOOL_BOLTZMANN_CONSTANT`,
+  `AbstractDiscretisedSolver`, `KissABC`) are marked `public` on Julia 1.11 and
+  later.
+- Added `CONTRIBUTING.md` and a CompatHelper workflow. The Distributions
+  compat range is now open-ended (`0.25.88`) instead of capped at `0.25.126`.

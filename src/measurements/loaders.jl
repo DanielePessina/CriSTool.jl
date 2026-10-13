@@ -95,6 +95,24 @@ function _initial_crystals_from_table(table, initial_crystals_cols)
     end
 end
 
+# Table temperatures and seed columns fill the shared `RunConditions` keywords.
+function _table_run_conditions(condition_settings::NamedTuple, table_temperature, table_crystals, experiment_id)
+    if haskey(condition_settings, :temperature)
+        isnan(table_temperature) || throw(ArgumentError(
+            "Experiment $experiment_id has a temperature column and a temperature condition; supply one."))
+    else
+        isnan(table_temperature) && throw(ArgumentError(
+            "Experiment $experiment_id has no temperature; map a temperature column or pass conditions = (temperature = ...,)."))
+        condition_settings = merge(condition_settings, (; temperature = table_temperature))
+    end
+    if table_crystals !== nothing
+        haskey(condition_settings, :crystals) && throw(ArgumentError(
+            "Supply initial crystals through initial_crystals_cols or conditions, not both."))
+        condition_settings = merge(condition_settings, (; crystals = table_crystals))
+    end
+    return RunConditions(; condition_settings...)
+end
+
 """
     experiments_from_table(table; id_col=:Exp_ID, observables, metadata_cols,
                            temperature_transform=identity, filters=NamedTuple(),
@@ -116,7 +134,8 @@ function experiments_from_table(table;
                                     NamedTuple(),
                                 temperature_transform = identity,
                                 filters::NamedTuple = NamedTuple(),
-                                initial_crystals_cols = nothing)
+                                initial_crystals_cols = nothing,
+                                conditions::NamedTuple = NamedTuple())
     table = DataFrame(table)
     id_source = _measurement_source_column(id_col)
     _require_measurement_column(table, id_source, "experiment identifiers")
@@ -189,12 +208,11 @@ function experiments_from_table(table;
         experiment_id = Int(_consistent_measurement_value(group, id_source,
                                                           experiment_index,
                                                           "experiment identifier"))
-        initial_crystals = _initial_crystals_from_table(group, initial_crystals_cols)
+        table_crystals = _initial_crystals_from_table(group, initial_crystals_cols)
 
         experiments[experiment_index] = CrystallisationExperiment(;
             observables = named_observables,
-            temperature = temperature_value,
-            initial_crystals = initial_crystals,
+            conditions = _table_run_conditions(conditions, temperature_value, table_crystals, experiment_id),
             exp_id = experiment_id,
             metadata = metadata)
     end
@@ -276,7 +294,8 @@ function load_measurements(filepath::AbstractString;
                            temperature_transform = identity,
                            temperature_range::Tuple = (nothing, nothing),
                            filters::NamedTuple = NamedTuple(),
-                           initial_crystals_cols = nothing)
+                           initial_crystals_cols = nothing,
+                           conditions::NamedTuple = NamedTuple())
     table = _measurement_file_table(filepath, format)
     if temperature_range != (nothing, nothing)
         _require_measurement_column(table, :Temperature, "temperature filtering")
@@ -299,5 +318,6 @@ function load_measurements(filepath::AbstractString;
                                   metadata_cols = normalized_metadata,
                                   temperature_transform = temperature_transform,
                                   filters = filters,
-                                  initial_crystals_cols = initial_crystals_cols)
+                                  initial_crystals_cols = initial_crystals_cols,
+                                  conditions)
 end

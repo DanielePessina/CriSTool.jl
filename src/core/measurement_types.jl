@@ -1,13 +1,6 @@
 ## Measurements
 
 """
-    AbstractObservable
-
-Abstract supertype for observable containers (see `Observable`).
-"""
-abstract type AbstractObservable end
-
-"""
     ObservableColumns(; time=:Time, mean, variance=nothing)
 
 Describe the source columns used to build one measured observable. Each
@@ -46,8 +39,7 @@ bootstrap, and plotting:
 - a supplied variance has one value per measurement and is finite and
   nonnegative.
 """
-struct Observable{Tt <: AbstractVector{<:Real}, Tm <: AbstractVector{<:Real}, Tv} <:
-       AbstractObservable
+struct Observable{Tt <: AbstractVector{<:Real}, Tm <: AbstractVector{<:Real}, Tv}
     time::Tt
     mean::Tm
     variance::Tv
@@ -89,50 +81,24 @@ function Observable(; time, mean, variance = nothing)
 end
 
 """
-    AbstractExperiment
-
-Abstract supertype for a single experimental run (see `CrystallisationExperiment`).
-"""
-abstract type AbstractExperiment end
-
-"""
-    CrystallisationExperiment{O<:NamedTuple,I,M<:NamedTuple} <: AbstractExperiment
+    CrystallisationExperiment(; observables, exp_id, conditions, metadata=(;))
 
 A single crystallisation experiment: a typed `NamedTuple` of observables
-plus the run conditions.
-
-Fields:
-- `observables::O`: e.g. `(concentration = Observable(...), d43 = Observable(...))`.
-  The `concentration` observable is mandatory for loss evaluation.
-- `temperature::Float64`: run temperature in Kelvin
-- `exp_id::Int`: experiment identifier
-- `initial_crystals::Union{Nothing,AbstractInitialCrystals}`: optional initial
-  seed characteristics used to construct the solver state
-- `metadata::M`: additional typed run metadata
+(e.g. `(concentration = Observable(...), d43 = Observable(...))`), an integer
+identifier, the `RunConditions` it was run under, and additional metadata.
+Conditions may refer to the experiment's own time-zero observations through
+`FromObservation` placeholders.
 
 The `NamedTuple` shape keeps the container type-stable and Tables.jl
 compatible; additional observables (pH, mass, PSD, ...) are added as new
 fields, not new container types.
 """
-Base.@kwdef @concrete struct CrystallisationExperiment{O <: NamedTuple,
-                                                       I <: Union{Nothing, AbstractInitialCrystals},
-                                                       M <: NamedTuple} <:
-                 AbstractExperiment
+Base.@kwdef struct CrystallisationExperiment{O <: NamedTuple, C <: RunConditions, M <: NamedTuple}
     observables::O
-    temperature::Float64
     exp_id::Int
-    initial_crystals::I = nothing
+    conditions::C
     metadata::M = NamedTuple()
 end
-
-"""
-    initial_concentration(expt::CrystallisationExperiment) -> Real
-
-Initial solute concentration of an experiment, read from the
-`concentration` series observable (first timepoint).
-"""
-initial_concentration(expt::CrystallisationExperiment) =
-    expt.observables.concentration.mean[1]
 
 """
     _experiment_time_span(expt::CrystallisationExperiment) -> (tmin, tmax)
@@ -143,3 +109,30 @@ function _experiment_time_span(expt::CrystallisationExperiment)
     times = vcat((observable.time for observable in values(expt.observables))...)
     return extrema(times)
 end
+
+function _initial_observation(experiment_run::CrystallisationExperiment, observable_name::Symbol)
+    hasproperty(experiment_run.observables, observable_name) ||
+        throw(ArgumentError("Experiment $(experiment_run.exp_id) lacks initial observable :$observable_name."))
+    initial_series = getproperty(experiment_run.observables, observable_name)
+    initial_index = findfirst(iszero, initial_series.time)
+    initial_index === nothing && throw(ArgumentError(
+        "Experiment $(experiment_run.exp_id): :$observable_name must have a time-zero initial observation."))
+    return initial_series.mean[initial_index]
+end
+
+"""Run conditions with placeholders replaced by the experiment's time-zero observations."""
+_experiment_conditions(experiment_run::CrystallisationExperiment) =
+    _resolved_conditions(experiment_run.conditions,
+        observable_name -> _initial_observation(experiment_run, observable_name))
+
+"""Run temperature in Kelvin at time zero, for labels and summaries."""
+_experiment_start_temperature(experiment_run::CrystallisationExperiment) =
+    temperature(experiment_run.conditions.temperature, 0.0)
+
+"""
+    initial_concentration(expt::CrystallisationExperiment) -> Real
+
+First measured concentration of an experiment.
+"""
+initial_concentration(expt::CrystallisationExperiment) =
+    expt.observables.concentration.mean[1]

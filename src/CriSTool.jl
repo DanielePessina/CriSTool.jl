@@ -9,12 +9,16 @@ using Base.Threads
 using LinearAlgebra
 using Random
 using Statistics
-using Turing
+import Compat
 
 # Scientific Computing & Differential Equations
-using OrdinaryDiffEq
+# The solver defaults (Tsit5, SSPRK43) come from the OrdinaryDiffEq subpackages;
+# users pass any other algorithm instance from the subpackage that defines it.
+using SciMLBase: SciMLBase, ODEProblem, remake, solve, CallbackSet, ContinuousCallback,
+                 DiscreteCallback, EnsembleSerial, EnsembleThreads
+using OrdinaryDiffEqTsit5: Tsit5
+using OrdinaryDiffEqSSPRK: SSPRK43
 import DiffEqCallbacks: AutoAbstol, StepsizeLimiter
-using SciMLSensitivity
 using OptimizationBase
 using PreallocationTools: DiffCache, get_tmp
 
@@ -22,36 +26,21 @@ using PreallocationTools: DiffCache, get_tmp
 using DataFrames
 using ComponentArrays
 using Distributions
+using QuadGK: quadgk
 using MCMCChains
 import Base.Iterators
 
-# Parallel Computing & Progress
-using ProgressMeter
-
-# File I/O & Serialization
-using JLD2
+# File I/O
 import CSV
 import JSON
 
-# Visualization
-using PairPlots
-import CairoMakie
-import Makie
-import FlexiChains
-
-# Machine Learning & Optimization
-# import Flux
-# import MLJFlux
-# import MLJGaussianProcesses
-# import SymbolicRegression
+# Optimization
 using Metaheuristics
 
 # Utilities
 using ConcreteStructs
-using Dates
+using PrecompileTools: @setup_workload, @compile_workload
 using MonteCarloMeasurements
-import Term
-using PrettyTables
 using StaticArrays
 
 # Shared numerical policies. Keeping these names centralized makes model,
@@ -61,89 +50,94 @@ const CRISTOOL_MOMENT_DENSITY_FLOOR = 1e-8
 const CRISTOOL_WENO_EPSILON = 1e-6
 const CRISTOOL_DISSOLUTION_EQUILIBRIUM_TOLERANCE = 1e-3
 const CRISTOOL_DISSOLUTION_LREF = 1e-6
-const CRISTOOL_CONFIDENCE_Z95 = 1.96
 const CRISTOOL_FAILED_SIMULATION_PENALTY = 1e6
 const CRISTOOL_MAX_SOLVER_ITERS = 1e8
-const CRISTOOL_MAX_PREPARED_SOLVER_ITERS = 1_000
-const CRISTOOL_MAX_PREPARED_DISCRETIZED_SOLVER_ITERS = 10_000
-const CRISTOOL_MAX_PREPARED_SOLVER_SECONDS = 5.0
-const CRISTOOL_PARALLEL_PE_BATCH_SIZE = 8
-const CRISTOOL_MAX_OPTIMISER_CALLS = 1e18
 const CRISTOOL_PRIOR_PLOT_SAMPLES = 2^18
 
+# Universal physical constants (SI).
+"""Molar gas constant R (J/mol/K) used by Arrhenius rate laws."""
+const CRISTOOL_GAS_CONSTANT = 8.314
+"""Boltzmann constant k_B (J/K) used by classical nucleation theory."""
+const CRISTOOL_BOLTZMANN_CONSTANT = 1.380649e-23
+
 ## Export stuff
-export CrystallisationFVSolution, CrystallisationMoMSolution,
-       CrystallisationQMOMSolution, CrystallisationDQMOMSolution,
-       CrystallisationSteadyStateSolution, SteadyStateConvergenceError,
-       EnsembleFVSolution, EnsembleMoMSolution,
+export CrystallisationSolution, AbstractPopulationTrajectory, MeshPopulation,
+       MomentPopulation, QuadraturePopulation,
+       CrystallisationSteadyStateSolution, SteadyStateConvergenceError, SteadyStateOptions,
        CrystallisationProblem
-export Observable, ObservableColumns, CrystallisationExperiment, AbstractExperiment,
+export Observable, ObservableColumns, CrystallisationExperiment,
        initial_concentration
 export AbstractCrystallisationOperation, BatchOperation, MSMPROperation, FedBatchOperation,
        CrystallisationFeed, reactor_vars, reactor_volume, operation_flows
-export AbstractInitialCrystals, LogNormalInitialCrystals, GaussianInitialCrystals
+export AbstractInitialCrystals, LogNormalInitialCrystals, GaussianInitialCrystals,
+       FromObservation, RunConditions
 export AbstractSolubilityModel, ConstantSolubility, PolynomialSolubility, CallableSolubility,
-       AbstractSaturationModel, ConstantSaturation, PolynomialSaturation, CallableSaturation,
-       lysozyme_solubility, lysozyme_saturation, saturation_concentration, supersaturation
+       lysozyme_solubility, saturation_concentration, supersaturation
 export AbstractTemperature, ConstantTemperature, LinearTemperature, RampTemperature,
        CallableTemperature, temperature
 export AbstractSolution, state_vars, size_metrics, observable_values, solvent_state,
        default_solvent_dynamics
-export AbstractNucleationFunction, AbstractGrowthFunction, AbstractFPGrowthFunction,
-       AbstractFPScalarGrowthFunction, AbstractFPLengthGrowthFunction, nucl_CNT,
-       nucl_empirical, nucl_empirical_energy, nucl_CNTnoS, nucl_secondary,
-       nucl_prim_plus_second, nucl_CNT_plus_second, nucl_CNT_fixed,
-       nucl_empirical_fixed, AbstractDissolutionFunction,
-       AbstractFPScalarDissolutionFunction, AbstractFPLengthDissolutionFunction,
+export AbstractNucleationFunction, AbstractGrowthFunction,
+       AbstractScalarGrowthFunction, AbstractLengthGrowthFunction, CNTNucleation,
+       EmpiricalNucleation, ArrheniusNucleation, CNTNucleationNoSupersaturation, SecondaryNucleation,
+       CombinedNucleation, NoNucleation, AbstractDissolutionFunction,
        AbstractScalarDissolutionFunction, AbstractLengthDissolutionFunction,
-       nodissolution, nondissolution, dissolutionrate, dissolutionrate!, dissolutionrate_at_length,
+       NoDissolution, dissolutionrate, dissolutionrate!, dissolutionrate_at_length,
        net_growth_rate, net_growth_rate!, net_growth_rate_at_length,
-       growth_empirical, growth_empirical_fixed, growth_energy, growth_energy_est,
-       growth_empirical_length, growth_BpS, growth_BCF,
-       growth_dissolution, growth_dissolution_length, growth_energy_dissolution,
+       EmpiricalGrowth, ArrheniusGrowth,
+       EmpiricalLengthGrowth, BirthSpreadGrowth, BCFGrowth,
+       ArrheniusDissolution, ArrheniusLengthDissolution,
        nucleationrate, growthrate, aggregationrate, breakagerate,
-       growthrate!, growthrate_at_length, net_growthrate
-export AbstractAggregationFunction, AbstractBreakageFunction, nobreakage,
-       breakage_empirical, breakage_uniform, noaggregation,
-       aggr_scalar, aggr_linear, aggr_linearvol, aggr_avg
-export runsimulation, paramaxis, crystallisation_odeproblem,
+       growthrate!, growthrate_at_length
+export AbstractAggregationFunction, AbstractBreakageFunction, NoBreakage,
+       EmpiricalBreakage, UniformBreakage, NoAggregation,
+       ConstantAggregation, SizeSumAggregation, VolumeSumAggregation, AverageAggregation
+export runsimulation, paramaxis, kinetic_parameter_vector, crystallisation_odeproblem,
        crystallisation_solution,
        solve_steadystate,
-       get_characteristic_size, getmomentsizes,
        initial_state_from_characteristics
 export AbstractPELossFunction, AbstractVarianceModel, MeasuredVariance, RelativeVariance,
-       logMLE, mae, loss, prepare_loss, LossSetup
+       GaussianNLL, MeanAbsoluteError, loss
 export experiments_from_table, load_measurements,
        bootstrap_repeatmeasurements, balance_variances, repeatmeasurementbalancer,
        psd_measurementbalancer, bootstrap_measurements
 export AbstractSolver, AbstractMomentSolver, FiniteVol, MoM, QMOM, DQMOM, WENO,
        QMOMQuadrature, QMOMInversionDiagnostics, DQMOMProjectionDiagnostics,
        invert_moments,
-       moment_order, moment_count, nmoments, quadrature, qmom_quadrature,
-       dqmom_quadrature,
+       moment_order, moment_count, quadrature,
        aggregation_moment_source, breakage_moment_source
-export run_abc, AbstractABCSampler, ABCDESampler, ABCDETurnerSampler
-export run_ensemble, run_ensemble_fixed
+export AbstractABCSampler, ABCDESampler, ABCDETurnerSampler
+export EnsembleSerial, EnsembleThreads
 export PredictionEnsemble, prediction_summary
-export PE_Routine, PE_Routine_Optimisation, ABCDE_Routine, ABCDE_Turner_Routine,
-       plot_posterior_pairplot, plot_measurements_vs_ensemble
-export ChainPairPlots, ChainStatsPlots, ChainMeasurementPlots
-export plot_ps_measurements_vs_ensemble, plot_measurements_vs_simulation,
-       plot_ps_measurements_vs_simulation
-export chains_to_matrix, distribution_to_matrix, create_product_prior, prior_to_matrix
-export nuts_model, MCMC_Routine, kinetic_parameter_symbols, rename_chain
-export CRISTOOL_PALETTE
+export plot_predictions, plot_posterior_pairplot, plot_chain_diagnostics
+export rename_chain
+export CrystallisationSystem, LysozymeSystem, KineticModel, CrystallisationModel,
+       CallableGrowth, CallableNucleation, CallableLengthGrowth, KineticContext, system_properties,
+       required_properties, named_parameters, simulate, OptimisationSpec, BayesianSpec, ABCSpec,
+       PreparedFit, prepare_fit, fit, FitResult, InferenceResult, is_likelihood, loss_terms,
+       AbstractSimulationMode, TransientMode, SteadyMode,
+       ParameterSamples, parameter_samples, predict, PredictionResult, measurement_samples,
+       DistributionInitialCrystals, AbstractSeedWeighting, NumberWeighted, VolumeWeighted,
+       number_weighted, seed_domain_diagnostics
+
+# Supported but not exported: documented in the guides and meant to be used
+# qualified (`CriSTool.CRISTOOL_GAS_CONSTANT`) or imported by name. `public`
+# is a no-op on Julia 1.10 and a real marker from 1.11 (`Base.ispublic`).
+# Underscore-prefixed names are internal and deliberately absent.
+Compat.@compat public CRISTOOL_GAS_CONSTANT, CRISTOOL_BOLTZMANN_CONSTANT,
+                      AbstractDiscretisedSolver, KissABC
 
 # Core types and public interfaces.
 include("core/solution_types.jl")
 include("core/kinetic_types.jl")
 include("core/loss_types.jl")
 include("core/initial_crystal_types.jl")
-include("core/measurement_types.jl")
 include("core/solver_types.jl")
 include("core/temperature_types.jl")
 include("core/saturation_types.jl")
 include("core/operation_types.jl")
+include("core/condition_types.jl")
+include("core/measurement_types.jl")
 include("core/problem_types.jl")
 
 # Measurement ingestion and normalization.
@@ -154,12 +148,14 @@ include("measurements/bootstrap.jl")
 # Solution post-processing precedes the model and solver implementations.
 include("solvers/post_solution.jl")
 include("solvers/initial_state.jl")
+include("solvers/seed_distributions.jl")
 
 # Kinetic rate families and population-balance terms.
 include("physics/model_interfaces.jl")
 include("physics/nucleation_rates.jl")
 include("physics/growth_rates.jl")
 include("physics/aggregation_breakage_rates.jl")
+include("core/model_types.jl")
 
 # Numerical solver implementations and public simulation wrappers.
 include("solvers/solver_helpers.jl")
@@ -169,37 +165,33 @@ include("solvers/mom.jl")
 include("solvers/dqmom.jl")
 include("solvers/finite_volume.jl")
 include("solvers/weno.jl")
-include("solvers/runsimulation.jl")
 include("solvers/steady_state.jl")
-
-include("output/pretty_printing.jl")
 
 include("vendor/KissABC.jl")
 using .KissABC
-using .KissABC: ABCDE, smc, AIS, ApproxPosterior, ApproxKernelizedPosterior
 
 # Inference and posterior utilities.
 include("inference/parameter_estimation.jl")
-
-# include("inference/parameter_estimation_bo.jl")
-
 include("inference/abc.jl")
 
 include("inference/chain_utilities.jl")
 
 include("inference/bayesian.jl")
 
-# Uncertainty workflows.
-include("uncertainty/sensitivity.jl")
-include("uncertainty/ensembles.jl")
 include("inference/workflow_interfaces.jl")
+include("inference/model_workflows.jl")
 
-# Plotting is included last because it consumes all public solution and
-# inference interfaces.
-include("plotting/common.jl")
-include("plotting/ensemble.jl")
-include("plotting/simulation.jl")
+# REPL display for user-facing types (after every type it dispatches on)
+include("core/show.jl")
 
+# Plotting entry points; their methods live in the Makie/PairPlots extensions.
+include("plotting/plots.jl")
 
+include("precompile_workload.jl")
+
+function __init__()
+    Base.Experimental.register_error_hint(_plotting_method_error_hint, MethodError)
+    return nothing
+end
 
 end

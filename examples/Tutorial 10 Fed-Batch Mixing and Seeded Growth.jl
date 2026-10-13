@@ -1,4 +1,4 @@
-"""
+#=
 Tutorial 10: fed-batch pure mixing and seeded growth.
 
 A fed-batch has one inlet and no outlet: the volume is a reactor state with
@@ -17,14 +17,15 @@ G·Δt, so d43 shifts by G·Δt while M₀·V stays conserved and the concentrat
 drops slightly below the pure-mixing value because solute is consumed.
 
 Run with:  julia --project=examples "examples/Tutorial 10 Fed-Batch Mixing and Seeded Growth.jl"
-"""
+=#
 
 using CriSTool
 using CairoMakie
 
 function main()
-    nucl = nucl_empirical_fixed(log10_nucleation_prefactor = -Inf,
-                                nucleation_order = 1.0)
+    # Nucleation is off: `NoNucleation()` is the model default.
+    unit_solubility = LysozymeSystem(saturation_model = ConstantSolubility(1.0))
+    qmom_solver = QMOM(nquadrature = 3, reltol = 1e-10, abstol = 1e-12)
     operation = FedBatchOperation(initial_volume = 2.0, inflow = 0.5,
                                   feed = CrystallisationFeed(concentration = 2.0))
     seed = LogNormalInitialCrystals(mass_concentration = 0.5, d43 = 20e-6,
@@ -33,48 +34,40 @@ function main()
     v0 = operation.initial_volume
     c0 = 8.0
     c_f = 2.0
+    fed_batch_run = RunConditions(temperature = 293.15, concentration = c0,
+                                  crystals = seed, operation = operation)
 
     # ---- Part A: pure mixing (zero growth) ----
-    gr_none = growth_empirical_fixed(growth_coefficient = 0.0, growth_order = 1.0)
-    _, mixing = runsimulation(
-        Float64[];
-        nucl = nucl, gr = gr_none, agg = noaggregation(), br = nobreakage(),
-        solver = QMOM(nquadrature = 3, reltol = 1e-10, abstol = 1e-12),
-        operation = operation, initial_crystals = seed,
-        initial_concentration = c0, saturation_model = ConstantSolubility(1.0),
-        save_idx = save_grid)
+    mixing_model = CrystallisationModel(unit_solubility;
+        growth = EmpiricalGrowth(growth_coefficient = 0.0, growth_order = 1.0))
+    mixing = simulate(mixing_model, fed_batch_run; solver = qmom_solver, saveat = save_grid)
 
     volume = observable_values(mixing, :volume)
     c_oracle(t) = (v0 * c0 + operation.inflow * t * c_f) / (v0 + operation.inflow * t)
     m0_inventory(v, m0) = v * m0
     @assert isapprox(volume[end], 4.0; rtol = 1e-9)
     @assert isapprox(mixing.concentration[end], c_oracle(4.0); rtol = 1e-9)
-    @assert isapprox(m0_inventory(volume[1], mixing.moments[1, 1]),
-                     m0_inventory(volume[end], mixing.moments[1, end]); rtol = 1e-8)
+    @assert isapprox(m0_inventory(volume[1], mixing.population.moments[1, 1]),
+                     m0_inventory(volume[end], mixing.population.moments[1, end]); rtol = 1e-8)
     println("Part A — pure mixing (V₀ = $v0 m³, Q = 0.5 m³/s, C₀ = $c0, C_f = $c_f)")
     println("  V(4) = $(volume[end]) m³   C(4) = $(mixing.concentration[end]) kg/m³ (mixing oracle $([c_oracle(0.0), c_oracle(4.0)]))")
-    println("  seed inventory V·M₀ conserved: $(m0_inventory(volume[1], mixing.moments[1, 1])) ≈ $(m0_inventory(volume[end], mixing.moments[1, end]))")
+    println("  seed inventory V·M₀ conserved: $(m0_inventory(volume[1], mixing.population.moments[1, 1])) ≈ $(m0_inventory(volume[end], mixing.population.moments[1, end]))")
 
     # ---- Part B: seeded growth (constant G = 2e-9 m/s) ----
-    gr_grow = growth_empirical_fixed(growth_coefficient = 2e-9, growth_order = 0.0)
-    _, growing = runsimulation(
-        Float64[];
-        nucl = nucl, gr = gr_grow, agg = noaggregation(), br = nobreakage(),
-        solver = QMOM(nquadrature = 3, reltol = 1e-10, abstol = 1e-12),
-        operation = operation, initial_crystals = seed,
-        initial_concentration = c0, saturation_model = ConstantSolubility(1.0),
-        save_idx = save_grid)
+    growing_model = CrystallisationModel(unit_solubility;
+        growth = EmpiricalGrowth(growth_coefficient = 2e-9, growth_order = 0.0))
+    growing = simulate(growing_model, fed_batch_run; solver = qmom_solver, saveat = save_grid)
 
     growth_rate = 2e-9
     d43_shift = growth_rate * (save_grid[end] - save_grid[1])
     growing_volume = observable_values(growing, :volume)
     @assert isapprox(growing.d43[end], growing.d43[1] + d43_shift; rtol = 0.01)
-    @assert isapprox(m0_inventory(growing_volume[1], growing.moments[1, 1]),
-                     m0_inventory(growing_volume[end], growing.moments[1, end]); rtol = 1e-8)
+    @assert isapprox(m0_inventory(growing_volume[1], growing.population.moments[1, 1]),
+                     m0_inventory(growing_volume[end], growing.population.moments[1, end]); rtol = 1e-8)
     @assert growing.concentration[end] < c_oracle(4.0)      # growth consumes solute
     println("Part B — seeded growth (G = $(growth_rate) m/s)")
     println("  d43(0) = $(growing.d43[1]) m → d43(4) = $(growing.d43[end]) m (growth shift $(d43_shift) m)")
-    println("  V·M₀ conserved: $(m0_inventory(growing_volume[1], growing.moments[1, 1])) ≈ $(m0_inventory(growing_volume[end], growing.moments[1, end]))")
+    println("  V·M₀ conserved: $(m0_inventory(growing_volume[1], growing.population.moments[1, 1])) ≈ $(m0_inventory(growing_volume[end], growing.population.moments[1, end]))")
     println("  C(4) = $(growing.concentration[end]) kg/m³ vs pure-mixing $(c_oracle(4.0)) kg/m³")
 
     fig = Figure(size = (900, 550))

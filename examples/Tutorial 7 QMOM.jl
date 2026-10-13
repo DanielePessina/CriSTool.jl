@@ -1,33 +1,24 @@
-"""
+#=
 Tutorial 7: a three-node Quadrature Method of Moments (QMOM) simulation.
 
 QMOM evolves raw moments and reconstructs a Gaussian quadrature at each saved
 time. The quadrature is useful for evaluating size-dependent closures while
 the public observables remain the moment-derived d32 and d43 metrics.
-"""
+=#
 
 using CriSTool
 using CairoMakie
 
 function main()
-    params = [38.0, 0.0006, 1e-9 / 60, 3.0]
-    solver = QMOM(nquadrature = 3)
-    save_grid = collect(0.0:1800.0:18000.0)
-
-    _, solution = runsimulation(
-        params;
-        nucl = nucl_CNT(),
-        gr = growth_empirical(),
-        agg = noaggregation(),
-        br = nobreakage(),
-        solver = solver,
-        initial_concentration = 18.0,
-        save_idx = save_grid,
-    )
+    crystal_model = CrystallisationModel(LysozymeSystem();
+        nucleation = CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 0.0006),
+        growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
+    solution = simulate(crystal_model, RunConditions(temperature = 293.15, concentration = 18.0);
+        solver = QMOM(nquadrature = 3), saveat = collect(0.0:1800.0:18000.0))
 
     final_rule = quadrature(solution, length(solution.time))
     println("QMOM success: ", solution.success)
-    println("Tracked raw moments: ", size(solution.moments, 1))
+    println("Tracked raw moments: ", size(solution.population.moments, 1))
     println("Final d43: ", round(solution.d43[end], sigdigits = 5), " m")
     println("Final nodes (m): ", round.(final_rule.nodes, sigdigits = 5))
     println("Final weights: ", round.(final_rule.weights, sigdigits = 5))
@@ -40,9 +31,9 @@ function main()
            color = :dodgerblue, label = "concentration")
     lines!(size_axis, solution.time ./ 60, 1e6 .* solution.d43,
            color = :crimson, label = "d43")
-    for node_index in axes(solution.quadrature_nodes, 1)
+    for node_index in axes(solution.population.nodes, 1)
         lines!(size_axis, solution.time ./ 60,
-               solution.quadrature_nodes[node_index, :] .* 1.0e6,
+               solution.population.nodes[node_index, :] .* 1.0e6,
                linestyle = :dash, label = "node $node_index")
     end
     axislegend(size_axis, position = :rb)

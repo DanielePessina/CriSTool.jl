@@ -17,18 +17,25 @@ quadrature output.
 
 ## Outputs by solver
 
-- **MoM**: `concentration`, `d10`, `d32`, `d43`, `moment2`.
-- **QMOM**: `concentration`, raw `moments`, reconstructed
-  `quadrature_nodes`/`quadrature_weights`, and the moment-derived
-  `d10`, `d32`, `d43`, `moment2` metrics. A three-node QMOM evolves `M₀:M₅`.
-- **DQMOM**: `concentration`, physical quadrature `weights`/`nodes`, the
-  corresponding raw `moments`, projection diagnostics, and the same
-  `d10`, `d32`, `d43`, `moment2` metrics. A three-node DQMOM evolves six
-  direct population variables and represents `M₀:M₅`.
-- **FiniteVol/WENO**: `concentration`, `numberdensity`, `voldensity`,
-  volume-density quantiles `d10q`, `d50q`, `d90q`, **and** the
-  moment-derived sizes `d10`, `d32`, `d43`, `moment2` (computed once at
-  solve time so `sol.d43` works the same way as on a MoM solution).
+Every solver returns a `CrystallisationSolution`. The shared fields are
+`time`, `concentration`, `solvent_state`, `reactor_state`, the moment-derived
+sizes `d10`, `d32`, `d43`, `moment2`, `final_state`, `ode_stats` and
+`success`. The solver-specific data live in `solution.population`:
+
+- **MoM**: `MomentPopulation` with the raw `moments` (`µ0..µ_nmoments`).
+- **QMOM**: `QuadraturePopulation` with the raw `moments`, the reconstructed
+  quadrature `nodes`/`weights` and the inversion diagnostics. A three-node
+  QMOM evolves `M₀:M₅`.
+- **DQMOM**: `QuadraturePopulation` with the physical quadrature
+  `weights`/`nodes`, the corresponding raw `moments` and projection
+  diagnostics. A three-node DQMOM evolves six direct population variables and
+  represents `M₀:M₅`.
+- **FiniteVol/WENO**: `MeshPopulation` with `numberdensity`, `voldensity`
+  and the volume-density quantiles `d10q`, `d50q`, `d90q`.
+
+`state_vars(solution)` and `size_metrics(solution)` return the same data as
+named tuples, independently of the solver; `quadrature(solution, index)`
+returns one saved QMOM or DQMOM rule.
 
 ## Mesh storage
 
@@ -37,6 +44,27 @@ For `FiniteVol` and `WENO`, the mesh data (`cell_face`, `cell_centre`,
 length-dependent dissolution rate accepts an explicit mesh argument when it
 is evaluated outside the solver; use the solver-owned scratch buffer with
 `growthrate!` in custom discretised code.
+
+With the default solvent dynamics, mesh solvers take dissolved solute from
+the exact change of the cell-centre third moment `µ3 = Σᵢ cᵢ³ nᵢ ΔL` that
+their face fluxes `F` produce, plus the crystal volume crossing `lmin` and
+`lmax` at face size:
+
+```math
+\frac{dC}{dt} = -\rho k_v \Big[\sum_i c_i^3 (F_i - F_{i+1})
+  + F_{N+1} L_{\max}^3 - F_1 L_{\min}^3\Big].
+```
+
+`C + ρ kv µ3` therefore changes only through operation flows and the reported
+size-boundary flows, to round-off, for nucleation, growth and dissolution
+through `lmin`. Mesh error shows up in the population, which is spread by
+numerical diffusion and so holds slightly more `µ3` than the exact one; the
+solute pays for that extra mass, so `concentration` carries the same
+first-order error and converges as the mesh is refined. A custom
+`solvent_dynamics` callable receives growth rates, not fluxes. If it calls
+`default_solvent_dynamics` on a mesh state, that call uses the cell-centre
+quadrature of `3∫G L² n dL`, which is first-order consistent but not exactly
+conservative.
 
 WENO limits each proposed time step to `0.9 * cell_dL / maximum(abs, G)`
 using the net growth or dissolution rate at the current accepted state. It
@@ -57,8 +85,15 @@ to reconstruct the active rule at saved time index `i`.
 QMOM accepts scalar growth or dissolution kinetics and the supported
 volume-additive aggregation and uniform-in-volume breakage closures. DQMOM
 accepts the same validated scalar closures, plus a length-dependent growth
-law. Both moment solvers reject `growth_dissolution_length`; use FiniteVol or
+law. Both moment solvers reject `ArrheniusLengthDissolution`; use FiniteVol or
 WENO for length-dependent dissolution.
+
+Complete dissolution differs between the two. QMOM removes a quadrature node
+when it dissolves down to `minimum_size` and releases its mass as solute. DQMOM
+stores each node in its state and cannot remove one mid-solve, so it throws a
+`DomainError` at the time a node reaches `minimum_size`. Partial dissolution
+that keeps every node above the boundary runs normally; use QMOM, FiniteVol or
+WENO when crystals may dissolve completely.
 
 ## DQMOM state and contract
 
@@ -72,7 +107,7 @@ moment vector used by `MoM` and `QMOM`. Its public population block is
 where `wᵢ` is a particle-number weight in `m⁻³` and `Lᵢ` is a physical crystal
 length in metres. The initial weights must be strictly positive and the nodes
 must be distinct and above `minimum_size`. DQMOM is seeded-only in this first
-implementation: provide `initial_crystals` or a complete direct `initial_state`.
+implementation: provide a seed through `RunConditions(crystals = ...)`.
 An empty initial population is rejected instead of being activated by an
 artificial epsilon seed.
 
@@ -100,27 +135,19 @@ all nodes remain above `minimum_size`, then the solve fails with a
 ```julia
 using CriSTool
 
-initial_crystals = LogNormalInitialCrystals(
-    mass_concentration = 0.25,
-    d43 = 12e-6,
-    geometric_std = 1.25)
+growth_only_model = CrystallisationModel(
+    LysozymeSystem(saturation_model = ConstantSolubility(10.0));
+    growth = EmpiricalGrowth(growth_coefficient = 3e-9, growth_order = 1.2))
 
-parameters = [3e-9, 1.2]  # growth coefficient (m/s), supersaturation order
-problem, solution = runsimulation(
-    parameters;
-    nucl = nucl_empirical_fixed(log10_nucleation_prefactor = -Inf,
-                                nucleation_order = 1.0),
-    gr = growth_empirical(),
-    agg = noaggregation(),
-    br = nobreakage(),
-    solver = DQMOM(nquadrature = 3),
-    initial_crystals = initial_crystals,
-    initial_concentration = 20.0,
-    saturation_model = ConstantSolubility(10.0),
-    save_idx = 0.0:3600.0:14400.0)
+seeded_run = RunConditions(temperature = 293.15, concentration = 20.0,
+    crystals = LogNormalInitialCrystals(
+        mass_concentration = 0.25, d43 = 12e-6, geometric_std = 1.25))
 
-solution.nodes[:, end]
-solution.weights[:, end]
+solution = simulate(growth_only_model, seeded_run;
+    solver = DQMOM(nquadrature = 3), saveat = 0.0:3600.0:14400.0)
+
+solution.population.nodes[:, end]
+solution.population.weights[:, end]
 solution.d43[end]
 ```
 
@@ -129,78 +156,52 @@ solution.d43[end]
 ```julia
 using CriSTool
 
-params = [38.0, 0.0007, 1e-9 / 60, 3.0]
-problem, solution = runsimulation(
-    params;
-    nucl = nucl_CNT(),
-    gr = growth_empirical(),
-    agg = noaggregation(),
-    br = nobreakage(),
-    solver = QMOM(nquadrature = 3),
-    initial_concentration = 18.0,
-    save_idx = 0.0:3600.0:28800.0,
-)
+crystal_model = CrystallisationModel(LysozymeSystem();
+    nucleation = CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 0.0007),
+    growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
+batch_run = RunConditions(temperature = 293.15, concentration = 18.0)
 
-@show solution.moments[:, end]
+solution = simulate(crystal_model, batch_run;
+    solver = QMOM(nquadrature = 3), saveat = 0.0:3600.0:28800.0)
+
+@show solution.population.moments[:, end]
 @show quadrature(solution, length(solution.time)).nodes
 @show solution.d43[end]
 ```
 
 ## Example: choosing solvers
 
+The model and conditions stay the same; only the `solver` keyword changes.
+
 ```julia
-using CriSTool
+save_grid = 0.0:3600.0:28800.0
 
-params = [38.0, 0.0007, 1e-9 / 60, 3.0]
-nucl, gr = nucl_CNT(), growth_empirical()
-agg, br  = noaggregation(), nobreakage()
-
-# MoM
-_, sol_mom = runsimulation(
-    params; nucl = nucl, gr = gr, agg = agg, br = br,
-    solver = MoM(),
-    initial_concentration = 18.0,
-    save_idx = 0.0:3600.0:28800.0,
-)
-
-# Finite volume
-_, sol_fv = runsimulation(
-    params; nucl = nucl, gr = gr, agg = agg, br = br,
-    solver = FiniteVol(meshsize = 100, lmax = 50e-6),
-    initial_concentration = 18.0,
-    save_idx = 0.0:3600.0:28800.0,
-)
-
-# WENO
-_, sol_weno = runsimulation(
-    params; nucl = nucl, gr = gr, agg = agg, br = br,
-    solver = WENO(meshsize = 100, lmax = 50e-6),
-    initial_concentration = 18.0,
-    save_idx = 0.0:3600.0:28800.0,
-)
+sol_mom  = simulate(crystal_model, batch_run; solver = MoM(), saveat = save_grid)
+sol_fv   = simulate(crystal_model, batch_run;
+    solver = FiniteVol(meshsize = 100, lmax = 50e-6), saveat = save_grid)
+sol_weno = simulate(crystal_model, batch_run;
+    solver = WENO(meshsize = 100, lmax = 50e-6), saveat = save_grid)
 ```
 
 ## Overriding the time-stepper
 
 Override the ODE time-stepping algorithm by setting the solver's
-`timestepping_algorithm` field. Supported symbols include `:tsit5`,
-`:ssprk43`, `:kvaerno5`, and `:kencarp4`; `:auto` selects the solver-specific
-default.
+`timestepping_algorithm` field to an OrdinaryDiffEq algorithm instance, such
+as `Tsit5()`, `SSPRK43()`, `Kvaerno5()` or `KenCarp4()`. The default
+`nothing` selects the solver-specific algorithm. A per-call `algorithm`
+keyword of `simulate` takes precedence over both.
+
+CriSTool depends only on the OrdinaryDiffEq subpackages that hold its defaults
+(`OrdinaryDiffEqTsit5`, `OrdinaryDiffEqSSPRK`). To use another algorithm, add
+the subpackage that defines it to your environment, for example
+`OrdinaryDiffEqSDIRK` for `Kvaerno5` and `KenCarp4`, or the full
+`OrdinaryDiffEq`, which re-exports them all.
 
 ```julia
-using CriSTool
+using OrdinaryDiffEqSSPRK: SSPRK43
 
-params = [38.0, 0.0007, 1e-9 / 60, 3.0]
-
-_, sol = runsimulation(
-    params;
-    nucl = nucl_CNT(),
-    gr = growth_empirical(),
-    agg = noaggregation(),
-    br = nobreakage(),
+sol = simulate(crystal_model, batch_run;
     solver = FiniteVol(meshsize = 200, lmax = 50e-6,
-                       timestepping_algorithm = :ssprk43),
-    initial_concentration = 18.0,
-    save_idx = 0.0:3600.0:28800.0,
-)
+                       timestepping_algorithm = SSPRK43()),
+    saveat = 0.0:3600.0:28800.0)
 ```

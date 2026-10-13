@@ -9,258 +9,107 @@ Typed solution and ensemble-result containers used throughout CriSTool.
 Abstract supertype for all solution types in crystallization simulations.
 """
 abstract type AbstractSolution end
-"""
-    CrystallisationFVSolution{Tt,TCo,TNn,TVd,TDq} <: AbstractSolution where {Tt<:Real,TCo<:Real,TNn<:Real,TVd<:Real,TDq<:Real}
-
-    Stores finite volume solver results.
-
-    Fields:
-    - `time::Vector{Tt}`: Time points vector
-    - `concentration::Vector{TCo}`: Concentration vector
-    - `numberdensity::Array{TNn}`: Number density array
-    - `voldensity::Array{TVd}`: Volume density array
-    - `d50q::Vector{TDq}`: Median size vector
-    - `ode_stats`: ODE solver statistics (e.g., DEStats) or `nothing`
-    - `success::Bool`: Success flag
-    - `reactor_state::NamedTuple`: Reactor-volume and size-boundary-flow
-      trajectories. Mesh solutions report signed lower/upper solid-mass flows
-      in kg/s, with positive values directed out of the size domain.
 
 """
-@concrete struct CrystallisationFVSolution{Tt, TCo, TNn, TVd, TDq, TDm, TL, TStats} <:
-                 AbstractSolution where {Tt <: AbstractArray{<:Real},
-                                         TCo <: AbstractArray{<:Real},
-                                         TNn <: AbstractArray{<:Real},
-                                         TVd <: AbstractArray{<:Real},
-                                         TDq <: AbstractArray{<:Real},
-                                         TDm <: AbstractArray{<:Real},
-                                         TL <: NamedTuple,
-                                         TStats}
-    time::Tt
-    concentration::TCo
-    numberdensity::TNn
-    voldensity::TVd
-    d10q::TDq
-    d50q::TDq
-    d90q::TDq
-    d10::TDm
-    d32::TDm
-    d43::TDm
-    moment2::TDm
+    AbstractPopulationTrajectory
 
-    solvent_state::TL
-
-    final_state::TCo
-    ode_stats::TStats
-    success::Bool
-    reactor_state::NamedTuple
-
-end
+Solver-specific part of a `CrystallisationSolution`: the population
+representation saved at every output time. `MeshPopulation`,
+`MomentPopulation` and `QuadraturePopulation` are the built-in subtypes.
+"""
+abstract type AbstractPopulationTrajectory end
 
 """
-    CrystallisationMoMSolution{Tt,TCo,TD1,TD3,TD4,TM2} <: AbstractSolution where {Tt<:AbstractArray{<:Real},TCo<:AbstractArray{<:Real},TD1<:AbstractArray{<:Real},TD3<:AbstractArray{<:Real},TD4<:AbstractArray{<:Real},TM2<:AbstractArray{<:Real}}
+    MeshPopulation
 
-    Stores Method of Moments solver results.
-
-    Fields:
-    - `time::Tt`: Time points vector
-    - `concentration::TCo`: Concentration vector
-    - `d10::TD1`: 10th percentile of number density
-    - `d32::TD3`: Sauter mean diameter
-    - `d43::TD4`: Volume mean diameter
-    - `moment2::TM2`: Second raw moment of number density (m⁻¹)
-    - `ode_stats`: ODE solver statistics (e.g., DEStats) or `nothing`
-    - `success::Bool`: Success flag
-
-"""
-@concrete struct CrystallisationMoMSolution{Tt, TCo, TD1, TD3, TD4, TMu2, TL, TStats} <:
-                 AbstractSolution where {Tt <: AbstractArray{<:Real},
-                                         TCo <: AbstractArray{<:Real},
-                                         TD1 <: AbstractArray{<:Real},
-                                         TD3 <: AbstractArray{<:Real},
-                                         TD4 <: AbstractArray{<:Real},
-                                         TMu2 <: AbstractArray{<:Real},
-                                         TL <: NamedTuple,
-                                         TStats}
-    time::Tt
-    concentration::TCo
-    d10::TD1
-    d32::TD3
-    d43::TD4
-
-    moment2::TMu2
-
-    solvent_state::TL
-
-    final_state::TCo
-    ode_stats::TStats
-    success::Bool
-    reactor_state::NamedTuple
-
-end
-
-"""
-    CrystallisationQMOMSolution
-
-Stores a raw-moment QMOM trajectory together with the Gaussian quadrature
-reconstructed at every saved time.  `moments` has shape `(2N, nt)`, while the
-quadrature arrays have shape `(N, nt)`; inactive nodes in an empty or
-rank-deficient rule are represented by zero node/weight entries.  The
-corresponding active rank and inversion status are available in
-`inversion_diagnostics` and through `quadrature(solution, index)`.
-"""
-struct CrystallisationQMOMSolution{Tt, TCo, TM, TN, TW, TD1, TD3, TD4, TMu2,
-                                   TL, TF, TS, TDiag} <: AbstractSolution
-    time::Tt
-    concentration::TCo
-    moments::TM
-    quadrature_nodes::TN
-    quadrature_weights::TW
-    d10::TD1
-    d32::TD3
-    d43::TD4
-    moment2::TMu2
-    solvent_state::TL
-    final_state::TF
-    ode_stats::TS
-    success::Bool
-    reactor_state::NamedTuple
-    inversion_diagnostics::TDiag
-end
-
-"""
-    CrystallisationDQMOMSolution
-
-Stores a seeded direct-quadrature trajectory. `weights` and `nodes` have
-shape `(N, nt)` and are physical particle-number weights and crystal lengths
-in metres. `moments` are derived from those arrays and have shape
-`(2N, nt)`; they are not the ODE state.
-"""
-struct CrystallisationDQMOMSolution{Tt, TCo, TW, TN, TM, TD1, TD3, TD4, TMu2,
-                                    TL, TF, TS, TDiag} <: AbstractSolution
-    time::Tt
-    concentration::TCo
-    weights::TW
-    nodes::TN
-    moments::TM
-    d10::TD1
-    d32::TD3
-    d43::TD4
-    moment2::TMu2
-    solvent_state::TL
-    final_state::TF
-    ode_stats::TS
-    success::Bool
-    reactor_state::NamedTuple
-    projection_diagnostics::TDiag
-end
-
-"""
-    EnsembleFVSolution{T<:AbstractFloat} <: AbstractSolution
-
-    Stores ensemble simulation results and statistics from finite volume solver.
-
-    Fields:
-    - `concentration::Matrix{T}`: Matrix of concentration trajectories (samples × timepoints)
-    - `time::Vector{T}`: Time points vector
-    - `d43::Vector{T}`: Volume mean diameter (d43) for each sample
-    - `d32::Vector{T}`: Sauter mean diameter (d32) for each sample
-    - `d50q::Vector{T}`: Median size (d50) for each sample
-    - `concentration_mean::Vector{T}`: Mean concentration trajectory
-    - `concentration_std::Vector{T}`: Standard deviation of concentration trajectory
-    - `concentration_lb::Vector{T}`: Lower bound of concentration trajectory
-    - `concentration_ub::Vector{T}`: Upper bound of concentration trajectory
-    - `d43_mean::T`: Mean d43 value
-    - `d43_std::T`: Standard deviation of d43
-    - `d32_mean::T`: Mean d32 value
-    - `d32_std::T`: Standard deviation of d32
-    - `d50q_mean::T`: Mean d50q value
-    - `d50q_std::T`: Standard deviation of d50q
-"""
-@concrete struct EnsembleFVSolution{T <: AbstractArray{<:Real}, C <: AbstractArray{<:Real},
-                                    D4 <: AbstractArray{<:Real},
-                                    D3 <: AbstractArray{<:Real},
-                                    D5 <: AbstractArray{<:Real},
-                                    Cm <: AbstractArray{<:Real},
-                                    Cs <: AbstractArray{<:Real},
-                                    Cl <: AbstractArray{<:Real},
-                                    Cu <: AbstractArray{<:Real},
-                                    D4m <: AbstractArray{<:Real},
-                                    D4s <: AbstractArray{<:Real},
-                                    D3m <: AbstractArray{<:Real},
-                                    D3s <: AbstractArray{<:Real},
-                                    D5m <: AbstractArray{<:Real},
-                                    D5s <: AbstractArray{<:Real}} <: AbstractSolution
-    # Raw ensemble data
-    time::T
-    concentration::C
-    d43::D4
-    d32::D3
-    d50q::D5
-
-    # Statistical summaries
-    concentration_mean::Cm
-    concentration_std::Cs
-    concentration_lb::Cl
-    concentration_ub::Cu
-
-    d43_mean::D4m
-    d43_std::D4s
-    d32_mean::D3m
-    d32_std::D3s
-    d50q_mean::D5m
-    d50q_std::D5s
-end
-
-"""
-    EnsembleMoMSolution{T<:AbstractFloat} <: AbstractSolution
-
-Stores ensemble simulation results from Method of Moments solver.
+Population trajectory of a discretised solver (`FiniteVol`, `WENO`).
 
 Fields:
-- `moments::Array{T,3}`: Array of moment trajectories (samples × moments × timepoints)
-- `time::Vector{T}`: Time points vector
-- `d43::Matrix{T}`: Volume mean diameter trajectories (samples × timepoints)
-- `d32::Matrix{T}`: Sauter mean diameter trajectories (samples × timepoints)
-- `concentration::Matrix{T}`: Concentration trajectories (samples × timepoints)
-- `moments_mean::Matrix{T}`: Mean moment trajectories
-- `moments_std::Matrix{T}`: Standard deviation of moment trajectories
-- `d43_mean::Vector{T}`: Mean d43 trajectory
-- `d43_std::Vector{T}`: Standard deviation of d43 trajectory
-- `d32_mean::Vector{T}`: Mean d32 trajectory
-- `d32_std::Vector{T}`: Standard deviation of d32 trajectory
-- `concentration_mean::Vector{T}`: Mean concentration trajectory
-- `concentration_std::Vector{T}`: Standard deviation of concentration trajectory
+- `numberdensity`: number density on the cell centres, `(meshsize, nt)` (m⁻⁴).
+- `voldensity`: volume-weighted density `kv L³ n`, same shape.
+- `d10q`, `d50q`, `d90q`: volume-distribution quantiles per saved time (m).
 """
-struct EnsembleMoMSolution{T <: AbstractArray{<:Real}, D43 <: AbstractArray{<:Real},
-                           D32 <: AbstractArray{<:Real}, C <: AbstractArray{<:Real},
-                           Cm <: AbstractArray{<:Real}, Cs <: AbstractArray{<:Real},
-                           Cl <: AbstractArray{<:Real}, Cu <: AbstractArray{<:Real},
-                           D43m <: AbstractArray{<:Real}, D43s <: AbstractArray{<:Real},
-                           D32m <: AbstractArray{<:Real}, D32s <: AbstractArray{<:Real}} <:
-       AbstractSolution
-    # Raw ensemble data
-    time::T
-    concentration::C
-    d43::D43
-    d32::D32
-
-    # Statistical summaries
-    concentration_mean::Cm
-    concentration_std::Cs
-    concentration_lb::Cl
-    concentration_ub::Cu
-    d43_mean::D43m
-    d43_std::D43s
-    d32_mean::D32m
-    d32_std::D32s
-
+struct MeshPopulation{TDensity <: AbstractMatrix, TQuantile <: AbstractVector} <:
+       AbstractPopulationTrajectory
+    numberdensity::TDensity
+    voldensity::TDensity
+    d10q::TQuantile
+    d50q::TQuantile
+    d90q::TQuantile
 end
 
-# Preserve the existing positional solution constructors for batch callers.
-CrystallisationMoMSolution(args::Vararg{Any,10}) = CrystallisationMoMSolution(args..., (;))
-CrystallisationFVSolution(args::Vararg{Any,15}) = CrystallisationFVSolution(args..., (;))
-CrystallisationQMOMSolution(args::Vararg{Any,14}) =
-    CrystallisationQMOMSolution(args[1:13]..., (;), args[14])
-CrystallisationDQMOMSolution(args::Vararg{Any,14}) =
-    CrystallisationDQMOMSolution(args[1:13]..., (;), args[14])
+"""
+    MomentPopulation
+
+Raw-moment trajectory of a `MoM` solve. `moments` has shape
+`(nmoments + 1, nt)`; row `k + 1` holds the SI raw moment `µk`.
+"""
+struct MomentPopulation{TMoments <: AbstractMatrix} <: AbstractPopulationTrajectory
+    moments::TMoments
+end
+
+"""
+    QuadraturePopulation
+
+Quadrature trajectory of a `QMOM` or `DQMOM` solve. `moments` has shape
+`(2N, nt)`; `nodes` (m) and `weights` (particle number per m³) have shape
+`(N, nt)`.
+
+For `QMOM` the moments are the integrated state and the quadrature is
+reconstructed at every saved time; inactive nodes of an empty or
+rank-deficient rule are stored as zeros and `diagnostics` is a vector of
+`QMOMInversionDiagnostics`. For `DQMOM` the weights and nodes are the
+integrated state, the moments are derived from them, and `diagnostics` is a
+vector of `DQMOMProjectionDiagnostics` (or `nothing` for a dual-valued
+trajectory). `quadrature(solution, index)` returns one saved rule.
+"""
+struct QuadraturePopulation{TMoments <: AbstractMatrix, TNodes <: AbstractMatrix, TDiagnostics} <:
+       AbstractPopulationTrajectory
+    moments::TMoments
+    nodes::TNodes
+    weights::TNodes
+    diagnostics::TDiagnostics
+end
+
+"""
+    CrystallisationSolution{Population}
+
+Physical result of a transient solve, shared by every solver. Solver-specific
+data live in `population` (`MeshPopulation`, `MomentPopulation` or
+`QuadraturePopulation`); everything else is common.
+
+Fields:
+- `time`: saved times (s).
+- `concentration`: solute concentration trajectory (kg/m³), also available as
+  `solvent_state.concentration`.
+- `population`: solver-specific population trajectory.
+- `d10`, `d32`, `d43`: moment-ratio sizes (m); zero for an empty population
+  and `NaN` when the solver does not track the required moment.
+- `moment2`: second raw moment µ2 (m⁻¹).
+- `solvent_state`: named solvent-variable trajectories.
+- `reactor_state`: reactor-volume and size-boundary flow trajectories. Mesh
+  solutions report signed lower/upper solid-mass flows in kg/s, positive out
+  of the size domain.
+- `final_state`: the public numerical state at the last saved time.
+- `ode_stats`: ODE solver statistics.
+- `success`: whether the ODE solve finished successfully.
+
+Use `state_vars`, `size_metrics`, `reactor_vars` and `observable_values` for
+named access that does not depend on the solver.
+"""
+struct CrystallisationSolution{Population <: AbstractPopulationTrajectory, TTime, TConcentration,
+                               TSize, TSolvent <: NamedTuple, TReactor <: NamedTuple,
+                               TFinal, TStats} <: AbstractSolution
+    time::TTime
+    concentration::TConcentration
+    population::Population
+    d10::TSize
+    d32::TSize
+    d43::TSize
+    moment2::TSize
+    solvent_state::TSolvent
+    reactor_state::TReactor
+    final_state::TFinal
+    ode_stats::TStats
+    success::Bool
+end
