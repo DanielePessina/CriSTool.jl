@@ -16,7 +16,7 @@ abstract type AbstractSimulationMode end
     TransientMode()
 
 Integrate each run from time zero and compare the trajectory with observations
-at their measured times. This is the default for `prepare_fit` and `predict`.
+at their measured times. This is the default for `EstimationProblem` and `predict`.
 """
 struct TransientMode <: AbstractSimulationMode end
 
@@ -36,13 +36,14 @@ SteadyMode(; steady_settings...) = SteadyMode(SteadyStateOptions(; steady_settin
 """
     PreparedRun
 
-One configured `CrystallisationProblem` with its `ODEProblem` template, resolved
-ODE algorithm, save times and composite kinetic `paramaxis`. The template and
-axis are built once and reused across parameter vectors with `remake`, so the
-estimation loop never reconstructs them (a callable law rebuilds its axis from
-its schema on every `paramaxis` call).
+One configured run resolved for the prepared solver (a `DiscretisedProblem`)
+with its `ODEProblem` template, resolved ODE algorithm, save times and
+composite kinetic `paramaxis`. The template and axis are built once and reused
+across parameter vectors with `remake`, so the estimation loop never
+reconstructs them (a callable law rebuilds its axis from its schema on every
+`paramaxis` call).
 """
-struct PreparedRun{Problem <: CrystallisationProblem, Template, Algorithm, ParameterAxis}
+struct PreparedRun{Problem <: DiscretisedProblem, Template, Algorithm, ParameterAxis}
     problem::Problem
     odeproblem::Template
     algorithm::Algorithm
@@ -54,7 +55,7 @@ end
     PreparedSolves
 
 Prepared runs that share one simulation mode and one set of numerical solve
-settings. `requested_algorithm` is the caller's ODE algorithm (or `nothing`),
+settings. `requested_algorithm` is the caller's ODE algorithm `alg` (or `nothing`),
 kept so predictions reuse the same request.
 """
 struct PreparedSolves{Runs <: AbstractVector{<:PreparedRun}, Mode <: AbstractSimulationMode,
@@ -68,15 +69,17 @@ end
 
 # A numerical return-code failure must remain a failed candidate even if its
 # truncated population cannot be reconstructed into physical size metrics.
+# Its `retcode` is the ODE code of a failed solve, or `Failure` when the saved
+# states could not be reconstructed; `reason` keeps that code or the DomainError.
 struct FailedPreparedSimulation{TS, TR} <: AbstractSolution
-    time::Vector{Float64}
+    t::Vector{Float64}
     concentration::Vector{Float64}
     d32::Vector{Float64}
     d43::Vector{Float64}
     d50q::Vector{Float64}
     ode_stats::TS
     reason::TR
-    success::Bool
+    retcode::SciMLBase.ReturnCode.T
 end
 state_vars(failed_solution::FailedPreparedSimulation) = (; concentration = failed_solution.concentration)
 size_metrics(failed_solution::FailedPreparedSimulation) =
@@ -85,8 +88,11 @@ size_metrics(failed_solution::FailedPreparedSimulation) =
 function _failed_prepared_simulation(prepared_run::PreparedRun, ode_solution, reason)
     missing_values = fill(NaN, length(prepared_run.saveat))
     return FailedPreparedSimulation(copy(prepared_run.saveat), missing_values,
-        copy(missing_values), copy(missing_values), copy(missing_values), ode_solution.stats, reason, false)
+        copy(missing_values), copy(missing_values), copy(missing_values), ode_solution.stats, reason,
+        _failed_prepared_retcode(reason))
 end
+_failed_prepared_retcode(failed_retcode::SciMLBase.ReturnCode.T) = failed_retcode
+_failed_prepared_retcode(reconstruction_error::DomainError) = SciMLBase.ReturnCode.Failure
 
 """
     LossSetup
@@ -94,7 +100,7 @@ end
 Prepared solves bundled with the measured experiments they are scored against:
 the observable order, the scored sample indices per experiment, the observable
 weights resolved from the preparation loss, and local observable projections.
-Built with `prepare_loss` (normally through `prepare_fit`) and evaluated with
+Built with `prepare_loss` (normally through `EstimationProblem`) and evaluated with
 `loss(lf, setup, params)`.
 """
 struct LossSetup{Solves <: PreparedSolves, Weights <: NamedTuple, Projections <: NamedTuple,
@@ -125,17 +131,19 @@ function _integration_times(steady_mode::SteadyMode, configured_problem, save_ti
 end
 
 """
-    _prepare_solves(configured_problems, observation_times, mode;
-                    algorithm=nothing, solve_options=(;), callback_factory=nothing) -> PreparedSolves
+    _prepare_solves(configured_problems, observation_times, mode; solver,
+                    alg=nothing, solve_options=(;), callback_factory=nothing) -> PreparedSolves
 
-Build one `ODEProblem` template per configured problem. `observation_times[i]`
-are the times at which run `i` is compared or reported. The problems must share
-the kinetic parameter axis. `callback_factory(odeproblem)` builds a fresh
+Build one `ODEProblem` template per configured problem under `solver`.
+`observation_times[i]` are the times at which run `i` is compared or reported;
+they, not the problem's `tspan`, set the integration span. The problems must
+share the kinetic parameter axis. `callback_factory(odeproblem)` builds a fresh
 callback for each evaluation and composes with package callbacks.
 """
 function _prepare_solves(configured_problems::AbstractVector{<:CrystallisationProblem},
                          observation_times::AbstractVector, simulation_mode::AbstractSimulationMode;
-                         algorithm = nothing, solve_options::NamedTuple = (;), callback_factory = nothing)
+                         solver::AbstractSolver, alg = nothing, solve_options::NamedTuple = (;),
+                         callback_factory = nothing)
     _validate_crystallisation_solve_options(solve_options)
     isempty(configured_problems) && throw(ArgumentError("At least one run is required."))
     length(configured_problems) == length(observation_times) ||
@@ -144,23 +152,25 @@ function _prepare_solves(configured_problems::AbstractVector{<:CrystallisationPr
     all(paramaxis(configured) == parameter_axis for configured in configured_problems) ||
         throw(ArgumentError("Configured problems must share the same kinetic parameter axis."))
     prepared_runs = map(configured_problems, observation_times) do configured, run_times
-        _validate_crystallisation_problem(configured)
+        discretised_run = DiscretisedProblem(configured, solver)
+        kinetic_values = _validate_kinetic_values(discretised_run, configured.p)
         save_times = _run_save_times(simulation_mode, run_times)
         _validate_save_times(save_times)
-        integration_times = _integration_times(simulation_mode, configured, save_times)
+        integration_times = _integration_times(simulation_mode, discretised_run, save_times)
         _validate_save_times(integration_times)
-        odeproblem, default_algorithm = crystallisation_odeproblem(configured, integration_times)
-        PreparedRun(configured, odeproblem, something(algorithm, default_algorithm), save_times,
+        odeproblem, default_algorithm = crystallisation_odeproblem(solver, discretised_run,
+            (first(integration_times), last(integration_times)), kinetic_values)
+        PreparedRun(discretised_run, odeproblem, something(alg, default_algorithm), save_times,
                     parameter_axis)
     end
-    return PreparedSolves(prepared_runs, simulation_mode, algorithm, solve_options, callback_factory)
+    return PreparedSolves(prepared_runs, simulation_mode, alg, solve_options, callback_factory)
 end
 
 """
-    prepare_loss(configured_problems, experiments; mode=TransientMode(), loss_function=nothing,
+    prepare_loss(configured_problems, experiments; solver, mode=TransientMode(), loss_function=nothing,
                  observable_order=nothing, observable_projections=(;), solve settings...) -> LossSetup
 
-Prepare one explicitly configured problem per experiment. Initial conditions,
+Prepare one explicitly configured problem per experiment, solved with `solver`. Initial conditions,
 seeds, temperature and physical properties come from those problems; observations
 supply targets and times. Time-zero observations that a run reads through
 `FromObservation` conditions are its initial values and are not scored.
@@ -168,14 +178,15 @@ supply targets and times. Time-zero observations that a run reads through
 """
 function prepare_loss(configured_problems::AbstractVector{<:CrystallisationProblem},
                       experiments::AbstractVector{<:CrystallisationExperiment};
-                      mode::AbstractSimulationMode = TransientMode(), loss_function = nothing,
+                      solver::AbstractSolver, mode::AbstractSimulationMode = TransientMode(),
+                      loss_function = nothing,
                       observable_order = nothing, observable_projections::NamedTuple = (;),
-                      algorithm = nothing, solve_options::NamedTuple = (;), callback_factory = nothing,
+                      alg = nothing, solve_options::NamedTuple = (;), callback_factory = nothing,
                       parallel::SciMLBase.BasicEnsembleAlgorithm = EnsembleSerial())
     length(configured_problems) == length(experiments) && !isempty(experiments) ||
         throw(ArgumentError("Supply one configured problem per experiment."))
     prepared_solves = _prepare_solves(configured_problems, map(_observation_times, experiments), mode;
-        algorithm, solve_options, callback_factory)
+        solver, alg, solve_options, callback_factory)
     _validate_loss_projection_names(prepared_solves, observable_projections)
     schemas = [collect(propertynames(expt.observables)) for expt in experiments]
     heterogeneous_schema = any(Set(schema) != Set(first(schemas)) for schema in schemas)
@@ -250,15 +261,12 @@ _kinetic_parameter_count(prepared_solves::PreparedSolves) = _kinetic_parameter_c
 _kinetic_parameter_count(setup::LossSetup) = _kinetic_parameter_count(setup.solves)
 
 """
-    _params_to_p(prob, params) -> ComponentArray
+    _params_to_p(prepared_run, params) -> ComponentArray
 
 Split a flat parameter vector into the named parameter container used by the
-ODE right-hand sides. The compatibility order is
-`[p_nucleation; p_growth; p_aggregation; p_breakage]` when the dissolution
-block is empty; the canonical order with independent dissolution is
+ODE right-hand sides, in the canonical order
 `[p_nucleation; p_growth; p_dissolution; p_aggregation; p_breakage]`.
 """
-_params_to_p(prob::CrystallisationProblem, params) = _kinetic_values_on_axis(paramaxis(prob), params)
 _params_to_p(prepared_run::PreparedRun, params) = _kinetic_values_on_axis(prepared_run.parameter_axis, params)
 
 function _kinetic_values_on_axis(parameter_axis, params)
@@ -285,7 +293,7 @@ _solve_prepared(prepared_solves::PreparedSolves, prepared_run::PreparedRun, para
 
 function _solve_prepared(steady_mode::SteadyMode, prepared_run::PreparedRun, remade_problem,
                          solve_options, callback_factory)
-    return _solve_steadystate_ode(prepared_run.problem, remade_problem, prepared_run.algorithm;
+    return _steady_relaxation_solve(prepared_run.problem, remade_problem, prepared_run.algorithm;
         steady_options = steady_mode.options, solve_options, callback_factory,
         reconstruction_failure_handler = (raw_solution, reconstruction_error) ->
             _failed_prepared_simulation(prepared_run, raw_solution, reconstruction_error))
@@ -354,7 +362,7 @@ function _projected_values(observable_projections::NamedTuple, solution::Abstrac
     hasproperty(observable_projections, name) || return observable_values(solution, name)
     solution = _projection_trajectory(solution)
     projected_values = getproperty(observable_projections, name)(solution)
-    projected_values isa AbstractVector && length(projected_values) == length(solution.time) ||
+    projected_values isa AbstractVector && length(projected_values) == length(solution.t) ||
         throw(ArgumentError("Projection :$name must return a trajectory matching the solution times."))
     all(projected_value isa Real && isfinite(projected_value) for projected_value in projected_values) ||
         throw(ArgumentError("Projection :$name must contain finite real values."))
@@ -372,9 +380,9 @@ function _predicted_series(::TransientMode, observable_projections::NamedTuple,
     projected_values = _projected_values(observable_projections, solution, name)
     projected_values isa AbstractVector ||
         throw(ArgumentError("Simulated observable :$name must be a trajectory."))
-    all(first(solution.time) <= measured_time <= last(solution.time) for measured_time in target_times) ||
+    all(first(solution.t) <= measured_time <= last(solution.t) for measured_time in target_times) ||
         throw(ArgumentError("Observation times for :$name lie outside the simulated time span."))
-    return [_linear_interpolate(solution.time, projected_values, measured_time) for measured_time in target_times]
+    return [_linear_interpolate(solution.t, projected_values, measured_time) for measured_time in target_times]
 end
 
 _predicted_series(::SteadyMode, observable_projections::NamedTuple, solution::AbstractSolution,
@@ -449,7 +457,7 @@ function _loss_objectives(lossfunction::Union{GaussianNLL, MeanAbsoluteError}, s
     for (experiment_index, (solution, expt)) in enumerate(zip(experiment_solutions, setup.experiments))
         # Numerical failures have a definite penalty. Exceptions from data,
         # kinetics and custom observables propagate, including DomainError.
-        solution.success || return [zero(eltype(params)) + observable_weight * CRISTOOL_FAILED_SIMULATION_PENALTY
+        SciMLBase.successful_retcode(solution) || return [zero(eltype(params)) + observable_weight * CRISTOOL_FAILED_SIMULATION_PENALTY
                                     for observable_weight in observable_weights]
         _accumulate_experiment_objectives!(objective_sums, observation_counts, lossfunction,
                                            setup, experiment_index, expt, solution)

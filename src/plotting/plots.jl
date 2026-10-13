@@ -31,8 +31,8 @@ function plot_predictions end
 
 Pair plot of joint parameter draws labelled by their named paths (for example
 `nucleation.lnA`). `prior` is a joint distribution in the same order whose
-marginals are overlaid; for an `InferenceResult` it defaults to the
-specification's priors. `reference` is a vector of values in the same order,
+marginals are overlaid; for an `InferenceResult` it defaults to the priors of
+the `EstimationProblem` it solved. `reference` is a vector of values in the same order,
 drawn as reference lines (for example the true values of a synthetic study).
 An empty `title` draws no title. Save the returned figure with
 `save(path, figure)`.
@@ -43,7 +43,7 @@ function plot_posterior_pairplot end
 
 plot_posterior_pairplot(result::InferenceResult; kwargs...) =
     plot_posterior_pairplot(result.samples;
-        prior = product_distribution(last.(_named_parameter_leaves(result.preparation.specification.priors))),
+        prior = product_distribution(_prior_distributions(result.estimation_problem.priors)),
         kwargs...)
 
 """

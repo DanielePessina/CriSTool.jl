@@ -107,10 +107,10 @@ end
 end
 
 # Population-by-time arrays are placeholders; only shapes and the headline trajectories are displayed.
-function show_hand_solution(population; concentration = [18.0, 11.42], d43 = [12.0e-6, 41.7e-6], success = true,
-        ode_stats = nothing)
+function show_hand_solution(population; concentration = [18.0, 11.42], d43 = [12.0e-6, 41.7e-6],
+        retcode = ReturnCode.Success, ode_stats = nothing)
     return CrystallisationSolution([0.0, 14400.0], concentration, population, d43, d43, d43, zero.(d43),
-        (; concentration), (;), nothing, ode_stats, success)
+        (; concentration), (;), nothing, ode_stats, retcode)
 end
 const show_stats = let stats = SciMLBase.DEStats(1293)
     stats.naccept = 412
@@ -122,19 +122,21 @@ const show_mesh_population = MeshPopulation(zeros(200, 2), zeros(200, 2), zeros(
 @testset "Display: solutions" begin
     mesh_solution = show_hand_solution(show_mesh_population; ode_stats = show_stats)
     @test show_plain(mesh_solution) == """
-        CrystallisationSolution{MeshPopulation} — 200-cell mesh, success
-          time:          0.0 … 14400.0 s (2 saves)
+        CrystallisationSolution{MeshPopulation} — 200-cell mesh, retcode = Success
+          t:             0.0 … 14400.0 s (2 saves)
           concentration: 18.0 → 11.42 kg/m³
           d43:           12.0 → 41.7 µm
           ODE:           1293 RHS evaluations, 412 accepted / 31 rejected steps"""
-    @test sprint(show, mesh_solution) == "CrystallisationSolution(MeshPopulation, 2 saves, 0.0–14400.0 s, success)"
-    failed_solution = show_hand_solution(MomentPopulation(zeros(5, 2)); success = false)
-    @test startswith(show_plain(failed_solution), "CrystallisationSolution{MomentPopulation} — moments µ0 … µ4, failed\n")
+    @test sprint(show, mesh_solution) ==
+          "CrystallisationSolution(MeshPopulation, 2 saves, 0.0–14400.0 s, retcode = Success)"
+    failed_solution = show_hand_solution(MomentPopulation(zeros(5, 2)); retcode = ReturnCode.MaxIters)
+    @test startswith(show_plain(failed_solution),
+        "CrystallisationSolution{MomentPopulation} — moments µ0 … µ4, retcode = MaxIters\n")
     @test occursin("ODE:           not recorded", show_plain(failed_solution))
-    @test endswith(sprint(show, failed_solution), ", failed)")
+    @test endswith(sprint(show, failed_solution), ", retcode = MaxIters)")
     untracked_solution = show_hand_solution(QuadraturePopulation(zeros(6, 2), zeros(3, 2), zeros(3, 2), nothing);
         d43 = [NaN, NaN])
-    @test occursin("— 3-node quadrature, success", show_plain(untracked_solution))
+    @test occursin("— 3-node quadrature, retcode = Success", show_plain(untracked_solution))
     @test occursin("d43:           not tracked by this solver", show_plain(untracked_solution))
     # Dual-valued trajectories display their primal values and do not throw.
     dual_solution = show_hand_solution(show_mesh_population;
@@ -143,16 +145,26 @@ const show_mesh_population = MeshPopulation(zeros(200, 2), zeros(200, 2), zeros(
     @test occursin("d43:           12.0 → 41.7 µm", show_plain(dual_solution))
 
     # A real transient solve: the first concentration is the initial condition.
-    simulated_solution = simulate(fixture_translation_model(), fixture_seeded_conditions(); solver = MoM(),
-        saveat = [0.0, 100.0, 200.0])
+    simulated_problem = CrystallisationProblem(fixture_translation_model(), fixture_seeded_conditions(), (0.0, 200.0))
+    @test show_plain(simulated_problem) == """
+        CrystallisationProblem
+          model:      CrystallisationModel(growth = CallableGrowth(speed = 0.01))
+          conditions: RunConditions(ConstantTemperature(293.15 K), 20.0 kg/m³, seeded, BatchOperation())
+          tspan:      0.0 … 200.0 s
+          p:          1-entry kinetic vector"""
+    @test sprint(show, simulated_problem) ==
+          "CrystallisationProblem(RunConditions(ConstantTemperature(293.15 K), 20.0 kg/m³, seeded, BatchOperation()), 0.0 … 200.0 s)"
+    @test sprint(show, CrystallisationSteadyStateProblem(simulated_problem)) ==
+          "CrystallisationSteadyStateProblem(RunConditions(ConstantTemperature(293.15 K), 20.0 kg/m³, seeded, BatchOperation()))"
+    simulated_solution = solve(simulated_problem, MoM(); saveat = [0.0, 100.0, 200.0])
     simulated_text = show_plain(simulated_solution)
-    @test startswith(simulated_text, "CrystallisationSolution{MomentPopulation} — moments µ0 … µ4, success\n")
-    @test occursin("time:          0.0 … 200.0 s (3 saves)", simulated_text)
+    @test startswith(simulated_text, "CrystallisationSolution{MomentPopulation} — moments µ0 … µ4, retcode = Success\n")
+    @test occursin("t:             0.0 … 200.0 s (3 saves)", simulated_text)
     @test occursin("concentration: 20.0 → ", simulated_text)
     @test occursin(r"ODE:           \d+ RHS evaluations, \d+ accepted / \d+ rejected steps", simulated_text)
 
     steady_solution = CrystallisationSteadyStateSolution(nothing, (; concentration = 0.5, d43 = 8.0e-6), nothing, nothing,
-        (; residence_time = 10.0), nothing, (; scaled_residual_norm = 1.0e-9), nothing, SciMLBase.ReturnCode.Success, true)
+        (; residence_time = 10.0), nothing, (; scaled_residual_norm = 1.0e-9), nothing, SciMLBase.ReturnCode.Success)
     @test show_plain(steady_solution) == """
         CrystallisationSteadyStateSolution — converged
           concentration:   0.5 kg/m³
@@ -164,39 +176,47 @@ const show_mesh_population = MeshPopulation(zeros(200, 2), zeros(200, 2), zeros(
 end
 
 @testset "Display: fit, inference and prediction results" begin
-    show_specification = OptimisationSpec(bounds = (growth = (growth_coefficient = (1e-12, 1e-10),),),
-        algorithm = OptimizationOptimJL.LBFGS())
     hand_fit = FitResult(nothing, (growth = (growth_coefficient = 1.667e-11,), nucleation = (ln_nucleation_prefactor = 38.21,)),
-        (concentration = 0.02, d43 = 0.0121), nothing, (; specification = show_specification))
+        (concentration = 0.02, d43 = 0.0121), OptimizationOptimJL.LBFGS(), nothing, nothing)
     @test show_plain(hand_fit) == """
-        FitResult — OptimisationSpec(LBFGS), loss = 0.0321
+        FitResult — LBFGS, loss = 0.0321
           growth.growth_coefficient            1.667e-11
           nucleation.ln_nucleation_prefactor   38.21"""
-    @test sprint(show, hand_fit) == "FitResult(OptimisationSpec(LBFGS), loss = 0.0321, 2 parameters)"
-    @test occursin("OptimisationSpec(DE)", show_plain(FitResult(nothing, (growth = (speed = 0.01,),), (total = 1.0,), nothing,
-        (; specification = OptimisationSpec(bounds = (;), algorithm = DE())))))
+    @test sprint(show, hand_fit) == "FitResult(LBFGS, loss = 0.0321, 2 parameters)"
+    # A Metaheuristics algorithm is labelled by its method, not its wrapper type.
+    @test occursin("FitResult — DE,", show_plain(FitResult(nothing, (growth = (speed = 0.01,),), (total = 1.0,), DE(),
+        nothing, nothing)))
 
     # A fit through Optimization.jl reports convergence from its return code.
     lbfgs_experiment = fixture_experiment((time = [0.0, 300.0, 600.0],
             concentration = fixture_translation_concentration.([0.0, 300.0, 600.0]),
             d43 = fixture_translation_d43.([0.0, 300.0, 600.0])),
         RunConditions(temperature = 293.15, crystals = fixture_uniform_seed()); exp_id = 61)
-    lbfgs_fit = fit(prepare_fit(fixture_translation_model(speed = 0.012), [lbfgs_experiment],
-        OptimisationSpec(bounds = (growth = (speed = (0.001, 0.03),),), algorithm = OptimizationOptimJL.LBFGS(),
-            searchoptions = (maxiters = 50,))))
+    lbfgs_estimation = EstimationProblem(fixture_translation_model(speed = 0.012), [lbfgs_experiment];
+        bounds = (growth = (speed = (0.001, 0.03),),))
+    @test show_plain(lbfgs_estimation) == """
+        EstimationProblem
+          model:       CrystallisationModel(growth = CallableGrowth(speed = 0.012))
+          experiments: 1 (observables concentration, d43)
+          selects:     growth.speed by bounds
+          loss:        GaussianNLL
+          solver:      MoM(4 moments)
+          mode:        TransientMode"""
+    @test sprint(show, lbfgs_estimation) ==
+          "EstimationProblem(1 experiments, 1 parameters by bounds, GaussianNLL, MoM(4 moments))"
+    lbfgs_fit = solve(lbfgs_estimation, OptimizationOptimJL.LBFGS(); maxiters = 50)
     lbfgs_lines = split(show_plain(lbfgs_fit), '\n')
-    @test startswith(lbfgs_lines[1], "FitResult — OptimisationSpec(LBFGS), loss = ")
+    @test startswith(lbfgs_lines[1], "FitResult — LBFGS, loss = ")
     @test endswith(lbfgs_lines[1], ", converged")
     @test lbfgs_lines[2] == "  growth.speed   0.01"
 
     posterior_samples = ParameterSamples(growth = (speed = [0.01, 0.02, 0.03],); source = :nuts)
     @test sprint(show, posterior_samples) == "ParameterSamples(1 parameters, 3 draws, source = :nuts)"
-    hand_inference = InferenceResult(nothing, posterior_samples, nothing,
-        (; specification = BayesianSpec(priors = (growth = (speed = Uniform(0.001, 0.03),),))))
+    hand_inference = InferenceResult(nothing, posterior_samples, ABCDE(), nothing, nothing)
     @test show_plain(hand_inference) == """
-        InferenceResult — BayesianSpec(NUTS), 3 draws
+        InferenceResult — ABCDE, 3 draws
           growth.speed   0.02 ± 0.01"""
-    @test sprint(show, hand_inference) == "InferenceResult(BayesianSpec(NUTS), 1 parameters, 3 draws)"
+    @test sprint(show, hand_inference) == "InferenceResult(ABCDE, 1 parameters, 3 draws)"
 
     prediction_times = [0.0, 100.0]
     hand_ensemble = CriSTool.PredictionEnsemble(prediction_times, (concentration = ones(3, 2), d43 = ones(3, 2)),

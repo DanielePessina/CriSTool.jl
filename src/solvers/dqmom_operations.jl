@@ -6,12 +6,12 @@ Add physical feed exchange, converted into DQMOM's scaled moment coordinates,
 to the kinetic moment source. A closed batch (`nothing` context) is unchanged.
 """
 _dqmom_operation_moment_source(scaled_source::SVector, numerical_state,
-                               dqmom_problem::CrystallisationProblem,
+                               dqmom_problem::DiscretisedProblem,
                                operation_context::Nothing, feed_population) = scaled_source
 
 function _dqmom_operation_moment_source(scaled_source::SVector{K},
                                         numerical_state,
-                                        dqmom_problem::CrystallisationProblem,
+                                        dqmom_problem::DiscretisedProblem,
                                         operation_context,
                                         feed_population) where {K}
     isnothing(feed_population) &&
@@ -31,11 +31,11 @@ end
 
 """Reactor volume and named solvent transport of a DQMOM RHS; batch is unchanged."""
 _dqmom_operation_state_rates(native_rates::SVector, numerical_state,
-                             dqmom_problem::CrystallisationProblem,
+                             dqmom_problem::DiscretisedProblem,
                              operation_context::Nothing) = native_rates
 
 function _dqmom_operation_state_rates(native_rates::SVector{S}, numerical_state,
-                                      dqmom_problem::CrystallisationProblem,
+                                      dqmom_problem::DiscretisedProblem,
                                       operation_context) where {S}
     # Population transport enters through the projected moment source.
     population_count = _population_state_count(dqmom_problem.solver)

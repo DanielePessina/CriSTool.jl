@@ -96,10 +96,11 @@ for (idx, (T_K, c0)) in enumerate(exp_conditions)
     times = build_time_grid(rng, idx)
 
     # Run truth simulation at the requested temperature with the given save grid
-    solution = simulate(TRUTH_MODEL, RunConditions(temperature = T_K, concentration = c0);
-        solver, saveat = times)
+    truth_problem = CrystallisationProblem(TRUTH_MODEL, RunConditions(temperature = T_K, concentration = c0),
+        (first(times), last(times)))
+    solution = solve(truth_problem, solver; saveat = times)
 
-    @assert solution.success "Simulation failed for exp $idx"
+    @assert successful_retcode(solution) "Simulation failed for exp $idx"
     @assert length(solution.concentration) == length(times)
 
     c_true = solution.concentration
@@ -166,8 +167,8 @@ println("Number of measurement objects loaded: ", length(loaded))
 for (i, m) in enumerate(loaded)
     conc = m.observables.concentration
     println("\n-- Experiment $(m.exp_id) --")
-    println("  T (K)       = ", m.temperature)
-    println("  Initial crystals = ", m.initial_crystals)
+    println("  T (K)       = ", m.conditions.temperature)
+    println("  Initial crystals = ", m.conditions.crystals)
     println("  N timepoints= ", length(conc.time))
     println("  time grid   = ", conc.time)
     println("  conc mean   = ", round.(conc.mean, digits = 4))

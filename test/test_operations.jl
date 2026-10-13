@@ -28,6 +28,9 @@ operations_shifted_moment(initial_moments, moment_order, length_shift) =
 # fixture_seeded_conditions fixes the seed; these runs choose their own.
 operations_conditions(; concentration, crystals = nothing, kwargs...) =
     RunConditions(; temperature = 293.15, concentration, crystals, kwargs...)
+# Solve over exactly the saved span.
+operations_solve(model, conditions, numerical_solver; saveat) =
+    solve(CrystallisationProblem(model, conditions, (first(saveat), last(saveat))), numerical_solver; saveat)
 
 const operations_moment_solvers = (MoM(reltol = 1e-10, abstol = 1e-30),
     QMOM(reltol = 1e-10, abstol = 1e-30),
@@ -45,9 +48,8 @@ operations_population(trajectory::CrystallisationSolution) = trajectory.populati
 # solver's own discretisation (a batch at t = 0) for meshes.
 operations_seed_population(numerical_solver, seed_description) =
     numerical_solver isa CriSTool.AbstractDiscretisedSolver ?
-    simulate(fixture_translation_model(speed = 0.0), RunConditions(temperature = 293.15,
-        concentration = 2.0, crystals = seed_description); solver = numerical_solver,
-        saveat = [0.0]).population.numberdensity[:, 1] :
+    operations_solve(fixture_translation_model(speed = 0.0), RunConditions(temperature = 293.15,
+        concentration = 2.0, crystals = seed_description), numerical_solver; saveat = [0.0]).population.numberdensity[:, 1] :
     operations_lognormal_moments(seed_description)[1:5]
 
 @testset "Operation inputs reject unphysical hydraulics" begin
@@ -59,7 +61,7 @@ operations_seed_population(numerical_solver, seed_description) =
     # An extra tank species with no feed value or transport rule cannot be balanced.
     @test_throws ArgumentError CrystallisationProblem(fixture_translation_model(speed = 0.0),
         RunConditions(temperature = 293.15, concentration = 8.0, solvent = (; pH = 7.0),
-            operation = fixture_fed_batch()))
+            operation = fixture_fed_batch()), (0.0, 1.0))
 end
 
 @testset "Mesh fed-batch dilution and MSMPR washout with a seeded feed" begin
@@ -75,11 +77,10 @@ end
         tank_population = operations_seed_population(numerical_solver, operations_tank_seed)
         inlet_population = operations_seed_population(numerical_solver, operations_inlet_seed)
         @testset "$(nameof(typeof(numerical_solver)))" begin
-            fed_trajectory = simulate(no_growth_model,
+            fed_trajectory = operations_solve(no_growth_model,
                 operations_conditions(concentration = 8.0, crystals = operations_tank_seed,
-                    operation = fixture_fed_batch(; inflow = 0.5, feed = seeded_feed));
-                solver = numerical_solver, saveat = operations_times)
-            @test fed_trajectory.success
+                    operation = fixture_fed_batch(; inflow = 0.5, feed = seeded_feed)), numerical_solver; saveat = operations_times)
+            @test fed_trajectory.retcode == ReturnCode.Success
             @test observable_values(fed_trajectory, :volume) ≈ fed_volume rtol = 1e-9
             @test fed_trajectory.concentration ≈ (16.0 .+ operations_times) ./ fed_volume rtol = 1e-9
             @test fed_trajectory.population.numberdensity ≈ hcat(((2.0 .* tank_population .+ 0.5 * elapsed_time .* inlet_population) ./
@@ -88,11 +89,10 @@ end
             @test all(iszero, reactor_vars(fed_trajectory).size_boundary_upper_solid_mass_flow)
             @test all(iszero, reactor_vars(fed_trajectory).size_boundary_lower_solid_mass_flow)
 
-            msmpr_trajectory = simulate(no_growth_model,
+            msmpr_trajectory = operations_solve(no_growth_model,
                 operations_conditions(concentration = 8.0, crystals = operations_tank_seed,
-                    operation = fixture_msmpr(; inflow = 0.5, feed = seeded_feed));
-                solver = numerical_solver, saveat = operations_times)
-            @test msmpr_trajectory.success
+                    operation = fixture_msmpr(; inflow = 0.5, feed = seeded_feed)), numerical_solver; saveat = operations_times)
+            @test msmpr_trajectory.retcode == ReturnCode.Success
             @test observable_values(msmpr_trajectory, :volume) == fill(2.0, length(operations_times))
             @test msmpr_trajectory.concentration ≈ 2.0 .+ 6.0 .* washout_factor rtol = 1e-9
             @test msmpr_trajectory.population.numberdensity ≈ hcat((inlet_population .+ (tank_population .- inlet_population) .* factor
@@ -142,10 +142,9 @@ end
         expected_concentration = total_solute.(operations_times) .- operations_density_kv .* expected_moments[4, :]
         for numerical_solver in operations_moment_solvers
             @testset "$(nameof(typeof(numerical_solver))) $(nameof(typeof(operation)))" begin
-                trajectory = simulate(growth_model, operations_conditions(concentration = 8.0,
-                    crystals = operations_tank_seed, operation = operation);
-                    solver = numerical_solver, saveat = operations_times)
-                @test trajectory.success
+                trajectory = operations_solve(growth_model, operations_conditions(concentration = 8.0,
+                    crystals = operations_tank_seed, operation = operation), numerical_solver; saveat = operations_times)
+                @test trajectory.retcode == ReturnCode.Success
                 @test trajectory.concentration ≈ expected_concentration rtol = 1e-7
                 @test trajectory.d43 ≈ expected_moments[5, :] ./ expected_moments[4, :] rtol = 1e-7
                 @test operations_population(trajectory) ≈
@@ -176,8 +175,7 @@ end
     for numerical_solver in (first(operations_moment_solvers), last(operations_moment_solvers),
                              first(operations_mesh_solvers))
         @testset "$(nameof(typeof(numerical_solver)))" begin
-            trajectory = simulate(fixture_translation_model(speed = 0.0), tracer_conditions;
-                solver = numerical_solver, saveat = tracer_times)
+            trajectory = operations_solve(fixture_translation_model(speed = 0.0), tracer_conditions, numerical_solver; saveat = tracer_times)
             @test reactor_vars(trajectory).volume ≈ tracer_volume rtol = 1e-9
             @test trajectory.concentration ≈ [8.0, 106.0 / 15.0, 19.0 / 3.0] rtol = 1e-8
             @test trajectory.solvent_state.pH == fill(7.0, 3)
@@ -208,10 +206,9 @@ end
     for solver_type in (FiniteVol, WENO)
         balance_errors = map((24, 48)) do cell_count
             mesh_solver = solver_type(meshsize = cell_count, lmin = 0.0, lmax = 20e-6, reltol = 1e-9, abstol = 1e-12)
-            trajectory = simulate(fixture_translation_model(speed = 0.5),
+            trajectory = operations_solve(fixture_translation_model(speed = 0.5),
                 operations_conditions(concentration = 10.0, crystals = boundary_seed,
-                    operation = BatchOperation(volume = 2.0));
-                solver = mesh_solver, saveat = boundary_times)
+                    operation = BatchOperation(volume = 2.0)), mesh_solver; saveat = boundary_times)
             solid_mass = [operations_density_kv * mesh_solver.cell_dL *
                           sum(trajectory.population.numberdensity[:, time_index] .* mesh_solver.cell_centre .^ 3)
                           for time_index in eachindex(boundary_times)]

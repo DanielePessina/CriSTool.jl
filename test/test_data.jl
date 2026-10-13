@@ -91,9 +91,10 @@ end
     @test seeded_run.conditions.crystals ==
           GaussianInitialCrystals(mass_concentration = 0.25, d43 = 12e-6, standard_deviation = 2e-6)
     # The mapped seed carries its mass and d43 into the moment state (rho*kv = 1000).
-    seeded_problem = CrystallisationProblem(fixture_translation_model(), merge(seeded_run.conditions; concentration = 18.0))
-    @test 1000.0 * seeded_problem.initial_population[4] ≈ 0.25 rtol = 1e-12
-    @test seeded_problem.initial_population[5] / seeded_problem.initial_population[4] ≈ 12e-6 rtol = 1e-12
+    seeded_population = CriSTool.DiscretisedProblem(CrystallisationProblem(fixture_translation_model(),
+        merge(seeded_run.conditions; concentration = 18.0), (0.0, 1.0)), MoM()).initial_population
+    @test 1000.0 * seeded_population[4] ≈ 0.25 rtol = 1e-12
+    @test seeded_population[5] / seeded_population[4] ≈ 12e-6 rtol = 1e-12
 
     # Temperature comes from exactly one place.
     @test_throws ArgumentError experiments_from_table(seed_table; metadata_cols = (temperature = :Temperature,),
@@ -165,8 +166,8 @@ end
         nucleation = CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 0.0006),
         growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
     gold_bounds = (nucleation = (ln_nucleation_prefactor = (30.0, 45.0),),)
-    gold_likelihood = prepare_fit(gold_model, data_fixture_runs, OptimisationSpec(bounds = gold_bounds, algorithm = nothing))
-    gold_error = prepare_fit(gold_model, data_fixture_runs, OptimisationSpec(bounds = gold_bounds, algorithm = nothing, loss = MeanAbsoluteError()))
+    gold_likelihood = EstimationProblem(gold_model, data_fixture_runs; bounds = gold_bounds)
+    gold_error = remake(gold_likelihood; loss = MeanAbsoluteError())
     @test loss(gold_likelihood, [38.0]) ≈ 3822.2905404364087 rtol = 1e-10
     @test loss(gold_error, [38.0]) ≈ 3.120095106302579 rtol = 1e-10
 
@@ -180,7 +181,7 @@ end
     for (gold_run, gold_ensemble) in zip(data_fixture_runs, gold_predictions.ensembles)
         final_concentration, final_d43 = gold_final_values[gold_run.exp_id]
         gold_concentration = vec(observable_values(gold_ensemble, :concentration))
-        @test gold_ensemble.time == gold_run.observables.concentration.time
+        @test gold_ensemble.t == gold_run.observables.concentration.time
         @test gold_concentration[end] ≈ final_concentration rtol = 1e-10
         @test observable_values(gold_ensemble, :d43)[1, end] ≈ final_d43 rtol = 1e-10
         # Unseeded batch: starts at the measured C0 and only consumes solute.

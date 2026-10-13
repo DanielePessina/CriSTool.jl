@@ -43,10 +43,10 @@ For a reversible seeded run using a constant saturation value, see
 
 ```julia
 prob = CrystallisationProblem(crystal_model,
-    RunConditions(temperature = 293.15, concentration = 18.0))
+    RunConditions(temperature = 293.15, concentration = 18.0), (0.0, 28_800.0))
 saturation_concentration(prob, t)                       # kg/m³ at time t
 saturation_concentration(sm, temp_profile, t)           # model-level
-supersaturation(prob, state, t)                         # named concentration / solubility
+supersaturation(prob, state, t)                         # inside rate laws: named concentration / solubility
 ```
 
 ## Notes
@@ -54,7 +54,8 @@ supersaturation(prob, state, t)                         # named concentration / 
 - The solvent-phase concentration is the named `:concentration` component of
   both the MoM and
   discretised solver states, so `supersaturation(prob, state, t)` is
-  solver-agnostic.
+  solver-agnostic. Rate laws call it on the solve-time problem they receive,
+  whose `state` is a solver state.
 - Additional named solvent variables do not change the saturation API; the
   concentration component is located by name rather than by a fixed state
   index.

@@ -19,43 +19,50 @@ crystal_model = CrystallisationModel(LysozymeSystem();
     growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
 
 batch_run = RunConditions(temperature = 293.15, concentration = 18.0)
-trajectory = simulate(crystal_model, batch_run; solver = MoM(), saveat = 0.0:3600.0:28800.0)
-trajectory.concentration[end]
-trajectory.d43[end]
+problem = CrystallisationProblem(crystal_model, batch_run, (0.0, 28_800.0))
+trajectory = solve(problem, MoM(); saveat = 3600.0)
+successful_retcode(trajectory)
+trajectory[:concentration][end]
+trajectory[:d43][end]
 ```
 
 A model is a material system plus kinetic laws bound to named values. Calling a
 law with its parameter names binds them; `CNTNucleation()` alone is the unbound law.
 `RunConditions` hold everything else about a run: temperature, initial
-concentration, an optional seed and the reactor operation.
+concentration, an optional seed and the reactor operation. As with an
+`ODEProblem`, the problem holds no numerical method: the solver (`MoM()`,
+`QMOM()`, `DQMOM()`, `FiniteVol()`, `WENO()`) is the second argument of `solve`,
+and `remake(problem; conditions, tspan, p)` changes the run.
 
 ## Fit and predict
 
 ```julia
 using Metaheuristics, Distributions
-using Turing: NUTS   # Turing is optional; loading it enables BayesianSpec fitting
+using Turing: NUTS   # Turing is optional; loading it enables solve(problem, NUTS())
 
 experiments = load_measurements("measurements.csv")  # each run starts from its time-zero data
-fit_spec = OptimisationSpec(bounds = (growth = (growth_coefficient = (1e-12, 1e-9),),),
-    algorithm = DE(N = 32))
-fitted = fit(prepare_fit(crystal_model, experiments, fit_spec; solver = QMOM()))
+estimation = EstimationProblem(crystal_model, experiments; solver = QMOM(),
+    bounds = (growth = (growth_coefficient = (1e-12, 1e-9),),),
+    priors = (growth = (growth_coefficient = Uniform(1e-12, 1e-9),),))
+fitted = solve(estimation, DE(N = 32))   # optimisers search inside the bounds
 fitted.parameters                        # (growth = (growth_coefficient = ...,),)
 
-bayes_spec = BayesianSpec(priors = (growth = (growth_coefficient = Uniform(1e-12, 1e-9),),),
-    n_samples = 500)
-posterior = fit(prepare_fit(crystal_model, experiments, bayes_spec; solver = QMOM()))
+posterior = solve(estimation, NUTS(); n_samples = 500)   # samplers draw under the priors
 predictions = predict(posterior)         # same runs, solver and settings as the fit
 bands = prediction_summary(predictions, :concentration)
 ```
 
-The specification selects which kinetic parameters vary; everything else stays
+The problem's bounds or priors select which kinetic parameters vary; everything else stays
 as bound in the model. Material properties, run conditions and supplied
 measurement noise are never fitted. Likelihood fitting requires supplied
 positive variances for scored measurements; MAE does not. Predictions describe
 physical trajectories; adding measurement noise is a separate, explicit step
 (`measurement_samples`).
 
-Turing is optional: `fit` on a `BayesianSpec` needs `using Turing`.
+As with simulation, the problem holds no algorithm: `solve(problem, alg)`
+takes a Metaheuristics algorithm, an Optimization.jl optimiser (`LBFGS()`),
+`NUTS()` or `ABCDE()`, and `remake(problem; loss, solver, ...)` changes the
+study. Turing is optional: `solve(problem, NUTS())` needs `using Turing`.
 
 Plotting is a package extension: run `using CairoMakie` to enable
 `plot_predictions` and `plot_chain_diagnostics`, and add `using PairPlots` for
@@ -63,8 +70,8 @@ Plotting is a package extension: run `using CairoMakie` to enable
 
 Read the [development documentation](https://danielepessina.github.io/CriSTool.jl/dev/),
 the [model workflow guide](docs/src/model-workflow.md), and the
-[migration guide](docs/src/migration.md). `runsimulation` remains available as
-the low-level interface for automatic differentiation and sensitivity work.
+[migration guide](docs/src/migration.md). `solve(remake(problem; p = values), solver)`
+is the differentiable interface for automatic differentiation and sensitivity work.
 
 Run tests with `julia --project=. -e 'using Pkg; Pkg.test()'`.
 Build docs with `julia --project=docs docs/make.jl` after instantiating `docs`.

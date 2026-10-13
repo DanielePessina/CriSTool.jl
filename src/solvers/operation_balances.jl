@@ -1,5 +1,5 @@
 """Population, reactor and solvent ranges of the public/internal numerical state."""
-_reactor_state_range(problem::CrystallisationProblem) =
+_reactor_state_range(problem::DiscretisedProblem) =
     (_population_state_count(problem.solver) + 1):(_population_state_count(problem.solver) + _operation_state_count(problem.operation))
 
 """
@@ -8,7 +8,7 @@ _reactor_state_range(problem::CrystallisationProblem) =
 Current reactor volume (m³). Fed-batch volume is a reactor state, not a solvent
 variable. A default batch operation uses a unit-volume reference.
 """
-reactor_volume(problem::CrystallisationProblem, state) =
+reactor_volume(problem::DiscretisedProblem, state) =
     _reactor_volume(problem.operation, problem, state)
 _reactor_volume(operation::BatchOperation, problem, state) = operation.volume
 _reactor_volume(operation::MSMPROperation, problem, state) = operation.volume
@@ -16,8 +16,10 @@ _reactor_volume(operation::FedBatchOperation, problem, state) =
     state[first(_reactor_state_range(problem))]
 
 """Named inlet/outlet volumetric flows (m³/s) for an operation at time (s)."""
-operation_flows(problem::CrystallisationProblem, simulation_time) =
+operation_flows(problem::DiscretisedProblem, simulation_time) =
     operation_flows(problem.operation, simulation_time)
+operation_flows(problem::CrystallisationProblem, simulation_time) =
+    operation_flows(problem.conditions.operation, simulation_time)
 operation_flows(operation::BatchOperation, simulation_time) =
     (; inflow = zero(operation.volume), outflow = zero(operation.volume))
 function operation_flows(operation::MSMPROperation, simulation_time)
@@ -51,15 +53,22 @@ _operation_feed_values(feed::CrystallisationFeed, simulation_time) =
     merge((; concentration = _feed_concentration(feed, simulation_time)),
           map(profile -> _feed_profile_value(profile, simulation_time), feed.solvent_state))
 
-_validate_operation(problem::CrystallisationProblem, ::BatchOperation) = nothing
-function _validate_operation(problem::CrystallisationProblem,
+"""
+    _validate_operation(initial_solvent_state, operation)
+
+Check an operation against the run's named initial solvent values: finite feed
+values whose names belong to the solvent state, and a transport hook for extra
+solvent variables.
+"""
+_validate_operation(initial_solvent_state::NamedTuple, ::BatchOperation) = nothing
+function _validate_operation(initial_solvent_state::NamedTuple,
                              operation::Union{MSMPROperation, FedBatchOperation})
     _operation_inflow_value(operation.inflow, 0.0)
     feed_values = _operation_feed_values(operation.feed, 0.0)
     all(value -> value isa Real && isfinite(value), feed_values) ||
         throw(ArgumentError("Feed solvent values must be finite real numbers."))
     _validate_feed_concentration(feed_values.concentration)
-    solvent_names = propertynames(problem.initial_solvent_state)
+    solvent_names = propertynames(initial_solvent_state)
     :volume in solvent_names && throw(ArgumentError("Volume is a reactor state; remove :volume from initial_solvent_state."))
     all(feed_name -> feed_name in solvent_names, propertynames(feed_values)) ||
         throw(ArgumentError("Feed solvent names must belong to initial_solvent_state."))
@@ -104,15 +113,15 @@ end
 Validate the operation once for ODE construction and return the inlet
 population in the solver's population coordinates (`nothing` for batch).
 """
-function _operation_feed_population(problem::CrystallisationProblem)
+function _operation_feed_population(problem::DiscretisedProblem)
     operation = problem.operation
-    _validate_operation(problem, operation)
+    _validate_operation(problem.initial_solvent_state, operation)
     _validate_feed_transport_hook(problem, operation)
     return _operation_feed_population(operation, problem)
 end
-_operation_feed_population(operation::BatchOperation, problem::CrystallisationProblem) = nothing
+_operation_feed_population(operation::BatchOperation, problem::DiscretisedProblem) = nothing
 _operation_feed_population(operation::Union{MSMPROperation, FedBatchOperation},
-                           problem::CrystallisationProblem) =
+                           problem::DiscretisedProblem) =
     _feed_population(problem.solver, problem, operation.feed.crystals)
 
 """

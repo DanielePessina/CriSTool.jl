@@ -13,11 +13,12 @@ function main()
     crystal_model = CrystallisationModel(LysozymeSystem();
         nucleation = CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 0.0006),
         growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
-    solution = simulate(crystal_model, RunConditions(temperature = 293.15, concentration = 18.0);
-        solver = QMOM(nquadrature = 3), saveat = collect(0.0:1800.0:18000.0))
+    problem = CrystallisationProblem(crystal_model, RunConditions(temperature = 293.15, concentration = 18.0),
+        (0.0, 18000.0))
+    solution = solve(problem, QMOM(nquadrature = 3); saveat = 1800.0)
 
-    final_rule = quadrature(solution, length(solution.time))
-    println("QMOM success: ", solution.success)
+    final_rule = quadrature(solution, length(solution.t))
+    println("QMOM retcode: ", solution.retcode)
     println("Tracked raw moments: ", size(solution.population.moments, 1))
     println("Final d43: ", round(solution.d43[end], sigdigits = 5), " m")
     println("Final nodes (m): ", round.(final_rule.nodes, sigdigits = 5))
@@ -27,12 +28,12 @@ function main()
     Label(figure[0, :], "Tutorial 7: three-node QMOM", fontsize = 16)
     concentration_axis = Axis(figure[1, 1], xlabel = "Time (min)", ylabel = "c")
     size_axis = Axis(figure[2, 1], xlabel = "Time (min)", ylabel = "Size (μm)")
-    lines!(concentration_axis, solution.time ./ 60, solution.concentration,
+    lines!(concentration_axis, solution.t ./ 60, solution.concentration,
            color = :dodgerblue, label = "concentration")
-    lines!(size_axis, solution.time ./ 60, 1e6 .* solution.d43,
+    lines!(size_axis, solution.t ./ 60, 1e6 .* solution.d43,
            color = :crimson, label = "d43")
     for node_index in axes(solution.population.nodes, 1)
-        lines!(size_axis, solution.time ./ 60,
+        lines!(size_axis, solution.t ./ 60,
                solution.population.nodes[node_index, :] .* 1.0e6,
                linestyle = :dash, label = "node $node_index")
     end

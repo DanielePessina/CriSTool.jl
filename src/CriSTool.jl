@@ -15,7 +15,7 @@ import Compat
 # The solver defaults (Tsit5, SSPRK43) come from the OrdinaryDiffEq subpackages;
 # users pass any other algorithm instance from the subpackage that defines it.
 using SciMLBase: SciMLBase, ODEProblem, remake, solve, CallbackSet, ContinuousCallback,
-                 DiscreteCallback, EnsembleSerial, EnsembleThreads
+                 DiscreteCallback, EnsembleSerial, EnsembleThreads, ReturnCode, successful_retcode
 using OrdinaryDiffEqTsit5: Tsit5
 using OrdinaryDiffEqSSPRK: SSPRK43
 import DiffEqCallbacks: AutoAbstol, StepsizeLimiter
@@ -64,7 +64,8 @@ const CRISTOOL_BOLTZMANN_CONSTANT = 1.380649e-23
 export CrystallisationSolution, AbstractPopulationTrajectory, MeshPopulation,
        MomentPopulation, QuadraturePopulation,
        CrystallisationSteadyStateSolution, SteadyStateConvergenceError, SteadyStateOptions,
-       CrystallisationProblem
+       CrystallisationProblem, CrystallisationSteadyStateProblem
+export solve, remake, ReturnCode, successful_retcode
 export Observable, ObservableColumns, CrystallisationExperiment,
        initial_concentration
 export AbstractCrystallisationOperation, BatchOperation, MSMPROperation, FedBatchOperation,
@@ -92,9 +93,8 @@ export AbstractNucleationFunction, AbstractGrowthFunction,
 export AbstractAggregationFunction, AbstractBreakageFunction, NoBreakage,
        EmpiricalBreakage, UniformBreakage, NoAggregation,
        ConstantAggregation, SizeSumAggregation, VolumeSumAggregation, AverageAggregation
-export runsimulation, paramaxis, kinetic_parameter_vector, crystallisation_odeproblem,
+export paramaxis, kinetic_parameter_vector, crystallisation_odeproblem,
        crystallisation_solution,
-       solve_steadystate,
        initial_state_from_characteristics
 export AbstractPELossFunction, AbstractVarianceModel, MeasuredVariance, RelativeVariance,
        GaussianNLL, MeanAbsoluteError, loss
@@ -106,15 +106,16 @@ export AbstractSolver, AbstractMomentSolver, FiniteVol, MoM, QMOM, DQMOM, WENO,
        invert_moments,
        moment_order, moment_count, quadrature,
        aggregation_moment_source, breakage_moment_source
-export AbstractABCSampler, ABCDESampler, ABCDETurnerSampler
+export AbstractABCSampler, ABCDE, ABCDETurner, AbstractABCStopping, AllGenerations, StopAtTarget
+export AbstractABCKernel, GaussianABCKernel, LaplaceABCKernel, FlatABCKernel
 export EnsembleSerial, EnsembleThreads
 export PredictionEnsemble, prediction_summary
 export plot_predictions, plot_posterior_pairplot, plot_chain_diagnostics
 export rename_chain
 export CrystallisationSystem, LysozymeSystem, KineticModel, CrystallisationModel,
        CallableGrowth, CallableNucleation, CallableLengthGrowth, KineticContext, system_properties,
-       required_properties, named_parameters, simulate, OptimisationSpec, BayesianSpec, ABCSpec,
-       PreparedFit, prepare_fit, fit, FitResult, InferenceResult, is_likelihood, loss_terms,
+       required_properties, named_parameters, EstimationProblem, FitResult, InferenceResult,
+       is_likelihood, loss_terms,
        AbstractSimulationMode, TransientMode, SteadyMode,
        ParameterSamples, parameter_samples, predict, PredictionResult, measurement_samples,
        DistributionInitialCrystals, AbstractSeedWeighting, NumberWeighted, VolumeWeighted,
@@ -168,7 +169,8 @@ include("solvers/weno.jl")
 include("solvers/steady_state.jl")
 
 include("vendor/KissABC.jl")
-using .KissABC
+import .KissABC
+import .KissABC: AbstractABCKernel, GaussianABCKernel, LaplaceABCKernel, FlatABCKernel
 
 # Inference and posterior utilities.
 include("inference/parameter_estimation.jl")

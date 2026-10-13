@@ -1,19 +1,21 @@
 ###### Solver functions ######
 
 """
-    crystallisation_odeproblem(problem, saveat, kinetic_values=kinetic_parameter_vector(problem))
+    crystallisation_odeproblem(problem::CrystallisationProblem, solver::AbstractSolver)
         -> (odeproblem, default_algorithm)
 
-Build the ODE problem integrated by `problem.solver` over `saveat[1]..saveat[end]`,
-together with that solver's default OrdinaryDiffEq algorithm (or the
-configured `timestepping_algorithm`). `kinetic_values` is the composite kinetic
-parameter vector on `paramaxis(problem)` and becomes the ODE parameter `p`; its
-element type sets the state element type (e.g. ForwardDiff duals). Each solver
-type provides one `crystallisation_odeproblem(solver, problem, saveat, kinetic_values)` method.
+Build the ODE problem that `solve(problem, solver)` integrates over
+`problem.tspan`, together with that solver's default OrdinaryDiffEq algorithm
+(or the configured `timestepping_algorithm`). `problem.p` becomes the ODE
+parameter `p`; its element type sets the state element type (e.g. ForwardDiff
+duals). Each solver type provides one internal
+`crystallisation_odeproblem(solver, discretised_problem, tspan, kinetic_values)` method.
 """
-crystallisation_odeproblem(problem::CrystallisationProblem, saveat,
-                           kinetic_values = kinetic_parameter_vector(problem)) =
-    crystallisation_odeproblem(problem.solver, problem, saveat, kinetic_values)
+function crystallisation_odeproblem(problem::CrystallisationProblem, solver::AbstractSolver)
+    discretised_problem = DiscretisedProblem(problem, solver)
+    kinetic_values = _validate_kinetic_values(discretised_problem, problem.p)
+    return crystallisation_odeproblem(solver, discretised_problem, problem.tspan, kinetic_values)
+end
 
 """
     _solver_callbacks(problem, odeproblem) -> callback or `nothing`
@@ -24,9 +26,9 @@ store callbacks: callbacks can hold mutable event state, so each solve builds
 its own and templates stay immutable and shareable. Each solver type with
 events provides one `_solver_callbacks(solver, problem, odeproblem)` method.
 """
-_solver_callbacks(problem::CrystallisationProblem, odeproblem) =
+_solver_callbacks(problem::DiscretisedProblem, odeproblem) =
     _solver_callbacks(problem.solver, problem, odeproblem)
-_solver_callbacks(solver::AbstractSolver, problem::CrystallisationProblem, odeproblem) = nothing
+_solver_callbacks(solver::AbstractSolver, problem::DiscretisedProblem, odeproblem) = nothing
 
 """Configured algorithm of `solver`, or `default_algorithm` when it is `nothing`."""
 _timestepping_algorithm(solver::AbstractSolver, default_algorithm) =
@@ -51,12 +53,12 @@ provides one `_wrap_solution(solver, problem, ode_solution, boundary_flow_state)
 method with this contract. Mesh boundary diagnostics re-enter user rate laws at
 the saved times, so exceptions from user code still propagate.
 """
-_reconstruct_solution(problem::CrystallisationProblem, ode_solution) =
+_reconstruct_solution(problem::DiscretisedProblem, ode_solution) =
     _wrap_solution(problem.solver, problem, ode_solution,
                    _size_boundary_flow_state(problem.solver, problem, ode_solution))
 
 """Physical solution of an ODE solution; a reconstruction failure throws its `DomainError`."""
-_wrap_solution(problem::CrystallisationProblem, ode_solution) =
+_wrap_solution(problem::DiscretisedProblem, ode_solution) =
     _reconstructed_or_throw(_reconstruct_solution(problem, ode_solution))
 
 """
@@ -299,7 +301,7 @@ function _auto_abstol_opts(solver::AbstractSolver, u0::AbstractVector,
     return absolute_floor isa AbstractVector ? copy(absolute_floor) : absolute_floor, nothing
 end
 
-_solver_absolute_floor(configured_problem::CrystallisationProblem, odeproblem) =
+_solver_absolute_floor(configured_problem::DiscretisedProblem, odeproblem) =
     _solver_absolute_floor(configured_problem, odeproblem, configured_problem.solver)
 
 _solver_absolute_floor(configured_problem, odeproblem, configured_solver::AbstractSolver) =
@@ -360,7 +362,7 @@ Shared direct/prepared option policy. `callback_factory(odeproblem)` constructs
 one fresh user callback per evaluation, composed with package safety callbacks.
 Iteration and elapsed-time limits may be supplied explicitly in `solve_options`.
 """
-function _solve_crystallisation_ode(problem::CrystallisationProblem, odeproblem,
+function _solve_crystallisation_ode(problem::DiscretisedProblem, odeproblem,
                                     algorithm, saveat;
                                     solve_options::NamedTuple = (;),
                                     callback_factory = nothing)
@@ -382,34 +384,74 @@ function _solve_crystallisation_ode(problem::CrystallisationProblem, odeproblem,
                  saveat = saveat, callback = solve_callback)
 end
 
-"""Check that save times are finite, nonnegative SI seconds in increasing order."""
+"""Check prepared save times: finite, nonnegative SI seconds in increasing order."""
 function _validate_save_times(save_times)
     length(save_times) >= 1 ||
-        throw(ArgumentError("save_idx must contain at least one time."))
+        throw(ArgumentError("saveat must contain at least one time."))
     all(time -> time isa Real && isfinite(time) && time >= 0, save_times) ||
-        throw(ArgumentError("save_idx must contain finite nonnegative SI times in seconds."))
+        throw(ArgumentError("saveat must contain finite nonnegative SI times in seconds."))
     length(save_times) == 1 || all(diff(collect(save_times)) .> 0) ||
-        throw(ArgumentError("save_idx must be strictly increasing."))
+        throw(ArgumentError("saveat must be strictly increasing."))
     return save_times
 end
 
 """
-    _simulatecrystallisation(problem, saveat, kinetic_values=kinetic_parameter_vector(problem);
-                             algorithm=nothing, solve_options=(;), callback_factory=nothing)
+    _checked_saveat(saveat, tspan)
 
-Solve `problem` at `saveat` with the solver selected by `problem.solver` and
-return its physical solution. Each solver type provides the two methods
-`crystallisation_odeproblem(solver, problem, saveat, kinetic_values) -> (odeproblem, default_algorithm)`
+`saveat` as `solve` passes it to the ODE solver. A number is a save step (s)
+from `t0`, with `tf` also saved; a collection lists the save times, strictly
+increasing inside `tspan`; an empty collection saves every accepted step.
+"""
+function _checked_saveat(save_step::Real, tspan::Tuple{Float64, Float64})
+    isfinite(save_step) && save_step > 0 ||
+        throw(ArgumentError("A saveat step must be finite and strictly positive; got $save_step."))
+    return Float64(save_step)
+end
+function _checked_saveat(save_times::AbstractVector{<:Real}, tspan::Tuple{Float64, Float64})
+    checked_times = collect(Float64, save_times)
+    all(save_time -> first(tspan) <= save_time <= last(tspan), checked_times) ||
+        throw(ArgumentError("saveat times must lie inside tspan = $tspan."))
+    all(>(0), diff(checked_times)) ||
+        throw(ArgumentError("saveat times must be strictly increasing."))
+    return checked_times
+end
+_checked_saveat(saveat, tspan) =
+    throw(ArgumentError("saveat must be a time step or a vector of times in seconds; got $(typeof(saveat))."))
+
+"""
+    solve(problem::CrystallisationProblem, solver::AbstractSolver; saveat=Float64[],
+          alg=nothing, solve_options=(;), callback_factory=nothing) -> CrystallisationSolution
+
+Integrate `problem` over `problem.tspan` with the population-balance `solver`
+(`MoM()`, `QMOM()`, `DQMOM()`, `FiniteVol()`, `WENO()`) and return its
+physical trajectory. `saveat` is a save step or a vector of save times inside
+`tspan`, as in OrdinaryDiffEq; by default every accepted step is saved. `alg`
+replaces the solver's default OrdinaryDiffEq algorithm (e.g. `alg = Rodas5P()`),
+`solve_options` passes further integrator options, and `callback_factory(odeproblem)`
+builds a user callback composed with the package callbacks. Inspect the result
+with `sol.t`, `sol.retcode`, `successful_retcode(sol)` and `sol[:concentration]`.
+"""
+SciMLBase.solve(problem::CrystallisationProblem, solver::AbstractSolver; solve_settings...) =
+    _solve_discretised(DiscretisedProblem(problem, solver), problem.tspan, problem.p; solve_settings...)
+
+"""
+    _solve_discretised(discretised_problem, tspan, kinetic_values; saveat=Float64[],
+                       alg=nothing, solve_options=(;), callback_factory=nothing)
+
+Transient solve of an already discretised problem, the body of the public
+`solve`. Each solver type provides the two methods
+`crystallisation_odeproblem(solver, problem, tspan, kinetic_values) -> (odeproblem, default_algorithm)`
 and `_wrap_solution(solver, problem, ode_solution, boundary_flow_state)`.
 """
-function _simulatecrystallisation(problem::CrystallisationProblem, saveat,
-                                  kinetic_values = kinetic_parameter_vector(problem);
-                                  algorithm = nothing,
-                                  solve_options::NamedTuple = (;),
-                                  callback_factory = nothing)
-    ode_problem, default_algorithm = crystallisation_odeproblem(problem, saveat, kinetic_values)
-    ode_solution = _solve_crystallisation_ode(problem, ode_problem,
-                                              something(algorithm, default_algorithm),
-                                              saveat; solve_options, callback_factory)
-    return _wrap_solution(problem, ode_solution)
+function _solve_discretised(discretised_problem::DiscretisedProblem, tspan::Tuple{Float64, Float64},
+                            kinetic_values; saveat = Float64[], alg = nothing,
+                            solve_options::NamedTuple = (;), callback_factory = nothing)
+    checked_saveat = _checked_saveat(saveat, tspan)
+    checked_values = _validate_kinetic_values(discretised_problem, kinetic_values)
+    ode_problem, default_algorithm = crystallisation_odeproblem(discretised_problem.solver,
+        discretised_problem, tspan, checked_values)
+    ode_solution = _solve_crystallisation_ode(discretised_problem, ode_problem,
+                                              something(alg, default_algorithm),
+                                              checked_saveat; solve_options, callback_factory)
+    return _wrap_solution(discretised_problem, ode_solution)
 end

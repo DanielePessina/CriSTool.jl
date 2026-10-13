@@ -38,7 +38,7 @@ using PairPlots: PairPlots
     @test !has_plot_type(single_axis, PlotMakie.Band)
     @test !has_plot_type(single_axis, PlotMakie.Scatter)
     single_line = only(filter(axis_plot -> axis_plot isa PlotMakie.Lines, single_axis.scene.plots))
-    saved_times = only(single_predictions.ensembles).time
+    saved_times = only(single_predictions.ensembles).t
     @test [point[1] for point in single_line[1][]] ≈ saved_times ./ 60
     @test [point[2] for point in single_line[1][]] ≈ fixture_translation_d43.(saved_times) .* 1e6 rtol = 1e-6
     @test_throws ArgumentError plot_predictions(single_predictions; observables = (:pH,))
@@ -80,17 +80,18 @@ end
 @testset "Solution plot conversions" begin
     PlotMakie = CairoMakie.Makie
     recipe_times = [0.0, 600.0, 1800.0, 3600.0]
-    recipe_solution = simulate(fixture_translation_model(), fixture_seeded_conditions();
-        solver = MoM(), saveat = recipe_times)
+    recipe_problem = CrystallisationProblem(fixture_translation_model(), fixture_seeded_conditions(),
+        (0.0, last(recipe_times)))
+    recipe_solution = solve(recipe_problem, MoM(); saveat = recipe_times)
     plotted_points(plot_object) = plot_object[1][]
     # Converted data equal the solution's own vectors, and the closed form.
     default_points = PlotMakie.convert_arguments(PlotMakie.PointBased(), recipe_solution)[1]
-    @test [point[1] for point in default_points] == recipe_solution.time
+    @test [point[1] for point in default_points] == recipe_solution.t
     @test [point[2] for point in default_points] == recipe_solution.concentration
     @test [point[2] for point in default_points] ≈ fixture_translation_concentration.(recipe_times) rtol = 1e-6
     for observable_name in (:concentration, :d10, :d32, :d43, :moment2)
         observable_points = PlotMakie.convert_arguments(PlotMakie.PointBased(), recipe_solution, observable_name)[1]
-        @test [point[1] for point in observable_points] == recipe_solution.time
+        @test [point[1] for point in observable_points] == recipe_solution.t
         @test [point[2] for point in observable_points] == observable_values(recipe_solution, observable_name)
     end
     d43_points = PlotMakie.convert_arguments(PlotMakie.PointBased(), recipe_solution, :d43)[1]
@@ -116,8 +117,7 @@ end
 
     # Mesh size distribution: cell centres against the saved number density.
     mesh_solver = FiniteVol(meshsize = 40, lmax = 40e-6)
-    mesh_solution = simulate(fixture_translation_model(), fixture_seeded_conditions();
-        solver = mesh_solver, saveat = recipe_times)
+    mesh_solution = solve(recipe_problem, mesh_solver; saveat = recipe_times)
     distribution_points = PlotMakie.convert_arguments(PlotMakie.PointBased(), mesh_solution, mesh_solver, 3)[1]
     @test [point[1] for point in distribution_points] == mesh_solver.cell_centre
     @test [point[2] for point in distribution_points] == mesh_solution.population.numberdensity[:, 3]

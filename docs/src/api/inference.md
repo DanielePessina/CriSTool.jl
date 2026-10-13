@@ -1,12 +1,17 @@
 # Inference and uncertainty
 
+`EstimationProblem` follows the SciML problem/solve pattern: it holds the
+model, experiments, selected parameters, loss and simulation settings, and
+`solve(problem, alg)` dispatches on the estimation algorithm. The Turing method
+`solve(problem, NUTS(); n_samples, n_chains, rng, parallel)` is defined by the
+`CriSToolTuringExt` extension (`using Turing`).
+
 ```@docs
-OptimisationSpec
-BayesianSpec
-ABCSpec
-PreparedFit
-prepare_fit
-fit
+EstimationProblem
+remake(::EstimationProblem)
+solve(::EstimationProblem, ::Any)
+solve(::EstimationProblem, ::CriSTool.Metaheuristics.Algorithm)
+solve(::EstimationProblem, ::AbstractABCSampler)
 FitResult
 is_likelihood
 loss_terms
@@ -20,12 +25,19 @@ predict
 PredictionResult
 measurement_samples
 AbstractABCSampler
-ABCDESampler
-ABCDETurnerSampler
+ABCDE
+ABCDETurner
+AbstractABCStopping
+AllGenerations
+StopAtTarget
+AbstractABCKernel
+GaussianABCKernel
+LaplaceABCKernel
+FlatABCKernel
 rename_chain
 PredictionEnsemble
 prediction_summary
 ```
 
 Local parameter sensitivities are ForwardDiff derivatives of
-`runsimulation`; see [Sensitivity analysis](../sensitivity.md).
+`solve(remake(problem; p = values), solver)`; see [Sensitivity analysis](../sensitivity.md).

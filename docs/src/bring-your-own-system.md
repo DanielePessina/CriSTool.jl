@@ -43,11 +43,11 @@ takes an additional length in metres and fills solver-owned buffers internally.
 Custom types and `paramaxis`/rate dispatch remain available for specialised laws.
 
 Additional solvent variables use `RunConditions(solvent = (pH = 7.0,))` and a
-custom `solvent_dynamics` callable, passed to `CrystallisationProblem` or to
-`prepare_fit` through `problem_options = (solvent_dynamics = ...,)`. Experiments
+custom `solvent_dynamics` callable, passed as a `CrystallisationProblem` keyword or to
+`EstimationProblem` through `problem_options = (solvent_dynamics = ...,)`. Experiments
 read those initial values from time-zero data with `solvent = (pH =
 FromObservation(:pH),)`. Custom observables use local `observable_projections`
-during preparation. Only kinetic parameters are selectable for fitting.
+passed to `EstimationProblem`. Only kinetic parameters are selectable for fitting.
 
 Additional material values can be supplied as `properties=(offset=..., viscosity=...)`
 and read as `system_properties(context).offset`. Declare needed names with a callable law's
