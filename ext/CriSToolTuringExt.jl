@@ -93,8 +93,9 @@ function SciMLBase.solve(estimation_problem::EstimationProblem, sampler::Abstrac
     chain_parallel, split_problem = CriSTool._split_parallel(estimation_problem,
         CriSTool._chain_parallel_level(n_chains), parallel)
     ensemble = _chain_ensemble(chain_parallel)
+    # Turing ≥ 0.43 returns a FlexiChains chain by default; results hold MCMCChains.
     posterior_chain = Turing.sample(rng, nuts_model(split_problem, ensemble), sampler, ensemble,
-        n_samples, n_chains; sample_options...)
+        n_samples, n_chains; chain_type = CriSTool.MCMCChains.Chains, sample_options...)
     return CriSTool._chain_inference_result(split_problem, sampler, posterior_chain)
 end
 
