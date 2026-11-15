@@ -42,7 +42,7 @@ joint uncertainty draws.
 - `predict(result)` reuses the fit's solver, mode and options; predicting from
   user samples requires an explicit `solver`.
 - Predictions retain failed draws; exclusion from summaries is explicit.
-- ForwardDiff and finite differences are tested; reverse Enzyme remains deferred.
+- Automatic differentiation is forward mode: ForwardDiff and finite differences are tested; reverse mode (Enzyme, Zygote) is not supported in v1.
 
 The lower-level solver engine still uses the internal block order nucleation,
 growth, dissolution, aggregation, breakage. Named model users do not assemble
