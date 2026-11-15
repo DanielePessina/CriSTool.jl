@@ -1,23 +1,63 @@
 """
 Approximate Bayesian computation routines for parameter inference in crystallisation models. Implements the ABCDE algorithm and related plotting helpers.
 """
-function _dofcalculator(::AbstractPELossFunction, datasets::Vector{<:AbstractExperiment})
-    return sum(length(observable.mean)
-               for experiment in datasets
-               for observable in values(experiment.observables))
+# Count exactly the observations included by preparation, using global weights.
+function _abc_observable_weight(lossfunction, index, name)
+    hasproperty(lossfunction, :weighting) || return 1.0
+    return _observable_weight(lossfunction, index, name)
+end
+
+function _dofcalculator(lossfunction::AbstractPELossFunction, setup::LossSetup)
+    observable_names = setup.observable_names
+    included_count = 0
+    for (experiment_index, experiment) in enumerate(setup.experiments)
+        for name in propertynames(experiment.observables)
+            global_index = findfirst(==(name), observable_names)
+            _abc_observable_weight(lossfunction, global_index, name) == 0 && continue
+            included_count += length(_included_observation_indices(setup, experiment_index, name))
+        end
+    end
+    return included_count
+end
+
+function _abc_unit_weight_likelihood(lossfunction, setup)
+    lossfunction isa logMLE || return false
+    return all(_abc_observable_weight(lossfunction, index, name) == 1
+               for (index, name) in enumerate(setup.observable_names))
+end
+
+function _abc_target_policy(lossfunction, setup, test::Symbol, target)
+    target !== nothing && return :explicit
+    test in (:f, :fstat, :ftest) &&
+        throw(ArgumentError("F targets require a residual-sum-of-squares discrepancy; " *
+                            "CriSTool's logMLE and MAE losses do not provide one. Supply target explicitly."))
+    test in (:auto, :wilks, :chisq, :chisqtest) ||
+        throw(ArgumentError("Unknown ABC target policy :$test. Use :auto, :wilks, or target=<value>."))
+    _abc_unit_weight_likelihood(lossfunction, setup) ||
+        throw(ArgumentError("Wilks targets require a unit-weight logMLE likelihood. " *
+                            "For MAE, custom, or weighted losses, supply target explicitly."))
+    return :wilks
 end
 
 function _abcde_target(optimallossfunction::Real, dof::Integer, nparams::Integer,
-                       confidenceinterval::Real; test::Symbol = :f)
-    if test == :f || test == :fstat || test == :ftest
-        return optimallossfunction * (1 +
-                nparams / dof *
-                quantile(FDist(nparams, dof), confidenceinterval))
-    elseif test == :wilks || test == :chisq || test == :chisqtest
-        return optimallossfunction + 0.5 * quantile(Chisq(nparams), confidenceinterval)
+                       confidenceinterval::Real; test::Symbol = :wilks,
+                       target::Union{Nothing, Real} = nothing)
+    isfinite(optimallossfunction) ||
+        throw(ArgumentError("The ABC reference loss must be finite."))
+    0 < confidenceinterval < 1 ||
+        throw(ArgumentError("confidenceinterval must lie strictly between zero and one."))
+    nparams >= 0 || throw(ArgumentError("The parameter count must be nonnegative."))
+    resolved_target = if target !== nothing
+        target
+    elseif test in (:wilks, :chisq, :chisqtest)
+        nparams == 0 ? optimallossfunction :
+            optimallossfunction + 0.5 * quantile(Chisq(nparams), confidenceinterval)
     else
-        throw(ArgumentError("Unknown ABCDE target test: $test. Use :f or :wilks."))
+        throw(ArgumentError("Unsupported ABC target policy :$test. Use :wilks or target=<value>."))
     end
+    isfinite(resolved_target) && resolved_target >= optimallossfunction ||
+        throw(ArgumentError("ABC target must be finite and at least the reference loss ($optimallossfunction)."))
+    return resolved_target
 end
 
 function _resolve_abc_savedir(savedir::Union{Nothing, AbstractString})
@@ -87,7 +127,7 @@ function _runsampler(s::ABCDESampler, prior, lossfn, target, optimallossfunction
     res = ABCDE(prior, lossfn, target;
                 nparticles = nparticles, generations = generations,
                 α = s.α, HPC = HPC, earlystop = earlystop)
-    return res, true  # ABCDE returns when target is reached or generations exhausted
+    return res, res.reached_ϵ
 end
 
 function _runsampler(s::ABCDETurnerSampler, prior, lossfn, target, optimallossfunction;
@@ -125,7 +165,7 @@ _sampler_metadata(s::ABCDETurnerSampler) = (K = s.K, kernel = s.kernel)
             validation = nothing, extrastring = "Empty",
             nparticles = 1024, generations = 128, saveplot = true,
             confidenceinterval = 0.95, HPC = false, verbosity = 1,
-            earlystop = false, test = :f, outputdir = nothing)
+            earlystop = false, test = :auto, target = nothing, outputdir = nothing)
 
 Domain-level ABC inference for crystallisation kinetic parameters. Owns target
 computation, the loss-function lambda, posterior persistence and plotting; the
@@ -142,7 +182,8 @@ choice of sampler (ABCDE, Turner ABCDE, …) is selected via `sampler`.
   the growth block.
 - `sampler`: which ABC algorithm to run. Defaults to `ABCDESampler()`.
 - `nparticles`, `generations`: ABC population size and iteration count.
-- `confidenceinterval`, `test`: stopping criterion (F-statistic or χ²).
+- `confidenceinterval`, `test`: asymptotic Wilks target policy for unit-weight `logMLE`.
+- `target`: explicit discrepancy threshold, required for MAE, weighted or custom losses.
 - `validation`, `saveplot`, `extrastring`, `HPC`, `earlystop`, `verbosity`:
   output and execution controls.
 - `outputdir`: directory for posterior persistence and plots. `nothing`
@@ -165,26 +206,67 @@ function run_abc(lossfunction::AbstractPELossFunction,
                  diss::AbstractDissolutionFunction = nodissolution(),
                  solver::AbstractSolver,
                  sampler::AbstractABCSampler = ABCDESampler(),
-                 validation::Union{Nothing, Vector{<:AbstractExperiment}} = nothing,
+                 validation::Union{Nothing, LossSetup, Vector{<:AbstractExperiment}} = nothing,
                  extrastring::String = "Empty", nparticles::Int64 = 1024,
                  generations::Int64 = 128, saveplot::Bool = true,
                  confidenceinterval::Float64 = 0.95, HPC::Bool = false,
-                 verbosity::Int64 = 1, earlystop::Bool = false, test::Symbol = :f,
+                 verbosity::Int64 = 1, earlystop::Bool = false, test::Symbol = :auto,
+                 target::Union{Nothing, Real} = nothing,
                  outputdir::Union{Nothing, AbstractString} = nothing)
-
-    dof = _dofcalculator(lossfunction, measurement) - length(optimalpara)
 
     loss_problem = _build_loss_problem(nucleationfunction, growthfunction,
                                        aggregationfunction, breakagefunction, solver;
                                        diss = diss)
     loss_setup = prepare_loss(loss_problem, measurement)
+    return run_abc(lossfunction, loss_setup, optimalpara, prior;
+                   sampler, validation, extrastring, nparticles, generations, saveplot,
+                   confidenceinterval, HPC, verbosity, earlystop, test, target, outputdir)
+end
 
+"""
+    run_abc(lossfunction, setup::LossSetup, optimalpara, prior; test=:auto, target=nothing, ...)
+
+Run ABC using an already configured system and its prepared experiments.
+`:auto` uses a Wilks likelihood-ratio increment only for unit-weight `logMLE`.
+MAE, weighted likelihoods, and custom discrepancies require an explicit target.
+Wilks assumes a regular identifiable likelihood and an interior MLE; the
+threshold is asymptotic, not a general finite-sample coverage guarantee.
+"""
+function run_abc(lossfunction::AbstractPELossFunction, loss_setup::LossSetup,
+                 optimalpara::AbstractVector{<:Real}, prior;
+                 sampler::AbstractABCSampler = ABCDESampler(),
+                 validation::Union{Nothing, LossSetup, Vector{<:AbstractExperiment}} = nothing,
+                 extrastring::String = "Empty", nparticles::Int64 = 1024,
+                 generations::Int64 = 128, saveplot::Bool = true,
+                 confidenceinterval::Float64 = 0.95, HPC::Bool = false,
+                 verbosity::Int64 = 1, earlystop::Bool = false, test::Symbol = :auto,
+                 target::Union{Nothing, Real} = nothing,
+                 outputdir::Union{Nothing, AbstractString} = nothing)
+    loss_problem = loss_setup.problem
+    measurement = loss_setup.experiments
+    solver = loss_problem.solver
+    nucleationfunction = loss_problem.kinetics_nucleationfunction
+    growthfunction = loss_problem.kinetics_growthfunction
+    diss = loss_problem.kinetics_dissolutionfunction
+    aggregationfunction = loss_problem.kinetics_aggregationfunction
+    breakagefunction = loss_problem.kinetics_breakagefunction
+    _validate_loss_weights(lossfunction, loss_setup)
+    target_policy = _abc_target_policy(lossfunction, loss_setup, test, target)
+    # A failed reference simulation must not become a plausible optimum.
+    for prepared_experiment in loss_setup.prepared
+        reference_solution = _solve_prepared(prepared_experiment, optimalpara)
+        reference_solution.success ||
+            throw(ArgumentError("The ABC reference parameters produce an unsuccessful simulation."))
+    end
+    included_observations = _dofcalculator(lossfunction, loss_setup)
+    dof = included_observations - length(optimalpara)
     optimallossfunction = loss(lossfunction, loss_setup, optimalpara)
-
     target = _abcde_target(optimallossfunction, dof, length(optimalpara),
-                           confidenceinterval; test = test)
+                           confidenceinterval; test = target_policy, target = target)
 
     confidenceinterval_str = string(Int(confidenceinterval * 100))
+    threshold_caption = target_policy === :explicit ? "Target = $target" :
+                        "CI = $confidenceinterval_str"
     optmle_round = round(optimallossfunction, sigdigits = 4)
     target_round = round(target, sigdigits = 4)
 
@@ -197,7 +279,7 @@ function run_abc(lossfunction::AbstractPELossFunction,
                                               confidenceinterval, nparticles, generations,
                                               solver, nucleationfunction, growthfunction,
                                               aggregationfunction, breakagefunction;
-                                              test = test,
+                                              test = target_policy,
                                               extrastring = extrastring * panel_suffix)
 
     print_start_panel(label, start_content; verbosity = verbosity)
@@ -229,7 +311,9 @@ function run_abc(lossfunction::AbstractPELossFunction,
 
         jldsave(joinpath(objects_dir, "$(now_str) $(extrastring)$(save_suffix).jld2");
                 res = res, optmle = optimallossfunction, target = target,
-                optimalpara = optimalpara, prior = prior, sampler_meta...)
+                optimalpara = optimalpara, prior = prior,
+                target_policy = target_policy,
+                included_observations = included_observations, sampler_meta...)
     end
 
     if has_particles && saveplot && output_dir !== nothing
@@ -237,7 +321,7 @@ function run_abc(lossfunction::AbstractPELossFunction,
                 title = Makie.rich("$(now_str) $(extrastring)$(panel_suffix)\n MLE",
                                    Makie.subscript("minimum"), " = $optmle_round MLE",
                                    Makie.subscript(confidenceinterval_str),
-                                   " = $(target_round), CI = $confidenceinterval_str"),
+                                   " = $(target_round), $threshold_caption"),
                 saveplot = saveplot,
                 savestring = "$(now_str) $(extrastring)$(save_suffix)",
                 savedir = output_dir,
@@ -247,20 +331,17 @@ function run_abc(lossfunction::AbstractPELossFunction,
                 breakagefunction = breakagefunction,
                 diss = diss)
 
-        _ABCmeasurementplot(res, lossfunction, measurement, optimalpara, nucleationfunction,
-                            growthfunction, aggregationfunction, breakagefunction, solver;
-                            diss = diss,
+        _ABCmeasurementplot(res, lossfunction, loss_setup, optimalpara;
                             saveplot = saveplot,
-                            title = "$(now_str) $(extrastring)$(save_suffix)\nCI = $confidenceinterval_str",
+                            title = "$(now_str) $(extrastring)$(save_suffix)\n$threshold_caption",
                             HPC = HPC,
                             savestring = "$(now_str) $(extrastring)$(save_suffix)",
                             savedir = output_dir)
 
         if !isnothing(validation)
-            _ABCmeasurementplot(res, lossfunction, validation, optimalpara,
-                                nucleationfunction, growthfunction, aggregationfunction,
-                                breakagefunction, solver;
-                                diss = diss,
+            validation_setup = validation isa LossSetup ? validation :
+                               prepare_loss(loss_problem, validation)
+            _ABCmeasurementplot(res, lossfunction, validation_setup, optimalpara;
                                 saveplot = saveplot,
                                 title = "$(now_str) $(extrastring)$(save_suffix) Validation",
                                 savestring = "$(now_str) $(extrastring)$(save_suffix) Validation",
@@ -273,6 +354,8 @@ function run_abc(lossfunction::AbstractPELossFunction,
 
     result_dict = Dict{String, Any}("optmle" => optimallossfunction,
                                     "target" => target,
+                                    "target_policy" => target_policy,
+                                    "included_observations" => included_observations,
                                     "optimalparameters" => optimalpara,
                                     "meanparameters" => has_particles ? pmean.(res.P) :
                                                         optimalpara,
@@ -300,12 +383,13 @@ function ABCDE_Routine(lossfunction::AbstractPELossFunction,
                        breakagefunction::AbstractBreakageFunction;
                        diss::AbstractDissolutionFunction = nodissolution(),
                        solver::AbstractSolver,
-                       validation::Union{Nothing, Vector{<:AbstractExperiment}} = nothing,
+                       validation::Union{Nothing, LossSetup, Vector{<:AbstractExperiment}} = nothing,
                        extrastring::String = "Empty", nparticles::Int64 = 1024,
                        generations::Int64 = 128, alpha::Int64 = 0, saveplot::Bool = true,
                        confidenceinterval::Float64 = 0.95, HPC::Bool = false,
                        verbosity::Int64 = 1,
-                       earlystop::Bool = false, test::Symbol = :f,
+                       earlystop::Bool = false, test::Symbol = :auto,
+                       target::Union{Nothing, Real} = nothing,
                        outputdir::Union{Nothing, AbstractString} = nothing)
     return run_abc(lossfunction, measurement, optimalpara, prior, nucleationfunction,
                    growthfunction, aggregationfunction, breakagefunction;
@@ -314,7 +398,7 @@ function ABCDE_Routine(lossfunction::AbstractPELossFunction,
                    validation = validation, extrastring = extrastring,
                    nparticles = nparticles, generations = generations, saveplot = saveplot,
                    confidenceinterval = confidenceinterval, HPC = HPC,
-                   verbosity = verbosity, earlystop = earlystop, test = test,
+                   verbosity = verbosity, earlystop = earlystop, test = test, target = target,
                    outputdir = outputdir)
 end
 
@@ -333,7 +417,7 @@ function ABCDE_Turner_Routine(lossfunction::AbstractPELossFunction,
                               breakagefunction::AbstractBreakageFunction;
                               diss::AbstractDissolutionFunction = nodissolution(),
                               solver::AbstractSolver,
-                              validation::Union{Nothing, Vector{<:AbstractExperiment}} = nothing,
+                              validation::Union{Nothing, LossSetup, Vector{<:AbstractExperiment}} = nothing,
                               extrastring::String = "Empty",
                               nparticles::Int64 = 1024,
                               generations::Int64 = 128,
@@ -342,7 +426,8 @@ function ABCDE_Turner_Routine(lossfunction::AbstractPELossFunction,
                               HPC::Bool = false,
                               verbosity::Int64 = 1,
                               earlystop::Bool = false,
-                              test::Symbol = :f,
+                              test::Symbol = :auto,
+                              target::Union{Nothing, Real} = nothing,
                               K::Int = 8,
                               p_migration::Float64 = 0.10,
                               p_crossover::Float64 = 0.90,
@@ -362,7 +447,7 @@ function ABCDE_Turner_Routine(lossfunction::AbstractPELossFunction,
                    validation = validation, extrastring = extrastring,
                    nparticles = nparticles, generations = generations, saveplot = saveplot,
                    confidenceinterval = confidenceinterval, HPC = HPC,
-                   verbosity = verbosity, earlystop = earlystop, test = test,
+                   verbosity = verbosity, earlystop = earlystop, test = test, target = target,
                    outputdir = outputdir)
 end
 
@@ -455,6 +540,30 @@ function ABCplot(abcres, params::Vector{Float64}, lossfunction::AbstractPELossFu
                             savedir = savedir,
                             lossfunction_string = lossfunction.string,
                             showplot = showplot)
+end
+
+function _ABCmeasurementplot(abcres, lossfunction::AbstractPELossFunction,
+                             setup::LossSetup, optimalparameters::AbstractVector{<:Real};
+                             saveplot::Bool = true, title = "",
+                             savestring::String = "", colouroffset::Int64 = 0,
+                             HPC::Bool = false, showtext::Bool = true,
+                             savedir::Union{Nothing, AbstractString} = nothing)
+    samples_mat = _abc_particles_matrix(abcres.P)
+    isnothing(samples_mat) && return nothing
+    samples = permutedims(samples_mat)
+    ensembleresults = run_ensemble(samples, setup; HPC = HPC)
+    optimal_solutions = [(prepared.problem, _solve_prepared(prepared, optimalparameters))
+                         for prepared in setup.prepared]
+    configured_problem = setup.problem
+    return plot_measurements_vs_ensemble(setup.experiments, ensembleresults, optimal_solutions;
+        title = title, savename = savestring, savedir = savedir,
+        colouroffset = colouroffset, parameters = optimalparameters,
+        nucleationfunction = configured_problem.kinetics_nucleationfunction,
+        growthfunction = configured_problem.kinetics_growthfunction,
+        dissolutionfunction = configured_problem.kinetics_dissolutionfunction,
+        aggregationfunction = configured_problem.kinetics_aggregationfunction,
+        breakagefunction = configured_problem.kinetics_breakagefunction,
+        solver = configured_problem.solver, parameter_samples = samples, showtext = showtext)
 end
 
 function _ABCmeasurementplot(abcres, lossfunction::AbstractPELossFunction,

@@ -36,6 +36,8 @@ of particles, generations, samples, and chains configured in the script.
 | [6 — Dissolution](https://github.com/DanielePessina/CriSTool.jl/blob/main/examples/Tutorial%206%20Dissolution.jl) | Runs signed scalar dissolution with MoM, finite volume, and WENO from a seeded initial population. | CairoMakie |
 | [7 — QMOM](https://github.com/DanielePessina/CriSTool.jl/blob/main/examples/Tutorial%207%20QMOM.jl) | Evolves raw moments, reconstructs a Gaussian quadrature, and plots the nodes alongside `d43`. | CairoMakie |
 | [8 — Real-data MoM versus FiniteVol](https://github.com/DanielePessina/CriSTool.jl/blob/main/examples/Tutorial%208%20Real-data%20MoM%20versus%20QMOM.jl) | Runs substantial MoM optimization plus a four-chain NUTS posterior, then a 64×64 derivative-free ABCDE fit for a scalar-aggregation/uniform-breakage FiniteVol model. The script filename retains the historical “QMOM” name. Results are saved under the configured results directory. | Metaheuristics, Turing, your CSV dataset |
+| [9 — MSMPR Dynamic versus Steady State](https://github.com/DanielePessina/CriSTool.jl/blob/main/examples/Tutorial%209%20MSMPR%20Dynamic%20versus%20Steady%20State.jl) | Runs an autonomous fixed-flow MSMPR dynamically and compares the trajectory with the analytic relaxation (concentration and seed moment), computing the scaled residual against the feed steady state. Shows that the final dynamic point is not automatically steady and that callable inlet profiles are transient-only. | CairoMakie |
+| [10 — Fed-Batch Mixing and Seeded Growth](https://github.com/DanielePessina/CriSTool.jl/blob/main/examples/Tutorial%2010%20Fed-Batch%20Mixing%20and%20Seeded%20Growth.jl) | Runs a fed-batch with a clear feed (pure mixing: volume, concentration and conserved seed inventory) and with constant seeded growth (d43 shifts by G·Δt, inventory conserved, solute consumed). | CairoMakie |
 
 The scripts call `main()` at the end, so they can be run directly from the
 command line. They also keep setup values near the top of `main()` to make it
@@ -54,6 +56,9 @@ easy to replace the kinetics, parameters, time grid, or experiment data.
   and [Solvers](solvers.md).
 - Tutorial 7 pairs with [Solvers](solvers.md), especially the QMOM output and
   `quadrature(solution, time_index)` sections.
+- Tutorials 9 and 10 pair with [Reactor operations and steady state](operations.md).
+  Tutorial 9 also pairs with [Running simulations](simulation.md) (configured
+  problems and custom SciML solves).
 
 ## Synthetic data
 

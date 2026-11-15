@@ -19,6 +19,8 @@ create_product_prior
 prior_to_matrix
 run_ensemble
 run_ensemble_fixed
+PredictionEnsemble
+prediction_summary
 ```
 
 `forwardsensitivity` is a lower-level qualified helper rather than an

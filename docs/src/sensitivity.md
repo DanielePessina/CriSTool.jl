@@ -5,7 +5,7 @@ chosen simulation output. The package supplies the forward model through
 `runsimulation`; the sampling and sensitivity estimators come from
 GlobalSensitivity.jl and QuasiMonteCarlo.jl.
 
-The lower-level `CriSTool.forwardsensitivity` helper currently covers scalar
+The lower-level `CriSTool.forwardsensitivity` helper currently covers batch scalar
 growth and independent scalar dissolution with MoM or FiniteVol, using the same
 numeric SI parameters as `runsimulation`. It is qualified because it is not
 exported. It rejects length-dependent kinetics and binary aggregation/breakage

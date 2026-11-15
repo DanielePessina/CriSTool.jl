@@ -175,3 +175,69 @@ experiment = CrystallisationExperiment(;
         @test moment_values[5] / moment_values[4] ≈ 12e-6 rtol = 1e-12
     end
 end
+
+@testset "Population and solvent layout regression" begin
+    coupled_problem = CrystallisationProblem(; solver = MoM(nmoments = 3),
+        initial_solvent_state = (concentration = 20.0, pH = 7.0))
+    coupled_derivative = CriSTool._mom_rhs(coupled_problem, 2.0, 11.0,
+        (-13.0, -17.0), StaticArrays.SVector(1.0, 2.0, 3.0, 4.0, 20.0, 7.0))
+    @test coupled_derivative == [11.0, 2.0, 8.0, 18.0, -13.0, -17.0]
+
+    # Same total length, different physical layout: five moments, one solvent.
+    ordinary_problem = CrystallisationProblem(; solver = MoM())
+    ordinary_derivative = CriSTool._mom_rhs(ordinary_problem, 2.0, 11.0,
+        (-13.0,), StaticArrays.SVector(1.0, 2.0, 3.0, 4.0, 5.0, 20.0))
+    @test ordinary_derivative == [11.0, 2.0, 8.0, 18.0, 32.0, -13.0]
+
+    _, coupled_trajectory = runsimulation(Float64[];
+        nucl = nucl_empirical_fixed([0.0, 1.0]),
+        gr = growth_empirical_fixed([0.0, 1.0]),
+        solver = MoM(nmoments = 3), initial_concentration = 20.0,
+        saturation_model = ConstantSolubility(20.0),
+        initial_solvent_state = (concentration = 20.0, pH = 7.0),
+        solvent_dynamics = (problem, state, time, growth) ->
+            (concentration = -13.0, pH = -17.0), save_idx = [0.0, 1.0])
+    @test coupled_trajectory.concentration[end] ≈ 7.0 atol = 1e-10
+    @test coupled_trajectory.solvent_state.pH[end] ≈ -10.0 atol = 1e-10
+end
+
+@testset "Experiment seed preservation and authority" begin
+    seed_moments = [1e12, 1e6, 1.0, 1e-6, 1e-12]
+    seeded_template = CrystallisationProblem(;
+        kinetics_nucleationfunction = nucl_empirical_fixed([0.0, 1.0]),
+        kinetics_growthfunction = growth_empirical_fixed([0.0, 1.0]),
+        parameterset_nucleation = Float64[], parameterset_growth = Float64[],
+        initial_concentration = 10.0, saturation_model = ConstantSolubility(10.0),
+        initial_solvent_state = (pH = 7.0, concentration = 10.0),
+        initial_state = [seed_moments; 7.5; 12.0], solver = MoM())
+    measured_concentration = Observable(; time = [0.0, 1.0], mean = [18.0, 18.0],
+                                        variance = 1.0)
+    seed_experiment = CrystallisationExperiment(;
+        observables = (concentration = measured_concentration,
+            d43 = Observable(; time = [1.0], mean = [1e-6], variance = 1e-12)),
+        temperature = 300.0, exp_id = 1)
+    prepared_seed = prepare_loss(seeded_template, [seed_experiment])
+    @test collect(prepared_seed.prepared[1].odeproblem.u0) == [seed_moments; 7.5; 18.0]
+    @test loss(mae(), prepared_seed, Float64[]) ≈ 0.0 atol = 1e-14
+    @test seeded_template.initial_state == [seed_moments; 7.5; 12.0]
+    @test initial_concentration(seeded_template) == 12.0
+    @test initial_concentration(prepared_seed.prepared[1].problem) == 18.0
+    @test CriSTool.temperature(prepared_seed.prepared[1].problem.temp_profile, 0.0) == 300.0
+
+    override_experiment = CrystallisationExperiment(;
+        observables = (concentration = measured_concentration,),
+        temperature = 300.0, exp_id = 2,
+        initial_crystals = LogNormalInitialCrystals(; mass_concentration = 0.0,
+            d43 = 0.0, geometric_std = 1.25))
+    overridden_seed = CriSTool._experiment_problem(seeded_template, override_experiment)
+    @test overridden_seed.initial_state == [zeros(5); 7.5; 18.0]
+    @test seeded_template.initial_state == [seed_moments; 7.5; 12.0]
+
+    # Public DQMOM states contain weights and physical nodes, not raw moments.
+    direct_template = CriSTool._copy_crystallisation_problem(seeded_template;
+        solver = DQMOM(nquadrature = 2),
+        initial_state = [4e12, 6e12, 1e-6, 2e-6, 7.0, 12.0])
+    direct_experiment = CriSTool._experiment_problem(direct_template, seed_experiment)
+    @test direct_experiment.initial_state == [4e12, 6e12, 1e-6, 2e-6, 7.0, 18.0]
+    @test direct_template.initial_state == [4e12, 6e12, 1e-6, 2e-6, 7.0, 12.0]
+end

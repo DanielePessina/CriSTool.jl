@@ -432,16 +432,42 @@ end
     get!(_opt.initializer, task_local_storage(), _opt)::T
 end
 
-# Module-scope Turing model (DynamicPPL requirement). Generic over the
-# number of parameters; the per-task loss setup is hoisted out of the model.
-Turing.@model function _cristool_nuts_loss_model(prior, lossfunction,
-                                                 loss_setup_per_task)
+# Keep the Turing model at module scope (DynamicPPL requirement). Its data
+# arguments are captured by a zero-argument adapter below because the generated
+# DynamicPPL 0.39 evaluator for nonempty model arguments references a global
+# defined later in that dependency; Julia 1.12+ rejects that world-age access.
+Turing.@model function _cristool_nuts_loss_model_with_data(prior, lossfunction,
+                                                            loss_setup_per_task)
     n = length(prior)
     θ = Vector{Float64}(undef, n)
     for i in 1:n
         θ[i] ~ prior[i]
     end
     Turing.@addlogprob!(-loss(lossfunction, loss_setup_per_task(), θ))
+end
+
+struct _CristoolNUTSModelEvaluator{CompiledModel, ModelArguments, ModelDefaults}
+    compiled_model::CompiledModel
+    model_arguments::ModelArguments
+    model_defaults::ModelDefaults
+end
+
+function (evaluator::_CristoolNUTSModelEvaluator)(outer_model, varinfo)
+    # DynamicPPL's generated @model body reads its model context from this
+    # first argument. Forward the active context installed on the public model
+    # so logjoint, initialization, and sampling retain normal conditioning.
+    compiled_model = Turing.DynamicPPL.contextualize(
+        evaluator.compiled_model, outer_model.context)
+    return compiled_model.f(compiled_model, varinfo, evaluator.model_arguments...;
+                            evaluator.model_defaults...)
+end
+
+function _cristool_nuts_loss_model(prior, lossfunction, loss_setup_per_task)
+    compiled_model = _cristool_nuts_loss_model_with_data(
+        prior, lossfunction, loss_setup_per_task)
+    evaluator = _CristoolNUTSModelEvaluator(
+        compiled_model, Tuple(values(compiled_model.args)), compiled_model.defaults)
+    return Turing.DynamicPPL.Model{false}(evaluator, NamedTuple(), NamedTuple())
 end
 
 """

@@ -14,6 +14,9 @@ function forwardsensitivity(CryProblem::CrystallisationProblem{NuclF, GrF, nobre
                                            TP <: AbstractTemperature,
                                            SM <: AbstractSolubilityModel}
 
+    CryProblem.operation isa BatchOperation ||
+        throw(ArgumentError("forwardsensitivity currently supports batch operations; differentiate runsimulation for flow operations."))
+
     function MoM_model(du, u, p, t)
         scalargrowth = net_growth_rate(CryProblem.kinetics_growthfunction,
                                        p.gr,
@@ -67,6 +70,8 @@ function forwardsensitivity(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, 
                                            TP <: AbstractTemperature,
                                            SM <: AbstractSolubilityModel}
 
+    CryProblem.operation isa BatchOperation ||
+        throw(ArgumentError("forwardsensitivity currently supports batch operations; differentiate runsimulation for flow operations."))
     CryProblem.kinetics_aggregationfunction isa noaggregation ||
         throw(ArgumentError("FiniteVol forwardsensitivity currently supports noaggregation() only."))
     CryProblem.kinetics_breakagefunction isa nobreakage ||
@@ -91,28 +96,10 @@ function forwardsensitivity(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, 
                                        CryProblem.kinetics_dissolutionfunction,
                                        p.diss, CryProblem, st, t)
 
-        if scalargrowth > zero(scalargrowth)
-            flux[1] = nucleationrate(CryProblem.kinetics_nucleationfunction, p.nucl,
-                                     CryProblem, st, t)
-            flux[2] = scalargrowth * 0.5 * (numberdensity[1] + numberdensity[2])
-            for index in 3:length(numberdensity)
-                grad_up = numberdensity[index - 1] - numberdensity[index - 2]
-                grad_down = numberdensity[index] - numberdensity[index - 1]
-                r = grad_up / max(eps(eltype(st)), grad_down)
-                flux[index] = scalargrowth * (numberdensity[index - 1] +
-                             0.5 * fluxlimiter_ospre(r) * grad_down)
-            end
-            flux[end] = scalargrowth * (numberdensity[end] +
-                                        0.5 * (numberdensity[end] - numberdensity[end - 1]))
-        elseif scalargrowth < zero(scalargrowth)
-            flux[1] = scalargrowth * numberdensity[1]
-            @inbounds for face in 2:length(numberdensity)
-                flux[face] = scalargrowth * numberdensity[face]
-            end
-            flux[end] = zero(scalargrowth)
-        else
-            fill!(flux, zero(scalargrowth))
-        end
+        boundary_nucleation_rate = scalargrowth > zero(scalargrowth) ?
+            nucleationrate(CryProblem.kinetics_nucleationfunction, p.nucl,
+                           CryProblem, st, t) : zero(scalargrowth)
+        _fill_fv_scalar_flux!(flux, numberdensity, scalargrowth, boundary_nucleation_rate)
 
         @inbounds for index in eachindex(numberdensity)
             dstdt[index] = -(flux[index + 1] - flux[index]) /

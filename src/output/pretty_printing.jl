@@ -303,9 +303,9 @@ function build_abcde_start_content(optimalpara, prior, target, optimallossfuncti
     lines = String[]
     push!(lines, "{$highlight bold}Target Settings:{/$highlight bold}")
     push!(lines,
-          "  Optimal MLE: {$accent}$(round(optimallossfunction, sigdigits=4)){/$accent}")
+          "  Reference loss: {$accent}$(round(optimallossfunction, sigdigits=4)){/$accent}")
     push!(lines, "  Target: {$accent}$(round(target, sigdigits=4)){/$accent}")
-    push!(lines, "  Confidence: $(ci_pct)%")
+    test === :explicit || push!(lines, "  Confidence: $(ci_pct)%")
     push!(lines, "  Test: $test")
     push!(lines, "")
     push!(lines, "{$info bold}Algorithm:{/$info bold}")

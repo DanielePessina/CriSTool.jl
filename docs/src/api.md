@@ -7,6 +7,7 @@ changing or composing.
 | Need | Reference |
 | --- | --- |
 | construct a problem, run a solve, inspect results | [Simulation and results](api/simulation.md) |
+| relax a constant autonomous MSMPR to steady state | [Simulation and results](api/simulation.md) |
 | set temperature or solubility | [Process conditions](api/conditions.md) |
 | choose or extend kinetic models | [Kinetic models and rates](api/kinetics.md) |
 | choose a solver or inspect quadrature | [Solvers and quadrature](api/solvers.md) |

@@ -303,6 +303,140 @@ function _fill_signed_weno_flux!(flux::AbstractVector,
     return flux
 end
 
+@inline function _weno_nonempty_left_state(padded_density, left_cell_index,
+                                          upwind_density)
+    # The existing positivity correction returns zero for an empty or
+    # negative upwind cell, irrespective of the high-order trace.  Avoid
+    # constructing a five-point stencil whose result will be discarded.
+    upwind_density <= zero(upwind_density) && return zero(upwind_density)
+    return _weno_nonnegative_state(weno_flux(padded_density, left_cell_index),
+                                  upwind_density)
+end
+
+"""Fill positive scalar-growth WENO fluxes with local positivity correction."""
+@inline function _fill_positive_weno_flux!(flux::AbstractVector,
+                                           numberdensity::AbstractVector,
+                                           scalar_growth_rate,
+                                           nucleation_rate,
+                                           ndens_pad_cache::AbstractVector)
+    @inbounds begin
+        # Boundary flux B=G*n has density B/G, not the units of B itself.
+        ndens_pad_cache[1] = nucleation_rate / scalar_growth_rate
+        ndens_pad_cache[2] = nucleation_rate / scalar_growth_rate
+        ndens_pad_cache[3:(end - 2)] .= numberdensity
+        ndens_pad_cache[end - 1] = zero(eltype(ndens_pad_cache))
+        ndens_pad_cache[end] = zero(eltype(ndens_pad_cache))
+
+        flux[1] = nucleation_rate
+        flux[2] = scalar_growth_rate *
+                  _weno_nonempty_left_state(ndens_pad_cache, 3, numberdensity[1])
+        for cell_index in 3:length(numberdensity)
+            flux[cell_index] = scalar_growth_rate *
+                _weno_nonempty_left_state(ndens_pad_cache, cell_index + 1,
+                                         numberdensity[cell_index - 1])
+        end
+        high_order_state = numberdensity[end] +
+                           0.5 * (numberdensity[end] - numberdensity[end - 1])
+        flux[end] = scalar_growth_rate *
+            _weno_nonnegative_state(high_order_state, numberdensity[end])
+    end
+    return flux
+end
+
+"""Boundary solid-mass flow samples using the exact WENO boundary fluxes.
+
+The signed lower and upper flows are positive out of the size domain and use
+kg/s. Batch operation volume is the explicit reactor volume; the default
+1 m³ value is its documented unit-volume reference.
+"""
+function _mesh_boundary_flow_state(solver::WENO, problem, ode_solution)
+    saved_times = ode_solution.t
+    sample_state = first(ode_solution.u)
+    lower_mass_flow = Vector{typeof(zero(eltype(sample_state)))}(undef, length(saved_times))
+    upper_mass_flow = similar(lower_mass_flow)
+    growth_rate_cache = similar(sample_state, solver.meshsize)
+    # Prepared inference remakes p without replacing the physical template.
+    parameters = ode_solution.prob.p
+    lower_length = first(solver.cell_face)
+    upper_length = last(solver.cell_face)
+    mass_scale = problem.crystal_density * problem.volume_shape_factor
+
+    for time_index in eachindex(saved_times)
+        numerical_state = ode_solution.u[time_index]
+        numberdensity = crystal_state(problem, numerical_state)
+        simulation_time = saved_times[time_index]
+        nucleation_rate_value = nucleationrate(problem.kinetics_nucleationfunction,
+                                               parameters.nucl, problem,
+                                               numerical_state, simulation_time)
+
+        if problem.kinetics_growthfunction isa Union{AbstractFPScalarGrowthFunction,
+                                                     AbstractFPScalarDissolutionFunction} &&
+           !(problem.kinetics_dissolutionfunction isa AbstractFPLengthDissolutionFunction)
+            scalar_growth_rate = net_growth_rate(
+                problem.kinetics_growthfunction, parameters.gr,
+                problem.kinetics_dissolutionfunction, parameters.diss,
+                problem, numerical_state, simulation_time)
+            if scalar_growth_rate > zero(scalar_growth_rate)
+                # Only the boundary values are reported. The positive scalar
+                # path's lower flux is the nucleation inflow, and its upper
+                # flux uses the same second-order outflow trace as the RHS.
+                lower_boundary_flux = nucleation_rate_value
+                upwind_state = numberdensity[end]
+                high_order_state = upwind_state +
+                                   0.5 * (upwind_state - numberdensity[end - 1])
+                upper_boundary_flux = scalar_growth_rate *
+                    _weno_nonnegative_state(high_order_state, upwind_state)
+            elseif scalar_growth_rate < zero(scalar_growth_rate)
+                # Signed scalar dissolution exits through lmin and has no
+                # incoming population at lmax.
+                lower_boundary_flux = scalar_growth_rate * first(numberdensity)
+                upper_boundary_flux = zero(scalar_growth_rate)
+            else
+                lower_boundary_flux = zero(scalar_growth_rate)
+                upper_boundary_flux = zero(scalar_growth_rate)
+            end
+        else
+            # Preserve the model's full mesh, state, and time context. Custom
+            # length-dependent laws need not support pointwise endpoint calls.
+            net_growth_rate!(growth_rate_cache,
+                             problem.kinetics_growthfunction, parameters.gr,
+                             problem.kinetics_dissolutionfunction, parameters.diss,
+                             problem, numerical_state, simulation_time,
+                             solver.cell_centre)
+
+            lower_growth_rate = first(growth_rate_cache)
+            lower_boundary_flux = lower_growth_rate > zero(lower_growth_rate) ?
+                nucleation_rate_value :
+                lower_growth_rate < zero(lower_growth_rate) ?
+                lower_growth_rate * first(numberdensity) : zero(lower_growth_rate)
+
+            upper_growth_rate = last(growth_rate_cache)
+            if upper_growth_rate > zero(upper_growth_rate)
+                upwind_state = last(numberdensity)
+                high_order_state = length(numberdensity) == 1 ? upwind_state :
+                    upwind_state + 0.5 * (upwind_state - numberdensity[end - 1])
+                upper_boundary_flux = upper_growth_rate *
+                    _weno_nonnegative_state(high_order_state, upwind_state)
+            else
+                upper_boundary_flux = zero(upper_growth_rate)
+            end
+        end
+
+        reactor_volume_value = _mesh_reactor_volume(problem, numerical_state)
+        # The old full flux buffer converted each face value to the solution
+        # element type before applying the physical mass-flow scaling.
+        lower_boundary_flux = convert(eltype(sample_state), lower_boundary_flux)
+        upper_boundary_flux = convert(eltype(sample_state), upper_boundary_flux)
+        lower_mass_flow[time_index] = -lower_boundary_flux * lower_length^3 *
+                                      mass_scale * reactor_volume_value
+        upper_mass_flow[time_index] = upper_boundary_flux * upper_length^3 *
+                                      mass_scale * reactor_volume_value
+    end
+
+    return (; size_boundary_lower_solid_mass_flow = lower_mass_flow,
+              size_boundary_upper_solid_mass_flow = upper_mass_flow)
+end
+
 function _weno_rhs!(dstdt, st, p, t, CryProblem,
                     growthfunction::Union{AbstractFPScalarGrowthFunction,
                                           AbstractFPScalarDissolutionFunction},
@@ -343,21 +477,9 @@ function _weno_rhs!(dstdt, st, p, t, CryProblem,
     if scalar_growth_rate > zero(scalar_growth_rate)
         # Positive growth fast path: preserve the existing WENO reconstruction
         # and lower-boundary nucleation convention.
-        ndens_pad_cache[1] = inflowbc
-        ndens_pad_cache[2] = inflowbc
-        ndens_pad_cache[3:(end - 2)] .= numberdensity
-        ndens_pad_cache[end - 1] = zero(eltype(st))
-        ndens_pad_cache[end] = zero(eltype(st))
-
-        flux_cache[1] = inflowbc
-        flux_cache[2] = scalar_growth_rate *
-                        0.5 * (numberdensity[1] + numberdensity[2])
-        @inbounds for i in 3:length(numberdensity)
-            flux_cache[i] = scalar_growth_rate * weno_flux(ndens_pad_cache, i + 1)
-        end
-        high_order_state = numberdensity[end] +
-                           0.5 * (numberdensity[end] - numberdensity[end - 1])
-        flux_cache[end] = scalar_growth_rate * high_order_state
+        _fill_positive_weno_flux!(flux_cache, numberdensity,
+                                  scalar_growth_rate, inflowbc,
+                                  ndens_pad_cache)
     elseif scalar_growth_rate < zero(scalar_growth_rate)
         # Negative growth is outflow at lmin and zero-inflow at lmax.  Use
         # the mirrored fifth-order WENO right trace at every interior face;
@@ -424,6 +546,7 @@ function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, Gr
     _flux_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 1))
     _ndens_pad_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 4))
     _growth_rate_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize))
+    feed_population = _operation_feed_population(CryProblem)
 
     function WENO_Model(dstdt, st, p, t)
         _weno_rhs!(dstdt,
@@ -435,6 +558,7 @@ function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, Gr
                    get_tmp(_flux_cache_dc, st),
                    get_tmp(_ndens_pad_cache_dc, st),
                    _growth_rate_cache_dc)
+        _add_operation_transport!(dstdt, st, CryProblem, t, feed_population)
         return nothing
     end
 
@@ -447,36 +571,31 @@ function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, Gr
 
     ET = eltype(CryProblem.parameterset_nucleation)
     utyped = ET.(_get_initial_state(CryProblem))
-    ODEprob = ODEProblem(WENO_Model,
-                         utyped,
-                         (saveat[1], saveat[end]),
-                         θ)
-
-    function CFLcallback!(u, integrator, p, t)
+    function weno_cfl_bound(numerical_state, kinetic_parameters, simulation_time)
         growthfunction = CryProblem.kinetics_growthfunction
         if growthfunction isa Union{AbstractFPLengthGrowthFunction,
                                     AbstractFPLengthDissolutionFunction} ||
            CryProblem.kinetics_dissolutionfunction isa AbstractFPLengthDissolutionFunction
-            net_growth_rates = get_tmp(_growth_rate_cache_dc, u)
+            net_growth_rates = get_tmp(_growth_rate_cache_dc, numerical_state)
             net_growth_rate!(net_growth_rates,
                                    growthfunction,
-                                   p.gr,
+                                   kinetic_parameters.gr,
                                    CryProblem.kinetics_dissolutionfunction,
-                                   p.diss,
+                                   kinetic_parameters.diss,
                                    CryProblem,
-                                   u,
-                                   t,
+                                   numerical_state,
+                                   simulation_time,
                                    CryProblem.solver.cell_centre)
             return _signed_cfl(CryProblem.solver.cell_dL, net_growth_rates; courant = 0.9)
         end
         return _signed_cfl(CryProblem.solver.cell_dL,
                            net_growth_rate(growthfunction,
-                                                  p.gr,
+                                                  kinetic_parameters.gr,
                                                   CryProblem.kinetics_dissolutionfunction,
-                                                  p.diss,
+                                                  kinetic_parameters.diss,
                                                   CryProblem,
-                                                  u,
-                                                  t);
+                                                  numerical_state,
+                                                  simulation_time);
                            courant = 0.9)
     end
     signed_growth_transport =
@@ -484,26 +603,35 @@ function crystallisation_odeproblem(CryProblem::CrystallisationProblem{NuclF, Gr
         (CryProblem.kinetics_growthfunction isa AbstractFPScalarDissolutionFunction) ||
         (CryProblem.kinetics_growthfunction isa AbstractFPLengthDissolutionFunction)
     default_algorithm = signed_growth_transport ? :ssprk43 : :tsit5
-    # The legacy positive-growth scalar path historically passed its CFL
-    # callback as a stage limiter; retain that path (and its warm benchmark)
-    # byte-for-byte.  Signed transport needs the callback as a true step
-    # limiter so SSPRK stages obey the conservative CFL bound used by the
-    # positivity-preserving flux correction above.
-    if signed_growth_transport
-        tstep_solver = _resolve_timestepping_algorithm(CryProblem.solver,
-                                                       default_algorithm;
-                                                       step_limiter = CFLcallback!)
-    else
-        tstep_solver = _resolve_timestepping_algorithm(CryProblem.solver,
-                                                       default_algorithm;
-                                                       stage_limiter = CFLcallback!)
+    # Stage/step limiter hooks discard returned values.  A solve-local
+    # callback instead caps the next step from the accepted-state transport
+    # rate, including initialization.  For varying rates this is a local
+    # CFL estimate, not a guarantee about every intermediate stage.
+    time_scalar_type = typeof(float(saveat[1]))
+    configured_dtmax = Ref(time_scalar_type(Inf))
+    bounded_weno_cfl = (numerical_state, kinetic_parameters, simulation_time) ->
+        min(configured_dtmax[], OrdinaryDiffEq.SciMLBase.value(
+            weno_cfl_bound(numerical_state, kinetic_parameters, simulation_time)))
+    cfl_step_callback = StepsizeLimiter(bounded_weno_cfl;
+        safety_factor = one(time_scalar_type), cached_dtcache = zero(time_scalar_type))
+    initialize_weno_cfl = (callback, numerical_state, simulation_time, integrator) -> begin
+        # Preserve an explicit solve_options.dtmax, even when a slower rate
+        # would permit a larger CFL step later in the simulation.
+        configured_dtmax[] = integrator.opts.dtmax
+        cfl_step_callback.initialize(callback, numerical_state, simulation_time, integrator)
     end
+    solve_cfl_callback = DiscreteCallback(cfl_step_callback.condition,
+        cfl_step_callback.affect!; initialize = initialize_weno_cfl,
+        save_positions = (false, false))
+    ODEprob = ODEProblem(WENO_Model, utyped, (saveat[1], saveat[end]), θ;
+                         callback = solve_cfl_callback)
+    tstep_solver = _resolve_timestepping_algorithm(CryProblem.solver, default_algorithm)
     return (ODEprob, tstep_solver)
 end
 function _wrap_solution(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
                                                                      WENO, NuP, GrP, BrP,
                                                                      AggP, TP},
-                                  sol) where {NuclF <:
+                                  sol; boundary_flow_state = nothing) where {NuclF <:
                                                                             AbstractNucleationFunction,
                                                                             GrF <:
                                                                             AbstractGrowthFunction,
@@ -521,16 +649,15 @@ function _wrap_solution(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF
                                                                             AbstractVector{<:Real},
                                                                             TP <:
                                                                             AbstractTemperature}
-    # Pre-allocate caches using DiffCache for ForwardDiff compatibility
-    _flux_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 1))
-    _ndens_pad_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 4))
-
-    n_solvent = length(propertynames(CryProblem.initial_solvent_state))
-    nd_matrix = sol[1:(end - n_solvent), :]
+    nd_matrix = sol[_population_state_range(CryProblem), :]
     vol_weighted_dens = volumeweighteddensity(CryProblem.solver.cell_centre, nd_matrix,
                                               CryProblem.volume_shape_factor)
     moments = _momentsizes(CryProblem.solver.cell_centre, nd_matrix)
     solvent_solution_state = _solvent_solution_state(CryProblem, sol)
+    reactor_state = merge(_reactor_solution_state(CryProblem, sol),
+                          boundary_flow_state === nothing ?
+                              _mesh_boundary_flow_state(CryProblem.solver, CryProblem, sol) :
+                              boundary_flow_state)
 
     return CrystallisationFVSolution(sol.t, ### Will eventually have to be changed to discretised solution
                                      solvent_solution_state.concentration,
@@ -549,12 +676,14 @@ function _wrap_solution(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF
                                      solvent_solution_state,
                                      sol[:, end],
                                      sol.stats,
-                                     OrdinaryDiffEq.SciMLBase.successful_retcode(sol.retcode))
+                                     OrdinaryDiffEq.SciMLBase.successful_retcode(sol.retcode),
+                                     reactor_state)
 end
 function _simulatecrystallisation(CryProblem::CrystallisationProblem{NuclF, GrF, BrF, AggF,
                                                                      WENO, NuP, GrP, BrP,
                                                                      AggP, TP},
-                                  saveat)::CrystallisationFVSolution where {NuclF <:
+                                  saveat; algorithm = nothing, solve_options::NamedTuple = (;),
+                                  callback_factory = nothing)::CrystallisationFVSolution where {NuclF <:
                                                                             AbstractNucleationFunction,
                                                                             GrF <:
                                                                             AbstractGrowthFunction,
@@ -572,22 +701,9 @@ function _simulatecrystallisation(CryProblem::CrystallisationProblem{NuclF, GrF,
                                                                             AbstractVector{<:Real},
                                                                             TP <:
                                                                             AbstractTemperature}
-    # Pre-allocate caches using DiffCache for ForwardDiff compatibility
-    _flux_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 1))
-    _ndens_pad_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 4))
-
     ODEprob, tstep_solver = crystallisation_odeproblem(CryProblem, saveat)
-    abstol_tol, auto_tol_cb = _auto_abstol_opts(CryProblem.solver, ODEprob.u0,
-                                                CryProblem.solver.abstol)
-    ODEsol = solve(ODEprob,
-                   tstep_solver;
-                   callback = auto_tol_cb,
-                   reltol = CryProblem.solver.reltol,
-                   abstol = abstol_tol,
-                   dense = false,
-                   alg_hints = [:stiff],
-                   saveat = saveat,
-                   maxiters = CRISTOOL_MAX_SOLVER_ITERS,)
-
+    ODEsol = _solve_crystallisation_ode(CryProblem, ODEprob,
+                                          algorithm === nothing ? tstep_solver : algorithm,
+                                          saveat; solve_options, callback_factory)
     return _wrap_solution(CryProblem, ODEsol)
 end

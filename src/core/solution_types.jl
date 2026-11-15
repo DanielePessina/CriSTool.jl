@@ -22,6 +22,9 @@ abstract type AbstractSolution end
     - `d50q::Vector{TDq}`: Median size vector
     - `ode_stats`: ODE solver statistics (e.g., DEStats) or `nothing`
     - `success::Bool`: Success flag
+    - `reactor_state::NamedTuple`: Reactor-volume and size-boundary-flow
+      trajectories. Mesh solutions report signed lower/upper solid-mass flows
+      in kg/s, with positive values directed out of the size domain.
 
 """
 @concrete struct CrystallisationFVSolution{Tt, TCo, TNn, TVd, TDq, TDm, TL, TStats} <:
@@ -50,6 +53,7 @@ abstract type AbstractSolution end
     final_state::TCo
     ode_stats::TStats
     success::Bool
+    reactor_state::NamedTuple
 
 end
 
@@ -91,6 +95,7 @@ end
     final_state::TCo
     ode_stats::TStats
     success::Bool
+    reactor_state::NamedTuple
 
 end
 
@@ -119,6 +124,7 @@ struct CrystallisationQMOMSolution{Tt, TCo, TM, TN, TW, TD1, TD3, TD4, TMu2,
     final_state::TF
     ode_stats::TS
     success::Bool
+    reactor_state::NamedTuple
     inversion_diagnostics::TDiag
 end
 
@@ -145,6 +151,7 @@ struct CrystallisationDQMOMSolution{Tt, TCo, TW, TN, TM, TD1, TD3, TD4, TMu2,
     final_state::TF
     ode_stats::TS
     success::Bool
+    reactor_state::NamedTuple
     projection_diagnostics::TDiag
 end
 
@@ -249,3 +256,11 @@ struct EnsembleMoMSolution{T <: AbstractArray{<:Real}, D43 <: AbstractArray{<:Re
     d32_std::D32s
 
 end
+
+# Preserve the existing positional solution constructors for batch callers.
+CrystallisationMoMSolution(args::Vararg{Any,10}) = CrystallisationMoMSolution(args..., (;))
+CrystallisationFVSolution(args::Vararg{Any,15}) = CrystallisationFVSolution(args..., (;))
+CrystallisationQMOMSolution(args::Vararg{Any,14}) =
+    CrystallisationQMOMSolution(args[1:13]..., (;), args[14])
+CrystallisationDQMOMSolution(args::Vararg{Any,14}) =
+    CrystallisationDQMOMSolution(args[1:13]..., (;), args[14])

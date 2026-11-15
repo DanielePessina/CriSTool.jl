@@ -41,7 +41,7 @@ Fields:
 - `abstol::Float64`: Scalar absolute tolerance for ODE solver.
 - `tolerance_mode::Symbol`: `:scalar` uses the fixed `abstol`/`reltol` pair; `:auto` attaches
 the DiffEqCallbacks `AutoAbstol` callback (per-component running absolute tolerance
-`abstol[i] = max(|u[i]| so far) * reltol`) for disparate-scale states.
+`abstol[i] = max(configured floor[i], max(|u[i]| so far) * reltol)`) for disparate-scale states.
 """
 Base.@kwdef @concrete struct FiniteVol <: AbstractDiscretisedSolver
     meshsize::Int64 = 200
@@ -80,7 +80,7 @@ Fields:
 - `abstol::Float64`: Scalar absolute tolerance for ODE solver.
 - `tolerance_mode::Symbol`: `:scalar` uses the fixed `abstol`/`reltol` pair; `:auto` attaches
 the DiffEqCallbacks `AutoAbstol` callback (per-component running absolute tolerance
-`abstol[i] = max(|u[i]| so far) * reltol`) for disparate-scale states.
+`abstol[i] = max(configured floor[i], max(|u[i]| so far) * reltol)`) for disparate-scale states.
 """
 Base.@kwdef @concrete struct WENO <: AbstractDiscretisedSolver
     meshsize::Int64 = 200
@@ -115,7 +115,7 @@ Fields:
 - `abstol::Float64`: Scalar absolute tolerance for ODE solver.
 - `tolerance_mode::Symbol`: `:scalar` uses the fixed `abstol`/`reltol` pair; `:auto` attaches
 the DiffEqCallbacks `AutoAbstol` callback (per-component running absolute tolerance
-`abstol[i] = max(|u[i]| so far) * reltol`) for disparate-scale states.
+`abstol[i] = max(configured floor[i], max(|u[i]| so far) * reltol)`) for disparate-scale states.
 """
 Base.@kwdef @concrete struct MoM <: AbstractMomentSolver
     string::String = "MoM"
@@ -155,7 +155,7 @@ Fields:
 - `reltol::Float64`, `abstol::Float64`: ODE tolerances.
 - `tolerance_mode::Symbol`: `:scalar` uses the fixed `abstol`/`reltol` pair; `:auto` attaches
 the DiffEqCallbacks `AutoAbstol` callback (per-component running absolute tolerance
-`abstol[i] = max(|u[i]| so far) * reltol`) for disparate-scale states.
+`abstol[i] = max(configured floor[i], max(|u[i]| so far) * reltol)`) for disparate-scale states.
 """
 Base.@kwdef @concrete struct QMOM <: AbstractMomentSolver
     nquadrature::Int64 = 3
@@ -201,7 +201,7 @@ Fields:
 - `reltol::Float64`, `abstol::Float64`: ODE tolerances.
 - `tolerance_mode::Symbol`: `:scalar` uses the fixed `abstol`/`reltol` pair; `:auto` attaches
 the DiffEqCallbacks `AutoAbstol` callback (per-component running absolute tolerance
-`abstol[i] = max(|u[i]| so far) * reltol`) for disparate-scale states.
+`abstol[i] = max(configured floor[i], max(|u[i]| so far) * reltol)`) for disparate-scale states.
 """
 Base.@kwdef @concrete struct DQMOM <: AbstractMomentSolver
     nquadrature::Int64 = 3

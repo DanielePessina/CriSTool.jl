@@ -20,7 +20,7 @@ function (::DefaultSolventDynamics)(problem, state, time, growth)
     concentration_position === nothing &&
         throw(ArgumentError("initial_solvent_state must define :concentration."))
 
-    population_count = length(state) - solvent_count
+    population_count = _population_state_count(problem.solver)
     if problem.solver isa AbstractMomentSolver
         moment_order(problem.solver) >= 2 ||
             throw(ArgumentError("Moment solver must track at least the second raw moment."))
@@ -96,7 +96,8 @@ Base.@kwdef @concrete struct CrystallisationProblem{NuF <: AbstractNucleationFun
                                                     SS <: NamedTuple,
                                                     SD,
                                                     DissF <: AbstractDissolutionFunction,
-                                                    DissP <: AbstractVector{<:Real}} <:
+                                                    DissP <: AbstractVector{<:Real},
+                                                    OP <: AbstractCrystallisationOperation} <:
                              AbstractCrystallisationProblem
 
     # Operation
@@ -135,7 +136,43 @@ Base.@kwdef @concrete struct CrystallisationProblem{NuF <: AbstractNucleationFun
     # Dissolution is an independent signed crystal-growth-rate contribution.
     kinetics_dissolutionfunction::DissF = nodissolution()
     parameterset_dissolution::DissP = Float64[]
+    operation::OP = BatchOperation()
 
+end
+
+"""Copy a problem, replacing only explicitly supplied fields."""
+function _copy_crystallisation_problem(problem::CrystallisationProblem; kwargs...)
+    problem_fields = NamedTuple{propertynames(problem)}(
+        Tuple(getfield(problem, field) for field in propertynames(problem)))
+    return CrystallisationProblem(; merge(problem_fields, (; kwargs...))...)
+end
+
+"""Indices of the solver's population block (raw moments, mesh or direct quadrature)."""
+_population_state_range(problem::CrystallisationProblem) =
+    1:_population_state_count(problem.solver)
+
+"""Indices of the named solvent block following the solver population."""
+function _solvent_state_range(problem::CrystallisationProblem)
+    population_count = _population_state_count(problem.solver)
+    reactor_count = _operation_state_count(problem.operation)
+    return (population_count + reactor_count + 1):(population_count + reactor_count + length(problem.initial_solvent_state))
+end
+
+function _solvent_state_index(problem::CrystallisationProblem, name::Symbol)
+    position = findfirst(==(name), propertynames(problem.initial_solvent_state))
+    position === nothing && throw(ArgumentError("Unknown solvent-state variable :$name."))
+    return first(_solvent_state_range(problem)) + position - 1
+end
+
+"""
+    initial_concentration(problem::CrystallisationProblem) -> Real
+
+Initial solute concentration actually supplied to the solver. An explicit
+`initial_state` takes precedence over the configured solvent initial values.
+"""
+function initial_concentration(problem::CrystallisationProblem)
+    isnothing(problem.initial_state) && return problem.initial_solvent_state.concentration
+    return problem.initial_state[_solvent_state_index(problem, :concentration)]
 end
 
 function _validate_solid_mass_concentration_threshold(problem::CrystallisationProblem)
@@ -169,6 +206,11 @@ called once at the public simulation boundary; the hot RHS only evaluates the
 already validated rate laws.
 """
 function _validate_crystallisation_problem(problem::CrystallisationProblem)
+    if problem.solver isa MoM &&
+       (!(problem.kinetics_aggregationfunction isa noaggregation) ||
+        !(problem.kinetics_breakagefunction isa nobreakage))
+        throw(ArgumentError("MoM does not support aggregation or breakage; choose a quadrature or discretised solver."))
+    end
     solvent_names = propertynames(problem.initial_solvent_state)
     concentration_position = findfirst(==(Symbol(:concentration)), solvent_names)
     concentration_position === nothing &&
@@ -211,18 +253,22 @@ function _validate_crystallisation_problem(problem::CrystallisationProblem)
                                      problem.parameterset_dissolution, problem)
 
     population_state_count = _population_state_count(problem.solver)
-    expected_state_count = population_state_count + length(solvent_names)
+    expected_state_count = population_state_count + _operation_state_count(problem.operation) + length(solvent_names)
     if !isnothing(problem.initial_state)
         length(problem.initial_state) == expected_state_count ||
             throw(ArgumentError("initial_state has length $(length(problem.initial_state)); " *
                                 "expected $expected_state_count for $(typeof(problem.solver))."))
         all(isfinite, problem.initial_state) ||
             throw(ArgumentError("initial_state must contain only finite values."))
+        initial_concentration(problem) >= 0 ||
+            throw(ArgumentError("Explicit initial-state concentration must be nonnegative."))
         if problem.solver isa AbstractDiscretisedSolver
             any(value -> value < 0.0, @view problem.initial_state[1:population_state_count]) &&
                 throw(ArgumentError("initial number density must be nonnegative."))
         end
     end
+
+    _validate_operation(problem, problem.operation)
 
     saturation_value = saturation_concentration(problem, 0.0)
     isfinite(saturation_value) && saturation_value > 0.0 ||
@@ -247,14 +293,12 @@ state. `initial_solvent_state` defines both their names and their ordering.
 function solvent_state(prob::CrystallisationProblem, state)
     names = propertynames(prob.initial_solvent_state)
     n_solvent = length(names)
-    values = ntuple(index -> state[length(state) - n_solvent + index], Val(n_solvent))
+    values = ntuple(index -> state[first(_solvent_state_range(prob)) + index - 1], Val(n_solvent))
     return NamedTuple{names}(values)
 end
 
 function _solvent_state_index(prob::CrystallisationProblem, state, name::Symbol)
-    position = findfirst(==(name), propertynames(prob.initial_solvent_state))
-    position === nothing && throw(ArgumentError("Unknown solvent-state variable :$name."))
-    return length(state) - length(propertynames(prob.initial_solvent_state)) + position
+    return _solvent_state_index(prob, name)
 end
 
 """

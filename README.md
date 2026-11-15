@@ -13,6 +13,9 @@ The package provides:
 - population-balance solvers based on the Method of Moments (MoM), the
   Quadrature Method of Moments (QMOM), Direct QMOM (DQMOM), finite volumes,
   and WENO;
+- batch, MSMPR, and fed-batch reactor operations with clear or crystal-bearing
+  feeds, reactor volume/dilution, and (release backend) an explicit MSMPR
+  steady-state runner with scaled residual diagnostics;
 - nucleation, growth, aggregation, breakage, and signed dissolution kinetics;
 - measurement ingestion from CSV/table sources and typed experiment containers;
 - solver-aware initial crystal states from mass, d43, and explicit lognormal or
@@ -91,6 +94,7 @@ crystals. See the hosted [Solvers guide](https://danielepessina.github.io/CriSTo
 | If you want to… | Read | Run |
 | --- | --- | --- |
 | run a simulation or choose a solver | [Running simulations](https://danielepessina.github.io/CriSTool.jl/dev/simulation/), [Solvers](https://danielepessina.github.io/CriSTool.jl/dev/solvers/) | [Tutorial 1](<examples/Tutorial 1 Running Simulations.jl>) |
+| model a reactor operation or steady state | [Reactor operations and steady state](https://danielepessina.github.io/CriSTool.jl/dev/operations/) | [Tutorial 9](<examples/Tutorial 9 MSMPR Dynamic versus Steady State.jl>), [Tutorial 10](<examples/Tutorial 10 Fed-Batch Mixing and Seeded Growth.jl>) |
 | load measurements from CSV | [Measurements and data loading](https://danielepessina.github.io/CriSTool.jl/dev/measurements/) | [Tutorial 2](<examples/Tutorial 2 Parameter Estimation.jl>) |
 | fit kinetic parameters | [Parameter estimation](https://danielepessina.github.io/CriSTool.jl/dev/parameter-estimation/) | [Tutorial 2](<examples/Tutorial 2 Parameter Estimation.jl>) |
 | compare ABCDE and NUTS | [ABCDE routine](https://danielepessina.github.io/CriSTool.jl/dev/abcde/), [Parameter estimation](https://danielepessina.github.io/CriSTool.jl/dev/parameter-estimation/) | [Tutorial 5](<examples/Tutorial 5 ABCDE and MCMC.jl>) |

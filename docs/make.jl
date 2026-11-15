@@ -21,6 +21,7 @@ makedocs(
         "Home" => "index.md",
         "Guides" => [
             "Running simulations" => "simulation.md",
+            "Reactor operations and steady state" => "operations.md",
             "Solvers" => "solvers.md",
             "Kinetics" => "kinetics.md",
             "Measurements" => "measurements.md",
