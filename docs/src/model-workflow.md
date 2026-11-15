@@ -29,7 +29,7 @@ problem_options)` describes a study. The nested names of its `bounds` (for
 optimisers) or `priors` (for samplers) select kinetic parameters; unlisted
 values remain fixed. No initial condition, material property or noise parameter
 can be selected. Construction resolves names and builds solve templates once
-(`mode` is `TransientMode()` or `SteadyMode(SteadyStateOptions(...))`);
+(`mode` is `TransientMode()` or `SteadyMode(; autonomous, relaxation_horizon, ...)`);
 `loss(problem, values)` exposes the selected-vector objective for advanced users
 and autodiff. `solve(problem, alg; parallel=EnsembleSerial())` runs the study
 with a Metaheuristics algorithm or an Optimization.jl optimiser;

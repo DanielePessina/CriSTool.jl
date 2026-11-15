@@ -35,7 +35,6 @@ getindex(::CriSTool.AbstractSolution, ::Symbol)
 successful_retcode(::CriSTool.AbstractSolution)
 CrystallisationSteadyStateProblem
 solve(::CrystallisationSteadyStateProblem, ::AbstractSolver)
-SteadyStateOptions
 AbstractInitialCrystals
 LogNormalInitialCrystals
 GaussianInitialCrystals
@@ -85,7 +84,7 @@ the process includes coupled variables such as pH or volume.
 
 ## Steady MSMPR solves
 
-`solve(CrystallisationSteadyStateProblem(problem; options, u0), solver)` is the
+`solve(CrystallisationSteadyStateProblem(problem; autonomous, u0), solver; relaxation_horizon, reltol, abstol)` is the
 explicit steady-state route for a constant, autonomous `MSMPROperation`.
 `CrystallisationSteadyStateProblem` is CriSTool's own type because SciMLBase's
 `SteadyStateProblem` wraps an `ODEFunction` and initial state, which here
@@ -94,9 +93,9 @@ residual covers every population and solvent-state component, then returns a
 `CrystallisationSteadyStateSolution`: scalar equilibrium values through
 `steady.equilibrium` (`steady.equilibrium.concentration`, `.d43`), product flows in `steady.product`, the full residual,
 a `retcode`, and physical and mass-balance diagnostics in `steady.diagnostics`
-(including the relaxation solve's own `ode_retcode`). Settings are passed as
-`options = SteadyStateOptions(...)`; `u0` is an optional initial guess in the
-solver's state layout. `steady.retcode` is `Success` when every check passes,
+(including the relaxation solve's own `ode_retcode`). Relaxation settings are
+keywords of `solve`; `u0` is an optional initial guess in the solver's state
+layout. `steady.retcode` is `Success` when every check passes,
 `MaxIters` when the relaxation horizon ends before the residual converges,
 `Failure` when the physical state or flow balance is invalid, and the ODE code
 when the integration itself fails. An unsuccessful result is thrown as
@@ -104,5 +103,6 @@ when the integration itself fails. An unsuccessful result is thrown as
 
 Batch and fed-batch runs are transient; use `solve(problem, solver)`. Callable flow, feed,
 temperature, saturation, or kinetic profiles require
-`SteadyStateOptions(autonomous = true)` to declare that they are time invariant;
+`CrystallisationSteadyStateProblem(problem; autonomous = true)` (or
+`SteadyMode(autonomous = true)` in estimation) to declare that they are time invariant;
 the declaration is the caller's responsibility.

@@ -28,19 +28,29 @@ function RunConditions(; temperature, concentration = FromObservation(:concentra
         throw(ArgumentError("Initial solvent values must be numbers or FromObservation placeholders."))
     crystals === nothing || crystals isa AbstractInitialCrystals ||
         throw(ArgumentError("crystals must be an initial crystal description or nothing."))
-    temperature_profile = temperature isa Real ? ConstantTemperature(Float64(temperature)) : temperature
-    temperature_profile isa AbstractTemperature ||
-        throw(ArgumentError("temperature must be a number in Kelvin or an AbstractTemperature."))
-    return RunConditions(temperature_profile, solvent_values, crystals, operation)
+    return RunConditions(_temperature_profile(temperature), solvent_values, crystals, operation)
 end
 
-"""`merge(conditions; changes...)` returns conditions with the named settings replaced."""
-function Base.merge(run_conditions::RunConditions; condition_changes...)
-    current_settings = (; temperature = run_conditions.temperature,
-        concentration = run_conditions.solvent.concentration,
-        solvent = Base.structdiff(run_conditions.solvent, (; concentration = nothing)),
-        crystals = run_conditions.crystals, operation = run_conditions.operation)
-    return RunConditions(; merge(current_settings, values(condition_changes))...)
+# A number is a constant temperature in Kelvin; profiles pass through.
+_temperature_profile(temperature_kelvin::Real) = ConstantTemperature(Float64(temperature_kelvin))
+_temperature_profile(temperature_profile::AbstractTemperature) = temperature_profile
+_temperature_profile(unsupported_temperature) = throw(ArgumentError(
+    "temperature must be a number in Kelvin or an AbstractTemperature, not $(typeof(unsupported_temperature))."))
+
+"""
+    remake(conditions::RunConditions; temperature, concentration, solvent, crystals, operation)
+
+Copy `conditions` with the named settings replaced and validated again, like
+`remake(problem; ...)`. `solvent` replaces the extra solvent values (not the
+concentration); `crystals = nothing` removes the seed.
+"""
+function SciMLBase.remake(run_conditions::RunConditions; temperature = missing, concentration = missing,
+        solvent = missing, crystals = missing, operation = missing)
+    return RunConditions(; temperature = coalesce(temperature, run_conditions.temperature),
+        concentration = coalesce(concentration, run_conditions.solvent.concentration),
+        solvent = coalesce(solvent, Base.structdiff(run_conditions.solvent, (; concentration = nothing))),
+        crystals = coalesce(crystals, run_conditions.crystals),
+        operation = coalesce(operation, run_conditions.operation))
 end
 
 # Placeholder discovery and resolution walk solvent values and seed fields.

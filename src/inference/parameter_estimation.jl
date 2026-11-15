@@ -7,7 +7,7 @@ the Bayesian/ABC workflows.
     AbstractSimulationMode
 
 How a prepared run is solved: `TransientMode()` integrates the trajectory over
-the observation times; `SteadyMode(options)` relaxes an autonomous MSMPR to its
+the observation times; `SteadyMode(; ...)` relaxes an autonomous MSMPR to its
 equilibrium and compares the steady values with every observation.
 """
 abstract type AbstractSimulationMode end
@@ -21,17 +21,22 @@ at their measured times. This is the default for `EstimationProblem` and `predic
 struct TransientMode <: AbstractSimulationMode end
 
 """
-    SteadyMode(options::SteadyStateOptions)
-    SteadyMode(; options...)
+    SteadyMode(; autonomous=false, relaxation_horizon=nothing, minimum_relaxation=0.0,
+               reltol=1e-10, abstol=1e-12, residual_scales=nothing, balance_reltol=1e-5)
 
-Relax each run to its MSMPR steady state with `options` and compare the steady
-values with every observation, regardless of observation time. Run conditions
-must be numeric. Callable kinetic laws need `autonomous = true`.
+Relax each run to its MSMPR steady state and compare the steady values with
+every observation, regardless of observation time. Run conditions must be
+numeric. `autonomous` is the declaration of
+`CrystallisationSteadyStateProblem` (callable kinetic laws need
+`autonomous = true`); the other keywords are those of the steady `solve`.
+Without `relaxation_horizon`, the relaxation spans the run's observation times.
 """
 struct SteadyMode <: AbstractSimulationMode
-    options::SteadyStateOptions
+    autonomous::Bool
+    settings::_SteadyRelaxationSettings
 end
-SteadyMode(; steady_settings...) = SteadyMode(SteadyStateOptions(; steady_settings...))
+SteadyMode(; autonomous::Bool = false, relaxation_settings...) =
+    SteadyMode(autonomous, _steady_relaxation_settings(; relaxation_settings...))
 
 """
     PreparedRun
@@ -124,8 +129,8 @@ _run_save_times(::SteadyMode, observation_times::AbstractVector) = collect(Float
 
 _integration_times(::TransientMode, configured_problem, save_times) = save_times
 function _integration_times(steady_mode::SteadyMode, configured_problem, save_times)
-    _validate_steadystate_problem(configured_problem; autonomous = steady_mode.options.autonomous)
-    relaxation_horizon = something(steady_mode.options.relaxation_horizon,
+    _validate_steadystate_problem(configured_problem; autonomous = steady_mode.autonomous)
+    relaxation_horizon = something(steady_mode.settings.relaxation_horizon,
         _default_steady_relaxation_horizon(configured_problem))
     return [0.0, Float64(relaxation_horizon)]
 end
@@ -294,7 +299,7 @@ _solve_prepared(prepared_solves::PreparedSolves, prepared_run::PreparedRun, para
 function _solve_prepared(steady_mode::SteadyMode, prepared_run::PreparedRun, remade_problem,
                          solve_options, callback_factory)
     return _steady_relaxation_solve(prepared_run.problem, remade_problem, prepared_run.algorithm;
-        steady_options = steady_mode.options, solve_options, callback_factory,
+        steady_settings = steady_mode.settings, solve_options, callback_factory,
         reconstruction_failure_handler = (raw_solution, reconstruction_error) ->
             _failed_prepared_simulation(prepared_run, raw_solution, reconstruction_error))
 end

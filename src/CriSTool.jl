@@ -67,7 +67,7 @@ const CRISTOOL_BOLTZMANN_CONSTANT = 1.380649e-23
 ## Export stuff
 export CrystallisationSolution, AbstractPopulationTrajectory, MeshPopulation,
        MomentPopulation, QuadraturePopulation,
-       CrystallisationSteadyStateSolution, SteadyStateConvergenceError, SteadyStateOptions,
+       CrystallisationSteadyStateSolution, SteadyStateConvergenceError,
        CrystallisationProblem, CrystallisationSteadyStateProblem
 export solve, remake, sample, ReturnCode, successful_retcode
 export Observable, ObservableColumns, CrystallisationExperiment,

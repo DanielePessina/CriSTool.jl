@@ -281,3 +281,7 @@ deprecation shims.
 | selected values as a vector: `last.(…leaves of fit.parameters)` | `fit.u` |
 | no status on fits and posteriors | `fit.retcode`, `posterior.retcode` and `successful_retcode(result)`; an ABC run whose generations end before every particle reaches `target` is `ReturnCode.MaxIters` |
 | `using CriSTool, Metaheuristics` | still works, but `sample` is then ambiguous: write `using Metaheuristics: DE, Options` (or `using CriSTool: sample`) |
+| `CrystallisationSteadyStateProblem(problem; options = SteadyStateOptions(relaxation_horizon = 400.0, autonomous = true))` | `CrystallisationSteadyStateProblem(problem; autonomous = true)`, then `solve(steady_problem, solver; relaxation_horizon = 400.0)`; `SteadyStateOptions` is removed |
+| `SteadyStateOptions(residual_reltol, residual_abstol)` | `solve(steady_problem, solver; reltol, abstol)`: steady residual tolerances, as in SciML's `DynamicSS` |
+| `SteadyMode(SteadyStateOptions(...))` | `SteadyMode(; autonomous, relaxation_horizon, reltol, abstol, ...)` |
+| `merge(conditions; concentration = 20.0)` | `remake(conditions; concentration = 20.0)` |

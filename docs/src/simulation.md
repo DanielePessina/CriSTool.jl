@@ -19,7 +19,7 @@ trajectory[:d43][end]
 mesh_trajectory = solve(problem, FiniteVol(meshsize = 100, lmax = 100e-6);
     saveat = 0.0:600.0:28_800.0)
 mesh_trajectory[:d50q][end]
-cooling_run = merge(batch_run; temperature = LinearTemperature(298.15, -1e-4))
+cooling_run = remake(batch_run; temperature = LinearTemperature(298.15, -1e-4))
 quadrature_trajectory = solve(remake(problem; conditions = cooling_run), QMOM(nquadrature = 3))
 ```
 
@@ -33,8 +33,8 @@ back. Configuration fields with defaults (for example `Lref` on
 `RunConditions(; temperature, concentration, solvent=(;), crystals=nothing,
 operation=BatchOperation())` holds everything else about one run. A numeric
 temperature is Kelvin and becomes a `ConstantTemperature`; any
-`AbstractTemperature` is accepted. `merge(conditions; concentration = 20.0)`
-returns a copy with the named settings replaced.
+`AbstractTemperature` is accepted. `remake(conditions; concentration = 20.0)`
+returns a validated copy with the named settings replaced.
 
 `CrystallisationProblem(model, conditions, tspan)` is one run over
 `tspan = (t0, tf)` seconds. Like an `ODEProblem` it holds no numerical method:

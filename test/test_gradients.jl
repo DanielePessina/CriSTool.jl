@@ -184,7 +184,7 @@ end
         conditions = RunConditions(temperature = 298.15, concentration = 1.0,
             operation = fixture_msmpr(feed = fixture_clear_feed(concentration = 1.0))), exp_id = 1)
     steady_estimation = EstimationProblem(steady_model, [steady_experiment];
-        bounds = (growth = (speed = (0.01, 1.0),),), solver = MoM(reltol = 1e-10, abstol = 1e-24), mode = SteadyMode(SteadyStateOptions(autonomous = true, relaxation_horizon = 1000.0)))
+        bounds = (growth = (speed = (0.01, 1.0),),), solver = MoM(reltol = 1e-10, abstol = 1e-24), mode = SteadyMode(autonomous = true, relaxation_horizon = 1000.0))
     steady_speed = 0.2
     steady_d43 = 4 * steady_speed * 1e-6 * steady_residence
     steady_gradient = DI.gradient(trial -> loss(steady_estimation, trial), gradient_forward_backend, [steady_speed])

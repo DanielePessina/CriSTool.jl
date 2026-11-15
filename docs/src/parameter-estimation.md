@@ -87,11 +87,12 @@ through `FromObservation` placeholders in their `RunConditions`; by default only
 the concentration. Initialising samples are excluded from scoring. Preparation
 does not fit initial conditions or silently move the start to a later
 measurement. The default `mode = TransientMode()` integrates each run over its
-observation times. With `mode = SteadyMode(SteadyStateOptions(...))`, each
+observation times. With `mode = SteadyMode(; ...)`, which takes the keywords of
+the steady `solve` plus `autonomous`, each
 experiment's conditions must be numeric (no placeholders) and use an autonomous
 MSMPR operation; the run relaxes from those values, and steady observations are
 targets, not initial conditions. Callable kinetic laws require
-`SteadyMode(SteadyStateOptions(autonomous = true))` (or `SteadyMode(autonomous = true)`),
+`SteadyMode(autonomous = true)`,
 an explicit declaration that their rate does not depend on time. The package
 cannot infer that property from arbitrary user code.
 
