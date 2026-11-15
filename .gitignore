@@ -40,3 +40,6 @@ research/
 Invention-Disclosure-Form_v1.6_cristool_completed.docx
 tools/fill_cristool_idf.py
 RobotoSlab-VariableFont_wght.ttf
+
+# Editor / language-server config
+.JETLSConfig.toml
