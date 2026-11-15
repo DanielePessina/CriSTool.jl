@@ -54,6 +54,25 @@ simulate_solve(model, conditions, solver; saveat, problem_settings...) =
         end
     end
 
+    # Dense output is opt-in: solution(t) interpolates between the saved times
+    # and still matches the closed form (moment methods: ODE tolerance; the
+    # 40-cell mesh: its discretisation error, as above).
+    translation_problem_dense = CrystallisationProblem(fixture_translation_model(), fixture_seeded_conditions(),
+        (0.0, 100.0))
+    for (dense_solver, dense_rtol) in ((MoM(), 1e-8), (DQMOM(), 1e-6), (simulate_mesh_solvers[1], 1.5e-2))
+        dense_trajectory = solve(translation_problem_dense, dense_solver; saveat = [0.0, 100.0], dense = true)
+        @test dense_trajectory.t == [0.0, 100.0]
+        @test dense_trajectory(37.5, :d43) ≈ fixture_translation_d43(37.5) rtol = dense_rtol
+        @test dense_trajectory(37.5).t == [37.5]
+    end
+    dense_moments = solve(translation_problem_dense, MoM(); dense = true)
+    @test dense_moments(37.5, :concentration) ≈ fixture_translation_concentration(37.5) rtol = 1e-9
+    @test dense_moments(37.5, :moments) isa Vector{Float64}
+    @test_throws ArgumentError dense_moments(150.0)
+    # Without dense = true only the saved times exist.
+    @test_throws ArgumentError solve(translation_problem_dense, MoM(); saveat = [0.0, 100.0])(37.5)
+    @test_throws ArgumentError solve(translation_problem_dense, MoM(); solve_options = (; dense = true))
+
     # Replacing the kinetic values with remake takes effect: doubling the speed
     # doubles the shift (closed form at 2 µm), and the problem's own values are kept.
     translation_problem = CrystallisationProblem(fixture_translation_model(), fixture_seeded_conditions(), (0.0, 100.0))
@@ -249,16 +268,17 @@ end
     end
     # DQMOM cannot drop a node, so the solve stops at the first node's
     # boundary crossing (inside the run, where the other solvers report
-    # extinction) and names the solvers that can dissolve completely.
-    dqmom_extinction_error = try
-        simulate_solve(extinction_model, extinction_conditions, DQMOM(); saveat = [0.0, 60.0])
-        nothing
-    catch caught_error
-        caught_error
-    end
-    @test dqmom_extinction_error isa DomainError
-    @test occursin("Use QMOM, FiniteVol or WENO", dqmom_extinction_error.msg)
-    @test 0.0 < dqmom_extinction_error.val < 60.0
+    # extinction) with a failure retcode, keeping the trajectory up to it.
+    dqmom_extinction = @test_logs (:warn, r"use QMOM, FiniteVol or WENO") match_mode = :any simulate_solve(
+        extinction_model, extinction_conditions, DQMOM(); saveat = [0.0, 60.0])
+    @test dqmom_extinction.retcode == ReturnCode.Failure
+    @test !successful_retcode(dqmom_extinction)
+    @test 0.0 < dqmom_extinction.t[end] < 60.0
+    # The last state is at the boundary: the smallest node has dissolved to L = 0
+    # (the seed nodes start at several µm), and solute + crystal mass is conserved.
+    @test minimum(dqmom_extinction.population.nodes[:, end]) < 1e-9
+    @test dqmom_extinction.concentration .+ 1000.0 .* dqmom_extinction.population.moments[4, :] ≈
+          fill(5.25, length(dqmom_extinction.t)) rtol = 1e-6
 end
 
 @testset "Mesh nucleation and growth conserve solute" begin

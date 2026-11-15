@@ -40,8 +40,13 @@ returns a validated copy with the named settings replaced.
 `tspan = (t0, tf)` seconds. Like an `ODEProblem` it holds no numerical method:
 `solve(problem, solver; saveat)` picks the solver, so one problem can be solved
 with several. `saveat` is a save step (t0, every step and tf are saved) or a
-vector of times inside `tspan`; without it every accepted step is saved. There is
-no dense interpolation `sol(t)`; choose `saveat` instead.
+vector of times inside `tspan`; without it every accepted step is saved.
+Dense output is opt-in: `solve(problem, solver; saveat, dense = true)` keeps the
+integrator's interpolant, so `trajectory(t)` is the one-point solution at any
+`t` in the solved span and `trajectory(t, :d43)` one observable value there.
+Without `dense = true`, calling `trajectory(t)` is an `ArgumentError`. Dense
+output stores every integrator step, so use it for plotting or event times,
+not inside fitting loops.
 `remake(problem; model, conditions, tspan, p)` returns a validated copy.
 Always check `successful_retcode(trajectory)` (or `trajectory.retcode`) before
 interpreting outputs. `trajectory[:name]` returns any named trajectory, the same

@@ -245,13 +245,14 @@ end
 """
     _dqmom_boundary_callback(problem)
 
-Stop a DQMOM solve when dissolution carries a node down to `minimum_size`.
+End a DQMOM solve when dissolution carries a node down to `minimum_size`.
 
 The DQMOM state stores each node's weight and position, so a node cannot be
-removed mid-solve the way QMOM drops one from its moment inversion.  Instead of
-integrating past the boundary into negative crystal sizes, the solve throws at
-the crossing and points to the solvers that model complete dissolution.
-Partial dissolution that stays above the boundary is unaffected.
+removed mid-solve the way QMOM drops one from its moment inversion. Instead of
+integrating past the boundary into negative crystal sizes, the solve stops at
+the crossing with `ReturnCode.Failure`, keeping the trajectory up to it, and
+warns once with the solvers that model complete dissolution. Partial
+dissolution that stays above the boundary is unaffected.
 """
 function _dqmom_boundary_callback(problem::DiscretisedProblem)
     _dissolution_enabled(problem) || return nothing
@@ -261,11 +262,18 @@ function _dqmom_boundary_callback(problem::DiscretisedProblem)
     condition = (state, time, integrator) ->
         minimum(node_index -> state[nquadrature + node_index] / state[node_index],
                 1:nquadrature) - scaled_minimum_size
-    affect! = integrator -> nothing
-    affect_neg! = integrator -> throw(DomainError(integrator.t,
-        "A DQMOM node dissolved down to minimum_size at this time; DQMOM cannot remove " *
-        "a node mid-solve. Use QMOM, FiniteVol or WENO for complete dissolution."))
-    return ContinuousCallback(condition, affect!, affect_neg!; save_positions = (false, false))
+    # Only a downward crossing is an event.
+    return ContinuousCallback(condition, nothing, _terminate_at_dqmom_boundary!; save_positions = (false, false))
+end
+
+function _terminate_at_dqmom_boundary!(integrator)
+    @warn "A DQMOM node dissolved down to minimum_size at t = $(SciMLBase.value(integrator.t)) s; the " *
+          "solve stops there with ReturnCode.Failure. DQMOM cannot remove a node mid-solve: use QMOM, " *
+          "FiniteVol or WENO for complete dissolution." maxlog = 1
+    # Record the boundary state: a terminated solve skips the callback's post-event save.
+    SciMLBase.savevalues!(integrator, true)
+    SciMLBase.terminate!(integrator, ReturnCode.Failure)
+    return nothing
 end
 
 """Construct the DQMOM ODE problem and selected time-stepping algorithm."""
