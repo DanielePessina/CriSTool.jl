@@ -1,47 +1,48 @@
-function _observable_variance_value(observable, index::Int)
-    observable.variance === nothing && return nothing
-    return observable.variance[index]
+"""One measured point of an observable series, as the bootstrap resamples it."""
+struct _BootstrapEntry
+    exp_id::Int
+    time::Float64
+    mean::Float64
+    variance::Union{Nothing, Float64}
 end
 
+_observable_variance_value(observable, index::Int) = _variance_value(observable.variance, index)
+_variance_value(::Nothing, index::Int) = nothing
+_variance_value(variances::AbstractVector, index::Int) = Float64(variances[index])
+
+_bootstrap_entry(exp_id::Integer, observable, index::Int) = _BootstrapEntry(exp_id,
+    Float64(observable.time[index]), Float64(observable.mean[index]), _observable_variance_value(observable, index))
+
 function _bootstrap_observable_pool(experiments, observable_name::Symbol)
-    pool = Tuple{Int, Float64, Float64, Any}[]
+    pool = _BootstrapEntry[]
     for expt in experiments
         observable = getproperty(expt.observables, observable_name)
         for index in 2:length(observable.mean)
-            push!(pool, (expt.exp_id, Float64(observable.time[index]),
-                         Float64(observable.mean[index]),
-                         _observable_variance_value(observable, index)))
+            push!(pool, _bootstrap_entry(expt.exp_id, observable, index))
         end
     end
     return pool
 end
 
-function _bootstrap_observable(observable::Observable, entries::Vector{<:Tuple})
-    anchor_time = Float64(observable.time[1])
-    anchor_mean = Float64(observable.mean[1])
-    anchor_variance = _observable_variance_value(observable, 1)
-    all_entries = [(anchor_time, anchor_mean, anchor_variance)]
-    append!(all_entries, [(entry[2], entry[3], entry[4]) for entry in entries])
-    sort!(all_entries, by = first)
+function _bootstrap_observable(observable::Observable, exp_id::Integer, entries::Vector{_BootstrapEntry})
+    all_entries = [_bootstrap_entry(exp_id, observable, 1); entries]
+    sort!(all_entries; by = entry -> entry.time)
 
     # Sampling with replacement can select the same time point more than once.
     # An Observable has one value per time, so retain the first sampled value at
     # each time rather than constructing an ambiguous duplicate time grid.
-    unique_entries = eltype(all_entries)[]
+    unique_entries = _BootstrapEntry[]
     seen_times = Set{Float64}()
     for entry in all_entries
-        entry[1] in seen_times && continue
+        entry.time in seen_times && continue
         push!(unique_entries, entry)
-        push!(seen_times, entry[1])
+        push!(seen_times, entry.time)
     end
 
-    times = Float64[entry[1] for entry in unique_entries]
-    means = Float64[entry[2] for entry in unique_entries]
-    if all(entry -> entry[3] === nothing, unique_entries)
-        return Observable(; time = times, mean = means)
-    end
-    variances = Float64[entry[3] === nothing ? 0.0 : Float64(entry[3])
-                        for entry in unique_entries]
+    times = [entry.time for entry in unique_entries]
+    means = [entry.mean for entry in unique_entries]
+    all(entry -> entry.variance === nothing, unique_entries) && return Observable(; time = times, mean = means)
+    variances = [something(entry.variance, 0.0) for entry in unique_entries]
     return Observable(; time = times, mean = means, variance = variances)
 end
 
@@ -73,17 +74,16 @@ function bootstrap_measurements(experiments::Vector{<:CrystallisationExperiment}
 
     for bootstrap_index in 1:n_bootstrap
         rng = Random.Xoshiro(base_seed + UInt64(bootstrap_index - 1))
-        sampled = Dict{Symbol, Dict{Int, Vector{Tuple{Int, Float64, Float64, Any}}}}()
+        sampled = Dict{Symbol, Dict{Int, Vector{_BootstrapEntry}}}()
         for observable_name in observable_names
             pool = pools[observable_name]
             draw_count = isnothing(n_samples) ? length(pool) : n_samples
             draw_count >= 0 || throw(ArgumentError("n_samples must be non-negative."))
-            by_id = Dict{Int, Vector{Tuple{Int, Float64, Float64, Any}}}()
+            by_id = Dict{Int, Vector{_BootstrapEntry}}()
             if !isempty(pool) && draw_count > 0
                 for pool_index in rand(rng, 1:length(pool), draw_count)
                     entry = pool[pool_index]
-                    push!(get!(by_id, entry[1],
-                               Tuple{Int, Float64, Float64, Any}[]), entry)
+                    push!(get!(() -> _BootstrapEntry[], by_id, entry.exp_id), entry)
                 end
             end
             sampled[observable_name] = by_id
@@ -93,9 +93,8 @@ function bootstrap_measurements(experiments::Vector{<:CrystallisationExperiment}
         for expt in experiments
             rebuilt = map(observable_names) do observable_name
                 original = getproperty(expt.observables, observable_name)
-                entries = get(sampled[observable_name], expt.exp_id,
-                              Tuple{Int, Float64, Float64, Any}[])
-                _bootstrap_observable(original, entries)
+                entries = get(() -> _BootstrapEntry[], sampled[observable_name], expt.exp_id)
+                _bootstrap_observable(original, expt.exp_id, entries)
             end
             observables = merge(expt.observables, NamedTuple{Tuple(observable_names)}(Tuple(rebuilt)))
             push!(replicate, CrystallisationExperiment(;

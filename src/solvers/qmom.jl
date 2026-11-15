@@ -63,7 +63,7 @@ end
 """Static rule of an empty population: every node is inactive."""
 @inline function _qmom_empty_rule(::Type{T}, ::Val{N}) where {T, N}
     zero_value = zero(T)
-    diagnostics = QMOMInversionDiagnostics{T}(:empty, 0, zero_value, zero_value,
+    diagnostics = QMOMInversionDiagnostics{T}(QuadratureStatus.Empty, 0, zero_value, zero_value,
                                               zero_value, zero_value)
     return QMOMQuadrature(zero(SVector{N, T}), zero(SVector{N, T}), 0, diagnostics)
 end
@@ -396,7 +396,7 @@ sequence is handed to `_qmom_inversion_failure` for `inversion_policy`.
         minimum_node = min(minimum_node, nodes[node_index])
         minimum_weight = min(minimum_weight, weights[node_index])
     end
-    status = coefficients.was_deflated ? :deflated : :ok
+    status = coefficients.was_deflated ? QuadratureStatus.Deflated : QuadratureStatus.OK
     diagnostics = QMOMInversionDiagnostics{T}(status, active_nodes, minimum_node,
                                               minimum_weight,
                                               coefficients.minimum_recurrence,
@@ -451,7 +451,7 @@ function QMOMQuadrature(nodes::AbstractVector, weights::AbstractVector)
     promoted_type = promoted_type_candidate <: Number ? promoted_type_candidate : Float64
     promoted_nodes = Vector{promoted_type}(nodes)
     promoted_weights = Vector{promoted_type}(weights)
-    diagnostic = QMOMInversionDiagnostics(:ok,
+    diagnostic = QMOMInversionDiagnostics(QuadratureStatus.OK,
                                           length(promoted_nodes),
                                           isempty(promoted_nodes) ? zero(promoted_type) :
                                           minimum(promoted_nodes),

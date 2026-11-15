@@ -103,10 +103,10 @@ end
     # asserted first so the inversion is checked against known quadratures.
     atomic_moments(nodes, weights) = [sum(weights .* nodes .^ order) for order in 0:5]
     for (atom_nodes, atom_weights, hand_moments, expected_status) in (
-            ([0.8e-6], [2.5e12], [2.5e12, 2.0e6, 1.6, 1.28e-6, 1.024e-12, 8.192e-19], :deflated),
-            ([0.5e-6, 1.5e-6], [2.0e12, 3.0e12], [5.0e12, 5.5e6, 7.25, 1.0375e-5, 1.53125e-11, 2.284375e-17], :deflated),
+            ([0.8e-6], [2.5e12], [2.5e12, 2.0e6, 1.6, 1.28e-6, 1.024e-12, 8.192e-19], QuadratureStatus.Deflated),
+            ([0.5e-6, 1.5e-6], [2.0e12, 3.0e12], [5.0e12, 5.5e6, 7.25, 1.0375e-5, 1.53125e-11, 2.284375e-17], QuadratureStatus.Deflated),
             ([0.4e-6, 1.0e-6, 1.8e-6], [1.2e12, 2.0e12, 0.8e12],
-             [4.0e12, 3.92e6, 4.784, 6.7424e-6, 1.04288e-11, 1.7128832e-17], :ok))
+             [4.0e12, 3.92e6, 4.784, 6.7424e-6, 1.04288e-11, 1.7128832e-17], QuadratureStatus.OK))
         @test atomic_moments(atom_nodes, atom_weights) ≈ hand_moments
         rule = invert_moments(hand_moments, qmom_solver)
         node_order = sortperm(rule.nodes)
@@ -115,7 +115,7 @@ end
         @test rule.weights[node_order] ≈ atom_weights rtol = 1e-7
         @test rule.diagnostics.status == expected_status
     end
-    @test invert_moments(zeros(6), qmom_solver).diagnostics.status == :empty
+    @test invert_moments(zeros(6), qmom_solver).diagnostics.status == QuadratureStatus.Empty
     zero_size_rule = invert_moments([2.0, 0.0, 0.0, 0.0, 0.0, 0.0], qmom_solver)
     @test (zero_size_rule.nodes[1], zero_size_rule.weights[1]) == (0.0, 2.0)
     # Unrealisable or malformed moment sets are rejected, not silently clipped.

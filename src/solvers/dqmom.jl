@@ -395,7 +395,7 @@ function _dqmom_projection_diagnostics(node_matrix::AbstractMatrix{T}, weight_ma
                                          "DQMOM trajectory reached node coalescence; " *
                                          "active quadrature nodes cannot merge or be reborn.")
         projection_diagnostics[time_index] = DQMOMProjectionDiagnostics(
-            :ok,
+            QuadratureStatus.OK,
             minimum(@view weight_matrix[:, time_index]),
             minimum(@view node_matrix[:, time_index]),
             physical_minimum_gap,

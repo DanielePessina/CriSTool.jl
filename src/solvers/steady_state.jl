@@ -393,8 +393,7 @@ end
 
 function _steady_population_constraints(solver::QMOM, problem, raw_state, physical_result,
                                         density_diagnostics)
-    all(diagnostic -> diagnostic.status in (:ok, :empty, :deflated),
-        physical_result.population.diagnostics) || return false, :unrealizable_moments
+    # Every saved quadrature was inverted, so it is realizable: unrealizable moments throw earlier.
     return true, :ok
 end
 

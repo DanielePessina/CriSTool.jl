@@ -43,6 +43,7 @@ using Metaheuristics
 # Utilities
 using ConcreteStructs
 import ConstructionBase
+using EnumX: @enumx
 using PrecompileTools: @setup_workload, @compile_workload
 using MonteCarloMeasurements
 using StaticArrays
@@ -106,7 +107,7 @@ export experiments_from_table, load_measurements,
        bootstrap_repeatmeasurements, balance_variances, repeatmeasurementbalancer,
        psd_measurementbalancer, bootstrap_measurements
 export AbstractSolver, AbstractMomentSolver, FiniteVol, MoM, QMOM, DQMOM, WENO,
-       QMOMQuadrature, QMOMInversionDiagnostics, DQMOMProjectionDiagnostics,
+       QMOMQuadrature, QMOMInversionDiagnostics, DQMOMProjectionDiagnostics, QuadratureStatus,
        invert_moments,
        moment_order, moment_count, quadrature,
        aggregation_moment_source, breakage_moment_source
