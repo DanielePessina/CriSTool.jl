@@ -35,11 +35,11 @@ Fields:
 - `cell_face::LinRange{Float64,Int64}`: Cell face positions
 - `cell_centre::LinRange{Float64,Int64}`: Cell center positions
 - `cell_dL::Float64`: Cell size
-- `string::String`: Solver identifier ("FV")
-- `timestepping_algorithm::Symbol`: Time-stepping algorithm selector (e.g. `:tsit5`, `:ssprk43`, `:auto`).
+- `timestepping_algorithm`: an OrdinaryDiffEq algorithm instance such as
+  `Tsit5()` or `SSPRK43()`, or `nothing` (default) for the solver's own choice.
 - `reltol::Float64`: Scalar relative tolerance for ODE solver.
 - `abstol::Float64`: Scalar absolute tolerance for ODE solver.
-- `tolerance_mode::Symbol`: `:scalar` uses the fixed `abstol`/`reltol` pair; `:auto` attaches
+- `auto_abstol::Bool`: `false` uses the fixed `abstol`/`reltol` pair; `true` attaches
 the DiffEqCallbacks `AutoAbstol` callback (per-component running absolute tolerance
 `abstol[i] = max(configured floor[i], max(|u[i]| so far) * reltol)`) for disparate-scale states.
 """
@@ -52,14 +52,13 @@ Base.@kwdef @concrete struct FiniteVol <: AbstractDiscretisedSolver
                           Int64} = 0.5 .*
                                    (cell_face[2:end] .+ cell_face[1:(end - 1)])
     cell_dL::Float64 = cell_centre[2] - cell_centre[1]
-    string::String = "FV"
-    timestepping_algorithm::Symbol = :auto
+    timestepping_algorithm = nothing
     # Tolerances re-derived for the SI seconds kernel (Step 3): the default
     # loose pair (1e-2/1e-6) made FV gradients disagree with finite differences
     # and allowed negative-density overshoot under the faster nm/s dynamics.
     reltol::Float64 = 1e-4
     abstol::Float64 = 1e-10
-    tolerance_mode::Symbol = :scalar
+    auto_abstol::Bool = false
 end
 
 """
@@ -74,11 +73,11 @@ Fields:
 - `cell_face::LinRange{Float64,Int64}`: Cell face positions
 - `cell_centre::LinRange{Float64,Int64}`: Cell center positions
 - `cell_dL::Float64`: Cell size
-- `string::String`: Solver identifier ("WENO")
-- `timestepping_algorithm::Symbol`: Time-stepping algorithm selector (e.g. `:tsit5`, `:ssprk43`, `:auto`).
+- `timestepping_algorithm`: an OrdinaryDiffEq algorithm instance such as
+  `Tsit5()` or `SSPRK43()`, or `nothing` (default) for the solver's own choice.
 - `reltol::Float64`: Scalar relative tolerance for ODE solver.
 - `abstol::Float64`: Scalar absolute tolerance for ODE solver.
-- `tolerance_mode::Symbol`: `:scalar` uses the fixed `abstol`/`reltol` pair; `:auto` attaches
+- `auto_abstol::Bool`: `false` uses the fixed `abstol`/`reltol` pair; `true` attaches
 the DiffEqCallbacks `AutoAbstol` callback (per-component running absolute tolerance
 `abstol[i] = max(configured floor[i], max(|u[i]| so far) * reltol)`) for disparate-scale states.
 """
@@ -91,12 +90,11 @@ Base.@kwdef @concrete struct WENO <: AbstractDiscretisedSolver
                           Int64} = 0.5 .*
                                    (cell_face[2:end] .+ cell_face[1:(end - 1)])
     cell_dL::Float64 = cell_centre[2] - cell_centre[1]
-    string::String = "WENO"
-    timestepping_algorithm::Symbol = :auto
+    timestepping_algorithm = nothing
     # Tolerances re-derived for the SI seconds kernel (Step 3); see FiniteVol.
     reltol::Float64 = 1e-4
     abstol::Float64 = 1e-10
-    tolerance_mode::Symbol = :scalar
+    auto_abstol::Bool = false
 end
 
 """
@@ -105,25 +103,24 @@ end
 Method of Moments solver for crystallization population balance equations.
 
 Fields:
-- `string::String`: Solver identifier ("MoM")
 - `nmoments::Int64`: Highest tracked moment order. The state holds
   moments `µ0 .. µ_nmoments` plus the solvent-phase concentration
   (`nmoments + 2` states). Must be `>= 2` (the concentration closure uses
   `µ2`); `d43 = µ4/µ3` requires `nmoments >= 4` (the default).
-- `timestepping_algorithm::Symbol`: Time-stepping algorithm selector (e.g. `:tsit5`, `:ssprk43`, `:auto`).
+- `timestepping_algorithm`: an OrdinaryDiffEq algorithm instance such as
+  `Tsit5()` or `SSPRK43()`, or `nothing` (default) for the solver's own choice.
 - `reltol::Float64`: Scalar relative tolerance for ODE solver.
 - `abstol::Float64`: Scalar absolute tolerance for ODE solver.
-- `tolerance_mode::Symbol`: `:scalar` uses the fixed `abstol`/`reltol` pair; `:auto` attaches
+- `auto_abstol::Bool`: `false` uses the fixed `abstol`/`reltol` pair; `true` attaches
 the DiffEqCallbacks `AutoAbstol` callback (per-component running absolute tolerance
 `abstol[i] = max(configured floor[i], max(|u[i]| so far) * reltol)`) for disparate-scale states.
 """
 Base.@kwdef @concrete struct MoM <: AbstractMomentSolver
-    string::String = "MoM"
     nmoments::Int64 = 4
-    timestepping_algorithm::Symbol = :auto
+    timestepping_algorithm = nothing
     reltol::Float64 = 1e-10
     abstol::Float64 = 1e-8
-    tolerance_mode::Symbol = :scalar
+    auto_abstol::Bool = false
 end
 
 """
@@ -141,37 +138,37 @@ Fields:
   the crystallisation volume closure; default: 3).
 - `coordinate_scale::Float64`: Physical length represented by one scaled
   quadrature coordinate (default: `1e-6` m).
-- `inversion_algorithm::Symbol`: Moment inversion route.  `:wheeler` is the
-  supported route and uses Wheeler recurrence coefficients followed by
-  Golub-Welsch diagonalisation.
 - `realizability_tolerance::Float64`: Absolute tolerance used for support and
   recurrence checks in the scaled coordinate.
 - `empty_population_tolerance::Float64`: Absolute `M₀` threshold below which
   the population is represented by an empty rule.
 - `node_coalescence_tolerance::Float64`: Threshold for rank deflation when a
-  recurrence coefficient indicates coalescing support.
-- `minimum_size::Float64`: Lower support bound in physical metres.
-- `timestepping_algorithm::Symbol`: Time-stepping algorithm selector.
+  recurrence coefficient indicates coalescing support (scaled coordinates).
+  The threshold is raised to `reltol` times the magnitude of the terms that
+  cancel in the recurrence, because integrated moments are only accurate to
+  that relative error.
+- `minimum_size::Float64`: Lower support bound in physical metres. Under
+  dissolution a quadrature node that reaches it is removed (its crystals have
+  dissolved) and its remaining volume is released as solute.
+- `timestepping_algorithm`: OrdinaryDiffEq algorithm instance, or `nothing`
+  (default) for `Tsit5()`.
 - `reltol::Float64`, `abstol::Float64`: ODE tolerances.
-- `tolerance_mode::Symbol`: `:scalar` uses the fixed `abstol`/`reltol` pair; `:auto` attaches
-the DiffEqCallbacks `AutoAbstol` callback (per-component running absolute tolerance
-`abstol[i] = max(configured floor[i], max(|u[i]| so far) * reltol)`) for disparate-scale states.
+- `auto_abstol::Bool`: attach the DiffEqCallbacks `AutoAbstol` callback instead of
+  the fixed scalar `abstol` (see `FiniteVol`).
 """
 Base.@kwdef @concrete struct QMOM <: AbstractMomentSolver
     nquadrature::Int64 = 3
     coordinate_scale::Float64 = 1e-6
-    inversion_algorithm::Symbol = :wheeler
     realizability_tolerance::Float64 = 1e-10
     empty_population_tolerance::Float64 = 1e-14
     node_coalescence_tolerance::Float64 = 1e-10
     minimum_size::Float64 = 0.0
-    string::String = "QMOM"
-    timestepping_algorithm::Symbol = :auto
+    timestepping_algorithm = nothing
     # QMOM is a closure approximation; a 1e-7 relative solve tolerance keeps
     # the default materially cheaper while preserving the benchmark outputs.
     reltol::Float64 = 1e-7
     abstol::Float64 = 1e-8
-    tolerance_mode::Symbol = :scalar
+    auto_abstol::Bool = false
 end
 
 """
@@ -183,9 +180,10 @@ weights and physical crystal nodes rather than raw moments; the solver
 converts the public state to weighted, scaled nodes internally.
 
 The first implementation requires a nonempty seeded population with positive,
-pairwise-distinct nodes.  Empty populations and node-deactivation events are
-rejected explicitly because they require a separate birth or boundary-flux
-model.
+pairwise-distinct nodes.  Empty populations are rejected, and a solve throws a
+`DomainError` when dissolution carries a node down to `minimum_size`, because
+removing a node needs a separate boundary-flux model.  Use `QMOM`, `FiniteVol`
+or `WENO` when crystals may dissolve completely.
 
 Fields:
 - `nquadrature::Int64`: Number of direct quadrature nodes (default: 3).
@@ -197,11 +195,11 @@ Fields:
 - `node_coalescence_tolerance::Float64`: Minimum node separation in scaled
   coordinates.
 - `minimum_size::Float64`: Lower physical support bound for active nodes.
-- `timestepping_algorithm::Symbol`: Time-stepping algorithm selector.
+- `timestepping_algorithm`: OrdinaryDiffEq algorithm instance, or `nothing`
+  (default) for `Tsit5()`.
 - `reltol::Float64`, `abstol::Float64`: ODE tolerances.
-- `tolerance_mode::Symbol`: `:scalar` uses the fixed `abstol`/`reltol` pair; `:auto` attaches
-the DiffEqCallbacks `AutoAbstol` callback (per-component running absolute tolerance
-`abstol[i] = max(configured floor[i], max(|u[i]| so far) * reltol)`) for disparate-scale states.
+- `auto_abstol::Bool`: attach the DiffEqCallbacks `AutoAbstol` callback instead of
+  the fixed scalar `abstol` (see `FiniteVol`).
 """
 Base.@kwdef @concrete struct DQMOM <: AbstractMomentSolver
     nquadrature::Int64 = 3
@@ -210,11 +208,10 @@ Base.@kwdef @concrete struct DQMOM <: AbstractMomentSolver
     realizability_tolerance::Float64 = 1e-10
     node_coalescence_tolerance::Float64 = 1e-10
     minimum_size::Float64 = 0.0
-    string::String = "DQMOM"
-    timestepping_algorithm::Symbol = :auto
+    timestepping_algorithm = nothing
     reltol::Float64 = 1e-7
     abstol::Float64 = 1e-8
-    tolerance_mode::Symbol = :scalar
+    auto_abstol::Bool = false
 end
 
 """Highest tracked raw-moment order for a moment solver."""
@@ -225,18 +222,19 @@ moment_order(solver::DQMOM) = 2 * solver.nquadrature - 1
 """Number of raw moments represented by a moment solver state."""
 moment_count(solver::MoM) = solver.nmoments + 1
 moment_count(solver::QMOM) = 2 * solver.nquadrature
+moment_count(solver::DQMOM) = 2 * solver.nquadrature
 
 """Number of population states before the named solvent variables."""
-_population_state_count(solver::FiniteVol) = solver.meshsize
-_population_state_count(solver::WENO) = solver.meshsize
-_population_state_count(solver::MoM) = moment_count(solver)
-_population_state_count(solver::QMOM) = moment_count(solver)
-_population_state_count(solver::DQMOM) = 2 * solver.nquadrature
+_population_state_count(solver::AbstractDiscretisedSolver) = solver.meshsize
+_population_state_count(solver::AbstractMomentSolver) = moment_count(solver)
 _population_state_count(solver::AbstractSolver) =
     throw(ArgumentError("No population-state size is defined for $(typeof(solver))."))
 
-"""Compatibility accessor for the highest QMOM moment order."""
-nmoments(solver::QMOM) = moment_order(solver)
+"""Size coordinate (cell centres, m) of a discretised solver."""
+_length_mesh(solver::AbstractDiscretisedSolver) = solver.cell_centre
+_length_mesh(solver::AbstractSolver) =
+    throw(ArgumentError("Length-dependent kinetics require a discretised solver mesh; " *
+                        "$(typeof(solver)) has none."))
 
 """
     QMOMInversionDiagnostics

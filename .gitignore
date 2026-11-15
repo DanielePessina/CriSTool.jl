@@ -19,7 +19,6 @@ lcov.info
 *.cov
 *.profraw
 *.jld2
-!test/test_chain.jld2
 
 # Local Python/tooling files
 __pycache__/

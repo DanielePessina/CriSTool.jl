@@ -18,8 +18,6 @@ module KissABC
 
 import AbstractMCMC
 import AbstractMCMC: sample, step, MCMCThreads, MCMCDistributed
-import FlexiChains
-import Turing
 using Random
 using Distributions
 using MonteCarloMeasurements
@@ -635,7 +633,7 @@ function ess(w)
     sum(w)^2 / sum(abs2, w)
 end
 
-function resample_residual(w::AbstractVector{<:Real}, num_particles::Integer) # taken from Turing.jl
+function resample_residual(w::AbstractVector{<:Real}, num_particles::Integer) # adapted from the Turing.jl ecosystem
     # Pre-allocate array for resampled particles
     indices = Vector{Int}(undef, num_particles)
 
@@ -1159,20 +1157,6 @@ function AbstractMCMC.step(rng::Random.AbstractRNG,
     return _ais_step_impl(rng, model, spl, retry_sampling)
 end
 
-# Resolve the method ambiguity between this vendored AIS step and Turing's
-# `step(::AbstractRNG, ::DynamicPPL.Model, ::AbstractMCMC.AbstractSampler)`
-# (Aqua ambiguities check). The vendored ABC machinery only supports
-# `AbstractDensity` models, so a DynamicPPL/Turing model is a hard misuse:
-# fail loudly instead of dispatching ambiguously into Turing's sampler path.
-function AbstractMCMC.step(rng::Random.AbstractRNG,
-                           model::Turing.DynamicPPL.Model,
-                           spl::AIS;
-                           kwargs...)
-    error("AIS sampling requires a KissABC density (ApproxPosterior / " *
-          "CommonLogDensity), not a DynamicPPL/Turing model. Use Turing's own " *
-          "MCMC samplers for DynamicPPL models.")
-end
-
 function AbstractMCMC.step(rng::Random.AbstractRNG,
                            model::AbstractMCMC.AbstractModel,
                            spl::AIS,
@@ -1203,18 +1187,8 @@ function AbstractMCMC.bundle_samples(samples::Vector{T},
     return _ais_bundle_samples(samples)
 end
 
-# Resolve the method ambiguity between this vendored AIS bundle_samples and
-# FlexiChains' `bundle_samples(::AbstractVector, ..., ::Type{VNChain})`
-# (Aqua ambiguities check). The chain type is ignored by the AIS method, so
-# dispatch to the shared body.
-function AbstractMCMC.bundle_samples(samples::Vector{T},
-                                     m::AbstractMCMC.AbstractModel,
-                                     s::AIS,
-                                     lss,
-                                     ::Type{FlexiChains.VNChain};
-                                     kwargs...,) where {T <: Particle}
-    return _ais_bundle_samples(samples)
-end
+# The method ambiguity with FlexiChains' `bundle_samples(..., ::Type{VNChain})`
+# is resolved in the CriSToolFlexiChainsExt extension, loaded with FlexiChains.
 
 function AbstractMCMC.chainsstack(c::Vector{Vector{T}}) where {T <: Particles}
     nc = length(c)

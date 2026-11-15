@@ -1,10 +1,9 @@
 # Temperature profiles
 
-Crystallisation problems store temperature as a `temp_profile`, which is
-an `AbstractTemperature`. The default is a constant 20 °C (`293.15` K).
-
-You can pass a custom profile to `runsimulation` via `temp_profile`. For
-side-by-side runs across constant, ramp, and arbitrary `T(t)` profiles,
+Every run's temperature is set by `RunConditions(temperature = ...)`. A number
+is Kelvin and becomes a `ConstantTemperature`; any `AbstractTemperature` is
+used as given. There is no default temperature. For side-by-side runs across
+constant and cooling profiles,
 see [Tutorial 1 — Running Simulations](https://github.com/DanielePessina/CriSTool.jl/blob/main/examples/Tutorial%201%20Running%20Simulations.jl).
 
 ## Built-in profiles
@@ -29,15 +28,11 @@ linear_T = LinearTemperature(293.15, -0.01 / 60)
 # Arbitrary T(t) via a closure
 periodic_T = CallableTemperature(t -> 293.15 + 2.0 * sin(2π * t / 36000))
 
-problem, solution = runsimulation(
-    [38.0, 0.0007, 1e-9 / 60, 3.0];
-    nucl = nucl_CNT(),
-    gr = growth_empirical(),
-    solver = MoM(),
-    initial_concentration = 18.0,
-    temp_profile = linear_T,
-    save_idx = 0.0:3600.0:28800.0,
-)
+crystal_model = CrystallisationModel(LysozymeSystem();
+    nucleation = CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 0.0007),
+    growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
+cooling_run = RunConditions(temperature = linear_T, concentration = 18.0)
+solution = simulate(crystal_model, cooling_run; solver = MoM(), saveat = 0.0:3600.0:28800.0)
 ```
 
 ## Custom profile
@@ -55,13 +50,6 @@ CriSTool.temperature(p::StepTemperature, t) = t < p.t_switch ? p.T1 : p.T2
 
 profile = StepTemperature(293.15, 288.15, 7200.0) # seconds
 
-problem, solution = runsimulation(
-    [38.0, 0.0007, 1e-9 / 60, 3.0];
-    nucl = nucl_CNT(),
-    gr = growth_empirical(),
-    solver = MoM(),
-    initial_concentration = 18.0,
-    temp_profile = profile,
-    save_idx = 0.0:3600.0:28800.0,
-)
+step_run = RunConditions(temperature = profile, concentration = 18.0)
+solution = simulate(crystal_model, step_run; solver = MoM(), saveat = 0.0:3600.0:28800.0)
 ```

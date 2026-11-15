@@ -2,23 +2,42 @@
 
 ```@docs
 CrystallisationProblem
+CrystallisationSystem
+LysozymeSystem
+CrystallisationModel
+KineticModel
+RunConditions
+FromObservation
+CallableGrowth
+CallableNucleation
+CallableLengthGrowth
+KineticContext
+system_properties
+required_properties
+named_parameters
+simulate
 runsimulation
-CrystallisationFVSolution
-CrystallisationMoMSolution
-CrystallisationQMOMSolution
-CrystallisationDQMOMSolution
+kinetic_parameter_vector
+CrystallisationSolution
+AbstractPopulationTrajectory
+MeshPopulation
+MomentPopulation
+QuadraturePopulation
 CrystallisationSteadyStateSolution
 SteadyStateConvergenceError
-EnsembleFVSolution
-EnsembleMoMSolution
 AbstractSolution
 solve_steadystate
+SteadyStateOptions
 AbstractInitialCrystals
 LogNormalInitialCrystals
 GaussianInitialCrystals
+DistributionInitialCrystals
+AbstractSeedWeighting
+NumberWeighted
+VolumeWeighted
+number_weighted
+seed_domain_diagnostics
 initial_state_from_characteristics
-get_characteristic_size
-getmomentsizes
 state_vars
 size_metrics
 observable_values
@@ -50,22 +69,25 @@ below and the [Reactor operations and steady state](../operations.md) guide).
 `default_solvent_dynamics` is the default callable used by
 `CrystallisationProblem`. It updates the named `:concentration` solvent
 variable from the crystal growth rate and returns zero rates for any
-additional named solvent variables. Supply `initial_solvent_state` and a
-custom `solvent_dynamics` callable when the process includes coupled variables
-such as pH or volume.
+additional named solvent variables. Supply extra initial solvent values through
+`RunConditions(solvent = (...))` and a custom `solvent_dynamics` callable
+(a `CrystallisationProblem` keyword, or `problem_options` in `prepare_fit`) when
+the process includes coupled variables such as pH or volume.
 
 ## Steady MSMPR solves
 
 `solve_steadystate(problem)` is the explicit steady-state route for a constant,
 autonomous `MSMPROperation`. It relaxes the generated dynamics until the scaled
 residual covers every population and solvent-state component, then returns a
-`CrystallisationSteadyStateSolution` with one value per observable, product
-flows, the full residual, the solver retcode, and physical and mass-balance
-diagnostics. If a finite relaxation horizon ends before convergence or any
-physical check fails, `SteadyStateConvergenceError` carries the unsuccessful
-result in its `solution` field with `success = false` and the solver retcode.
+`CrystallisationSteadyStateSolution`: scalar equilibrium values through
+`steady.equilibrium` (`steady.equilibrium.concentration`, `.d43`), product flows in `steady.product`, the full residual, the solver
+retcode, and physical and mass-balance diagnostics in `steady.diagnostics`.
+Settings are passed as `options = SteadyStateOptions(...)`. If a finite
+relaxation horizon ends before convergence or any physical check fails,
+`SteadyStateConvergenceError` carries the unsuccessful result in its `solution`
+field with `success = false` and the solver retcode.
 
-Batch and fed-batch problems remain transient simulations through
-`runsimulation`. Callable flow, feed, temperature, saturation, or kinetic
-profiles require `autonomous = true` to declare that they are time invariant;
+Batch and fed-batch runs are transient; use `simulate`. Callable flow, feed,
+temperature, saturation, or kinetic profiles require
+`SteadyStateOptions(autonomous = true)` to declare that they are time invariant;
 the declaration is the caller's responsibility.

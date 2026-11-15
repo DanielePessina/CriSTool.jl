@@ -1,12 +1,12 @@
 """
-Utilities for converting MCMC chain objects to matrices compatible with CriSTool.
-Provides standardized interfaces for MCMCChains.jl and Distributions.jl integration.
+Conversion of MCMCChains.jl chains to the parameter-by-sample matrices used by
+`ParameterSamples`.
 """
 
 """
     chains_to_matrix(chain::MCMCChains.Chains; burnin::Int=0, params=nothing) -> Matrix{Float64}
 
-Convert an MCMCChains.Chains object to a matrix suitable for ensemble simulations.
+Convert an MCMCChains.Chains object to a parameter-by-sample matrix.
 
 # Arguments
 - `chain`: MCMCChains.Chains object from Turing.jl or similar
@@ -16,12 +16,6 @@ Convert an MCMCChains.Chains object to a matrix suitable for ensemble simulation
 # Returns
 - `Matrix{Float64}` with shape (n_params, n_samples) where samples from all chains are concatenated
 
-# Example
-```julia
-chain = sample(model, NUTS(), MCMCThreads(), 1000, 4)
-samples = chains_to_matrix(chain, burnin=200)
-run_ensemble(samples, measurements, ...)
-```
 """
 function chains_to_matrix(chain::MCMCChains.Chains;
                           burnin::Int = 0,
@@ -86,111 +80,4 @@ function chains_to_matrix(chain::MCMCChains.Chains;
 
     # Transpose to get (params, samples)
     return Matrix{Float64}(permutedims(reshaped))
-end
-
-"""
-    distribution_to_matrix(dist::Distribution, n_samples::Int; rng=Random.GLOBAL_RNG) -> Matrix{Float64}
-
-Sample from a distribution and return as a matrix compatible with ensemble simulations.
-
-# Arguments
-- `dist`: Any Distributions.jl distribution (univariate or multivariate)
-- `n_samples`: Number of samples to draw
-- `rng`: Random number generator (default: Random.GLOBAL_RNG)
-
-# Returns
-- `Matrix{Float64}` with shape (n_params, n_samples)
-
-# Example
-```julia
-prior = product_distribution([Normal(0,1), Uniform(-1,1)])
-samples = distribution_to_matrix(prior, 1000)
-```
-"""
-function distribution_to_matrix(dist::Distributions.Distribution, n_samples::Int;
-                                rng::AbstractRNG = Random.GLOBAL_RNG)
-    if n_samples <= 0
-        throw(ArgumentError("n_samples must be positive, got $n_samples"))
-    end
-
-    samples = rand(rng, dist, n_samples)
-
-    # Ensure output is always (n_params, n_samples)
-    if samples isa AbstractVector
-        # Univariate distribution: samples is a vector of length n_samples
-        return reshape(convert(Vector{Float64}, samples), 1, :)
-    else
-        # Multivariate distribution: samples is (n_params, n_samples) or similar
-        return Matrix{Float64}(samples)
-    end
-end
-
-"""
-    create_product_prior(distributions::Vector{<:UnivariateDistribution}) -> Product
-
-Create a multivariate prior from independent univariate distributions.
-
-# Arguments
-- `distributions`: Vector of univariate distributions
-
-# Returns
-- A `Product` distribution from Distributions.jl
-
-# Example
-```julia
-prior = create_product_prior([
-    TriangularDist(15, 65, 30),
-    TriangularDist(0.15, 2.5, 1.0),
-    TriangularDist(1e-4, 5, 1.0),
-    TriangularDist(1.0, 3.5, 2.0)
-])
-
-# Equivalent to:
-# prior = product_distribution([...])
-```
-"""
-function create_product_prior(distributions::Vector{<:Distributions.UnivariateDistribution})
-    if isempty(distributions)
-        throw(ArgumentError("distributions vector cannot be empty"))
-    end
-    return Distributions.product_distribution(distributions)
-end
-
-"""
-    prior_to_matrix(prior, n_samples::Int; rng=Random.GLOBAL_RNG) -> Matrix{Float64}
-
-Convert any prior type (Product, Distribution, or vector of distributions) to a sample matrix.
-
-# Arguments
-- `prior`: Prior distribution (Product, Distribution, or Vector of UnivariateDistribution)
-- `n_samples`: Number of samples to draw
-
-# Returns
-- `Matrix{Float64}` with shape (n_params, n_samples)
-"""
-function prior_to_matrix(prior::Distributions.Distribution, n_samples::Int;
-                         rng::AbstractRNG = Random.GLOBAL_RNG)
-    return distribution_to_matrix(prior, n_samples; rng = rng)
-end
-
-"""
-    prior_to_matrix(priors::Vector{<:Distributions.UnivariateDistribution}, n_samples::Int; rng=Random.GLOBAL_RNG) -> Matrix{Float64}
-
-Convert a vector of univariate distributions to a sample matrix.
-
-# Arguments
-- `priors::Vector{<:Distributions.UnivariateDistribution}`: Vector of independent prior distributions
-- `n_samples::Int`: Number of samples to draw
-- `rng::AbstractRNG=Random.GLOBAL_RNG`: Random number generator
-
-# Returns
-- `Matrix{Float64}` with shape (n_params, n_samples)
-
-Creates a product distribution from the vector and samples from it.
-"""
-function prior_to_matrix(priors::Vector{<:Distributions.UnivariateDistribution},
-                         n_samples::Int;
-                         rng::AbstractRNG = Random.GLOBAL_RNG)
-    prod_dist = create_product_prior(priors)
-    return distribution_to_matrix(prod_dist, n_samples; rng = rng)
 end

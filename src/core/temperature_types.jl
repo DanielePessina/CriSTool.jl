@@ -46,6 +46,8 @@ Return the constant temperature value.
 """
 @inline temperature(ct::ConstantTemperature) = temperature(ct, 0.0)
 
+_is_time_invariant(::ConstantTemperature) = true
+
 """
     LinearTemperature{T<:Real} <: AbstractTemperature
 

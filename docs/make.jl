@@ -20,6 +20,8 @@ makedocs(
     pages = [
         "Home" => "index.md",
         "Guides" => [
+            "Model workflow" => "model-workflow.md",
+            "Migration" => "migration.md",
             "Running simulations" => "simulation.md",
             "Reactor operations and steady state" => "operations.md",
             "Solvers" => "solvers.md",

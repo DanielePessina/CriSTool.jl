@@ -52,7 +52,9 @@ end
 Compute volume-weighted density distribution.
 """
 function volumeweighteddensity(mesh::AbstractVector, numberdensity::AbstractVecOrMat, shape_factor)
-    shape_factor .* (numberdensity .* (mesh .^ 3.0))
+    # Integer literal powers lower to multiplications; a Float64 exponent calls `pow`
+    # once per cell and saved time.
+    shape_factor .* (numberdensity .* (mesh .^ 3))
 end
 
 """
@@ -61,7 +63,7 @@ end
 Compute surface-weighted density distribution.
 """
 function surfaceweighteddensity(mesh::AbstractVector, numberdensity::AbstractVector, shape_factor)
-    shape_factor .* (numberdensity .* mesh .^ 2.0)
+    shape_factor .* (numberdensity .* mesh .^ 2)
 end
 
 """
@@ -134,37 +136,81 @@ function quantilecalculator(cellcentre::AbstractVector{T},
 end
 
 """
-    _momentsizes(mesh, numberdensity)
+    ReconstructionFailure(value, message)
 
-Compute the four moment-derived size metrics (d10, d32, d43, moment2) from a number-density
-matrix and mesh. Used by FV solvers at solution-construction time so that the resulting
-`CrystallisationFVSolution` carries these sizes as fields — the same way a
-`CrystallisationMoMSolution` does. Callers should not need this directly.
+Status of a saved trajectory that cannot be reconstructed into physical size
+metrics or a quadrature population: the offending `value` and the reason.
+Reconstruction returns it instead of throwing. Direct simulation raises it as
+`DomainError(value, message)`; prepared inference records it as a failed
+candidate.
 """
-function _safe_moment_size_ratio(numerator, denominator, particle_count)
-    isfinite(particle_count) ||
-        throw(DomainError(particle_count,
-                          "Particle count must be finite when computing a size metric."))
-    if particle_count >= zero(particle_count) &&
-       particle_count <= CRISTOOL_MOMENT_DENSITY_FLOOR
-        return zero(promote_type(typeof(numerator), typeof(denominator)))
-    end
-    isfinite(numerator) && numerator >= zero(numerator) ||
-        throw(DomainError(numerator,
-                          "A nonempty population requires a finite nonnegative moment numerator."))
-    isfinite(denominator) && denominator > zero(denominator) ||
-        throw(DomainError(denominator,
-                          "A nonempty population requires a finite positive moment denominator."))
-    return numerator / denominator
+struct ReconstructionFailure{Value <: Real}
+    value::Value
+    message::String
 end
 
+"""The `DomainError` that reports `failure` to callers outside prepared inference."""
+_reconstruction_domain_error(failure::ReconstructionFailure) =
+    DomainError(failure.value, failure.message)
+
+"""The first `ReconstructionFailure` among `statuses`, or `nothing`."""
+_first_reconstruction_failure() = nothing
+_first_reconstruction_failure(failure::ReconstructionFailure, remaining_statuses...) = failure
+_first_reconstruction_failure(reconstructed, remaining_statuses...) =
+    _first_reconstruction_failure(remaining_statuses...)
+
+"""
+    _reconstruct_from(build, statuses...)
+
+`build(statuses...)` when no status is a `ReconstructionFailure`; otherwise the
+first failure, in argument order.
+"""
+_reconstruct_from(build, statuses...) =
+    _reconstruct_from(build, _first_reconstruction_failure(statuses...), statuses)
+_reconstruct_from(build, ::Nothing, statuses::Tuple) = build(statuses...)
+_reconstruct_from(build, failure::ReconstructionFailure, statuses::Tuple) = failure
+
+"""A reconstructed value, or throw a reconstruction failure as its `DomainError`."""
+_reconstructed_or_throw(reconstructed) = reconstructed
+_reconstructed_or_throw(failure::ReconstructionFailure) =
+    throw(_reconstruction_domain_error(failure))
+
+"""Whether a particle count is numerically empty, so its size ratios are zero."""
+_is_empty_moment_population(particle_count) =
+    particle_count >= zero(particle_count) && particle_count <= CRISTOOL_MOMENT_DENSITY_FLOOR
+
+"""`ReconstructionFailure` when the size ratio `numerator / denominator` is undefined, else `nothing`."""
+function _moment_size_ratio_failure(numerator, denominator, particle_count)
+    isfinite(particle_count) ||
+        return ReconstructionFailure(particle_count,
+            "Particle count must be finite when computing a size metric.")
+    _is_empty_moment_population(particle_count) && return nothing
+    isfinite(numerator) && numerator >= zero(numerator) ||
+        return ReconstructionFailure(numerator,
+            "A nonempty population requires a finite nonnegative moment numerator.")
+    isfinite(denominator) && denominator > zero(denominator) ||
+        return ReconstructionFailure(denominator,
+            "A nonempty population requires a finite positive moment denominator.")
+    return nothing
+end
+
+"""Size ratio `numerator / denominator` of a checked state, zero for a numerically empty population."""
+_moment_size_ratio(numerator, denominator, particle_count) =
+    _is_empty_moment_population(particle_count) ?
+        zero(promote_type(typeof(numerator), typeof(denominator))) : numerator / denominator
+
+"""
+    _momentsizes(mesh, numberdensity)
+
+Moment-derived size metrics (d10, d32, d43, moment2) of a mesh number-density
+matrix, computed once when a mesh solution is assembled, or the
+`ReconstructionFailure` of an undefined ratio.
+"""
 function _momentsizes(mesh::AbstractVector, numberdensity::AbstractMatrix)
     step_size = Base.step(mesh)
     n_columns = size(numberdensity, 2)
-    d10 = Vector{eltype(numberdensity)}(undef, n_columns)
-    d32 = similar(d10)
-    d43 = similar(d10)
-    moment2 = similar(d10)
+    density_type = eltype(numberdensity)
+    moment_matrix = Matrix{density_type}(undef, 5, n_columns)
 
     # The mesh is shared by every saved time.  Hoist its powers once, then
     # traverse each contiguous density column once to accumulate μ₀…μ₄.
@@ -178,7 +224,6 @@ function _momentsizes(mesh::AbstractVector, numberdensity::AbstractMatrix)
         mesh_fourth[mesh_slot] = mesh_value^4
     end
 
-    density_type = eltype(numberdensity)
     @inbounds for column_index in 1:n_columns
         mu0 = zero(density_type)
         mu1 = zero(density_type)
@@ -196,105 +241,100 @@ function _momentsizes(mesh::AbstractVector, numberdensity::AbstractMatrix)
             mu4 += weighted_density * mesh_fourth[mesh_slot]
             mesh_slot += 1
         end
-
-        moment2[column_index] = mu2
-        d10[column_index] = _safe_moment_size_ratio(mu1, mu0, mu0)
-        d32[column_index] = _safe_moment_size_ratio(mu3, mu2, mu0)
-        d43[column_index] = _safe_moment_size_ratio(mu4, mu3, mu0)
+        moment_matrix[1, column_index] = mu0
+        moment_matrix[2, column_index] = mu1
+        moment_matrix[3, column_index] = mu2
+        moment_matrix[4, column_index] = mu3
+        moment_matrix[5, column_index] = mu4
     end
-    return (; d10, d32, d43, moment2)
-end
-
-function getmomentsizes(::CrystallisationProblem,
-                        solution::CrystallisationFVSolution)
-    return (d10 = solution.d10, d32 = solution.d32, d43 = solution.d43, moment2 = solution.moment2)
-end
-"""
-    getmomentsizes(problem::CrystallisationProblem, solution::CrystallisationMoMSolution) -> NamedTuple
-
-Extract characteristic crystal sizes from a Method of Moments solution.
-
-# Arguments
-- `problem::CrystallisationProblem`: The crystallisation problem (unused for MoM but kept for dispatch)
-- `solution::CrystallisationMoMSolution`: MoM simulation solution
-
-# Returns
-- `NamedTuple{(:d10, :d32, :d43, :moment2)}`: Named tuple with size metrics directly from solution
-"""
-function getmomentsizes(problem::CrystallisationProblem,
-                        solution::CrystallisationMoMSolution)
-    return (d10 = solution.d10, d32 = solution.d32, d43 = solution.d43, moment2 = solution.moment2)
+    return _raw_moment_size_metrics(moment_matrix)
 end
 
 """
-    bisectionfinder(f::Function, a::Number, b::Number;
-                   tol::AbstractFloat=1e-10, maxiter::Integer=200)
+    _moment_ratio_trajectory(moment_matrix, numerator_row, denominator_row)
 
-    Find the quantile with a bisection search of the cumulative density function.
+Saved size ratios `µ[numerator_row] / µ[denominator_row]`, `NaN` when the
+numerator moment is not tracked, or the first `ReconstructionFailure` in time.
 """
-
-"""
-    get_characteristic_size(sol::AbstractSolution)
-
-Returns the main characteristic particle size from a simulation solution.
-- For `CrystallisationMoMSolution`, this is the final `d43`.
-- For `CrystallisationFVSolution`, this is the final `d50q`.
-"""
-get_characteristic_size(sol::CrystallisationMoMSolution) = sol.d43[end]
-get_characteristic_size(sol::CrystallisationFVSolution) = sol.d50q[end]
-
-"""
-    time(sol::AbstractSolution) -> AbstractVector
-
-Time grid of a solution.
-"""
-time(sol::AbstractSolution) = sol.time
-
+function _moment_ratio_trajectory(moment_matrix::AbstractMatrix, numerator_row::Int,
+                                  denominator_row::Int)
+    tracked_moments, saved_count = size(moment_matrix)
+    tracked_moments >= numerator_row ||
+        return fill(convert(eltype(moment_matrix), NaN), saved_count)
+    for saved_index in 1:saved_count
+        ratio_failure = _moment_size_ratio_failure(moment_matrix[numerator_row, saved_index],
+                                                   moment_matrix[denominator_row, saved_index],
+                                                   moment_matrix[1, saved_index])
+        ratio_failure === nothing || return ratio_failure
+    end
+    return [_moment_size_ratio(moment_matrix[numerator_row, saved_index],
+                               moment_matrix[denominator_row, saved_index],
+                               moment_matrix[1, saved_index]) for saved_index in 1:saved_count]
+end
 
 """
-    _size_trajectory(sol::AbstractSolution) -> AbstractVector
+    _raw_moment_size_metrics(moment_matrix)
 
-Characteristic size trajectory: `d43` for MoM, `d50q` for discretised
-solutions (solver-type dispatch).
+Moment-ratio size metrics from a raw-moment matrix `(nmoments, nt)` whose row
+`k + 1` holds µk. A ratio whose numerator moment is not tracked is `NaN`. An
+undefined ratio returns its `ReconstructionFailure` (d10, then d32, then d43).
 """
-_size_trajectory(sol::CrystallisationMoMSolution) = sol.d43
-_size_trajectory(sol::CrystallisationFVSolution) = sol.d50q
-
-"""
-    state_vars(sol::CrystallisationMoMSolution) -> NamedTuple
-
-Named solvent-state variables of a MoM solution, including `concentration`
-and any additional coupled solvent variables.
-"""
-state_vars(sol::CrystallisationMoMSolution) = merge(sol.solvent_state, reactor_vars(sol))
+_raw_moment_size_metrics(moment_matrix::AbstractMatrix) =
+    _reconstruct_from(_moment_ratio_trajectory(moment_matrix, 2, 1),
+                      _moment_ratio_trajectory(moment_matrix, 4, 3),
+                      _moment_ratio_trajectory(moment_matrix, 5, 4)) do d10, d32, d43
+        (; d10, d32, d43, moment2 = collect(view(moment_matrix, 3, :)))
+    end
 
 """
-    state_vars(sol::CrystallisationFVSolution) -> NamedTuple
-
-Named solvent-state variables of a discretised solution, plus `numberdensity`
- (mesh × time) and `voldensity` (mesh × time).
+Assemble a `CrystallisationSolution` from an ODE solution and its population;
+size metrics that failed reconstruction return their `ReconstructionFailure`.
 """
-state_vars(sol::CrystallisationFVSolution) = merge(sol.solvent_state, reactor_vars(sol),
-                                                   (; numberdensity = sol.numberdensity,
-                                                      voldensity = sol.voldensity))
+_crystallisation_solution(problem::CrystallisationProblem, ode_solution, population,
+                          size_failure::ReconstructionFailure, final_state,
+                          reactor_state::NamedTuple) = size_failure
+
+function _crystallisation_solution(problem::CrystallisationProblem, ode_solution, population,
+                                   size_moments::NamedTuple, final_state, reactor_state::NamedTuple)
+    solvent_trajectories = _solvent_solution_state(problem, ode_solution)
+    return CrystallisationSolution(collect(ode_solution.t), solvent_trajectories.concentration,
+                                   population, size_moments.d10, size_moments.d32,
+                                   size_moments.d43, size_moments.moment2,
+                                   solvent_trajectories, reactor_state, final_state,
+                                   ode_solution.stats,
+                                   SciMLBase.successful_retcode(ode_solution.retcode))
+end
 
 """
-    size_metrics(sol::CrystallisationMoMSolution) -> NamedTuple
+    state_vars(solution) -> NamedTuple
 
-Particle-size metrics of a MoM solution: `d10`, `d32`, `d43`, `moment2`.
+Named solvent-state and reactor trajectories (including `concentration`), plus
+the population arrays of the solver: `numberdensity`/`voldensity` (mesh ×
+time) for mesh solvers, `moments` for MoM, and `moments`/`nodes`/`weights`
+for QMOM and DQMOM.
 """
-size_metrics(sol::CrystallisationMoMSolution) =
-    (; d10 = sol.d10, d32 = sol.d32, d43 = sol.d43, moment2 = sol.moment2)
+state_vars(solution::CrystallisationSolution) =
+    merge(solution.solvent_state, solution.reactor_state, _population_vars(solution.population))
+
+_population_vars(population::MeshPopulation) =
+    (; numberdensity = population.numberdensity, voldensity = population.voldensity)
+_population_vars(population::MomentPopulation) = (; moments = population.moments)
+_population_vars(population::QuadraturePopulation) =
+    (; moments = population.moments, nodes = population.nodes, weights = population.weights)
 
 """
-    size_metrics(sol::CrystallisationFVSolution) -> NamedTuple
+    size_metrics(solution) -> NamedTuple
 
-Particle-size metrics of a discretised solution: quantiles `d10q`/`d50q`/`d90q`
-plus `d10`/`d32`/`d43`.
+Particle-size trajectories: `d10`, `d32`, `d43`, `moment2` for every solver,
+plus the volume quantiles `d10q`/`d50q`/`d90q` for mesh solvers.
 """
-size_metrics(sol::CrystallisationFVSolution) =
-    (; d10q = sol.d10q, d50q = sol.d50q, d90q = sol.d90q,
-      d10 = sol.d10, d32 = sol.d32, d43 = sol.d43)
+size_metrics(solution::CrystallisationSolution) =
+    merge((; d10 = solution.d10, d32 = solution.d32, d43 = solution.d43, moment2 = solution.moment2),
+          _population_size_metrics(solution.population))
+
+_population_size_metrics(population::MeshPopulation) =
+    (; d10q = population.d10q, d50q = population.d50q, d90q = population.d90q)
+_population_size_metrics(population::AbstractPopulationTrajectory) = (;)
 
 """
     observable_values(sol::AbstractSolution, name::Symbol) -> AbstractArray

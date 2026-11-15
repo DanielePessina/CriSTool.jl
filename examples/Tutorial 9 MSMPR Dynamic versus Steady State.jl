@@ -1,4 +1,4 @@
-"""
+#=
 Tutorial 9: MSMPR dynamic relaxation versus an explicit steady-state solve.
 
 A fixed-flow MSMPR with a crystal-bearing feed and no growth or nucleation
@@ -16,9 +16,9 @@ ways to obtain that operating point:
 
 2. `solve_steadystate(problem)`, the explicit steady-state route for a constant
    autonomous MSMPR. It relaxes the dynamics until the scaled full-state RHS
-   residual is within tolerance and returns a `CrystallisationSteadyStateSolution`
-   with one value per observable plus product flows, the scaled residual, and
-   physical / mass-balance diagnostics.
+   residual is within tolerance and returns a `CrystallisationSteadyStateSolution`:
+   equilibrium values through `steady.equilibrium` (`.concentration`, `.d43`), product flows in
+   `steady.product`, and residual / mass-balance checks in `steady.diagnostics`.
 
 The steady state is the feed condition: concentration `C_f` and the feed
 crystal load `M₀_feed` (here one-tenth of the tank seed mass, so
@@ -26,16 +26,16 @@ crystal load `M₀_feed` (here one-tenth of the tank seed mass, so
 not steady inputs.
 
 Run with:  julia --project=examples "examples/Tutorial 9 MSMPR Dynamic versus Steady State.jl"
-"""
+=#
 
 using CriSTool
 using CairoMakie
 
 function main()
-    # No nucleation; growth fixed to zero. Fixed kinetics take no parameters.
-    nucl = nucl_empirical_fixed(log10_nucleation_prefactor = -Inf,
-                                nucleation_order = 1.0)
-    gr   = growth_empirical_fixed(growth_coefficient = 0.0, growth_order = 1.0)
+    # No nucleation (the model default, `NoNucleation()`) and a zero growth coefficient.
+    msmpr_model = CrystallisationModel(LysozymeSystem(saturation_model = ConstantSolubility(1.0));
+        growth = EmpiricalGrowth(growth_coefficient = 0.0, growth_order = 1.0))
+    qmom_solver = QMOM(nquadrature = 3, reltol = 1e-10, abstol = 1e-12)
 
     tank_seed = LogNormalInitialCrystals(mass_concentration = 0.5, d43 = 20e-6,
                                          geometric_std = 1.05)
@@ -46,19 +46,16 @@ function main()
                                                           crystals = feed_seed))
     save_grid = collect(0.0:1800.0:21600.0)          # 6 h in seconds
 
-    problem, solution = runsimulation(
-        Float64[];                              # fixed kinetics take no parameters
-        nucl = nucl, gr = gr, agg = noaggregation(), br = nobreakage(),
-        solver = QMOM(nquadrature = 3, reltol = 1e-10, abstol = 1e-12),
-        operation = operation, initial_crystals = tank_seed,
-        initial_concentration = 8.0, saturation_model = ConstantSolubility(1.0),
-        save_idx = save_grid)
+    msmpr_run = RunConditions(temperature = 293.15, concentration = 8.0,
+                              crystals = tank_seed, operation = operation)
+    problem = CrystallisationProblem(msmpr_model, msmpr_run; solver = qmom_solver)
+    solution = simulate(problem; saveat = save_grid)
 
     # Dynamic trajectory vs the analytic relaxation.
     tau = operation.volume / operation.inflow      # residence time = 4 s
-    c_ss = operation.feed.solvent_state.concentration
+    c_ss = operation.feed.concentration
     c_oracle(t) = c_ss + (initial_concentration(problem) - c_ss) * exp(-t / tau)
-    m0_trajectory = solution.moments[1, :]
+    m0_trajectory = solution.population.moments[1, :]
     m0_feed_fraction = 0.05 / 0.5                  # feed carries 1/10 of the seed mass
     m0_oracle(t) = m0_trajectory[1] * (m0_feed_fraction +
                                        (1 - m0_feed_fraction) * exp(-t / tau))
@@ -72,34 +69,33 @@ function main()
     @assert operation_flows(problem, 3600.0) == (inflow = 0.5, outflow = 0.5)
     @assert isapprox(solution.d43[end], 20e-6; rtol = 1e-4)      # no growth: seed and feed d43 equal
 
-    # Explicit steady-state solve on the same configured problem.
+    # Explicit steady-state solve on the same configured problem. Every law,
+    # the solubility and the temperature are built in and time invariant, so
+    # no autonomy declaration is needed.
     steady = solve_steadystate(problem)
-    @assert steady.success && steady.converged
-    @assert isapprox(steady.concentration[1], c_ss; rtol = 1e-6)
-    @assert isapprox(steady.moments[1, 1], m0_trajectory[1] * m0_feed_fraction; rtol = 1e-6)
-    @assert steady.scaled_residual_norm < 1e-6
+    steady_values = steady.equilibrium
+    @assert steady.success && steady.diagnostics.converged
+    @assert isapprox(steady_values.concentration, c_ss; rtol = 1e-6)
+    @assert isapprox(steady_values.moments[1], m0_trajectory[1] * m0_feed_fraction; rtol = 1e-6)
+    @assert steady.diagnostics.scaled_residual_norm < 1e-6
     @assert steady.hydraulics == (volume = 2.0, inflow = 0.5, outflow = 0.5,
                                   residence_time = 4.0)
-    @assert steady.product_dissolved_solute_flow ≈ operation.inflow * c_ss
+    @assert steady.product.dissolved_solute_flow ≈ operation.inflow * c_ss
 
     println("MSMPR (V = $(operation.volume) m³, Q = $(operation.inflow) m³/s, τ = $(tau) s)")
     println("  dynamic: C(T) = $c_relaxed kg/m³,  scaled residual |C(T) − C_ss|/C_ss = $scaled_c_residual")
     println("           M₀(T)/M₀(0) = $m0_relaxed_fraction (steady feed fraction $m0_feed_fraction)")
-    println("  steady : C_ss = $(steady.concentration[1]) kg/m³,  scaled residual norm = $(steady.scaled_residual_norm)")
-    println("           M₀_ss = $(steady.moments[1, 1]) (feed load),  d43 = $(steady.d43[1]) m")
-    println("  product dissolved-solute flow = $(steady.product_dissolved_solute_flow) kg/s  (Q·C_ss)")
+    println("  steady : C_ss = $(steady_values.concentration) kg/m³,  scaled residual norm = $(steady.diagnostics.scaled_residual_norm)")
+    println("           M₀_ss = $(steady_values.moments[1]) (feed load),  d43 = $(steady_values.d43) m")
+    println("  product dissolved-solute flow = $(steady.product.dissolved_solute_flow) kg/s  (Q·C_ss)")
     println("  hydraulics: ", steady.hydraulics)
 
     # Time-dependent inlet profiles are transient inputs, not steady inputs.
     var_flow = MSMPROperation(volume = 2.0, inflow = t -> 0.5 + 0.1 * t / 3600,
                               feed = CrystallisationFeed(concentration = 2.0))
-    _, transient_solution = runsimulation(
-        Float64[];
-        nucl = nucl, gr = gr, agg = noaggregation(), br = nobreakage(),
-        solver = QMOM(nquadrature = 3, reltol = 1e-10, abstol = 1e-12),
-        operation = var_flow, initial_concentration = 8.0,
-        saturation_model = ConstantSolubility(1.0),
-        save_idx = [0.0, 3600.0])
+    transient_solution = simulate(msmpr_model,
+        RunConditions(temperature = 293.15, concentration = 8.0, operation = var_flow);
+        solver = qmom_solver, saveat = [0.0, 3600.0])
     @assert transient_solution.success
     println("  callable inflow at t = 3600 s: ", operation_flows(var_flow, 3600.0),
             " (transient only)")
@@ -111,7 +107,7 @@ function main()
     lines!(ax_c, solution.time ./ 60, c_oracle.(solution.time), color = :crimson,
            linestyle = :dash, label = "analytic approach")
     hlines!(ax_c, [c_ss], color = :black, linestyle = :dot, label = "C_ss")
-    scatter!(ax_c, [save_grid[end] ./ 60], [steady.concentration[1]],
+    scatter!(ax_c, [save_grid[end] ./ 60], [steady_values.concentration],
              color = :seagreen, label = "solve_steadystate")
     axislegend(ax_c; position = :rt)
 

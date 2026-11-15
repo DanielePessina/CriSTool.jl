@@ -2,115 +2,57 @@
 """
     AbstractNucleationFunction
 
-Abstract supertype for all nucleation functions in crystallization kinetics.
+Abstract supertype for all nucleation laws.
 """
 abstract type AbstractNucleationFunction end
 
 """
-    AbstractFPNucleationFunction <: AbstractNucleationFunction
-
-Abstract supertype for first-principles nucleation functions.
-"""
-abstract type AbstractFPNucleationFunction <: AbstractNucleationFunction end
-
-"""
-    AbstractDDNucleationFunction <: AbstractNucleationFunction
-
-Abstract supertype for data-driven nucleation functions.
-"""
-abstract type AbstractDDNucleationFunction <: AbstractNucleationFunction end
-
-"""
     AbstractGrowthFunction
 
-Abstract supertype for all crystal growth functions.
+Abstract supertype for crystal growth laws. Growth laws occupy the model's
+`growth` slot and return a nonnegative rate; dissolution is a separate root,
+[`AbstractDissolutionFunction`](@ref).
 """
 abstract type AbstractGrowthFunction end
 
 """
-    AbstractFPGrowthFunction <: AbstractGrowthFunction
+    AbstractScalarGrowthFunction <: AbstractGrowthFunction
 
-Abstract supertype for first-principles growth functions.
+Growth laws whose rate is independent of crystal length.
 """
-abstract type AbstractFPGrowthFunction <: AbstractGrowthFunction end
-
-"""
-    AbstractDDGrowthFunction <: AbstractGrowthFunction
-
-Abstract supertype for data-driven growth functions.
-"""
-abstract type AbstractDDGrowthFunction <: AbstractGrowthFunction end
+abstract type AbstractScalarGrowthFunction <: AbstractGrowthFunction end
 
 """
-    AbstractFPScalarGrowthFunction <: AbstractFPGrowthFunction
+    AbstractLengthGrowthFunction <: AbstractGrowthFunction
 
-Abstract supertype for first-principles scalar growth functions.
+Growth laws that return a rate per crystal length.
 """
-abstract type AbstractFPScalarGrowthFunction <: AbstractFPGrowthFunction end
-
-"""
-    AbstractDDScalarGrowthFunction <: AbstractDDGrowthFunction
-
-Abstract supertype for data-driven scalar growth functions.
-"""
-abstract type AbstractDDScalarGrowthFunction <: AbstractDDGrowthFunction end
-
-"""
-    AbstractFPLengthGrowthFunction <: AbstractFPGrowthFunction
-
-Abstract supertype for first-principles length-based growth functions.
-"""
-abstract type AbstractFPLengthGrowthFunction <: AbstractFPGrowthFunction end
+abstract type AbstractLengthGrowthFunction <: AbstractGrowthFunction end
 
 """
     AbstractDissolutionFunction
 
-Abstract supertype for dissolution laws.  Dissolution is represented in a
-separate parameter block from growth, but it remains below
-`AbstractGrowthFunction` for source compatibility with the original
-`growth_dissolution` names and runners.
+Abstract supertype for dissolution laws. Dissolution laws occupy the model's
+`dissolution` slot; the solvers add their (nonpositive) rate to the growth
+rate to obtain the signed net crystal growth rate.
 """
-abstract type AbstractDissolutionFunction <: AbstractGrowthFunction end
-
-"""
-    AbstractFPScalarDissolutionFunction <: AbstractDissolutionFunction
-
-Abstract family for first-principles scalar dissolution laws.  The returned
-dissolution rate is negative below saturation and zero in the equilibrium
-deadband.
-"""
-abstract type AbstractFPScalarDissolutionFunction <: AbstractDissolutionFunction end
+abstract type AbstractDissolutionFunction end
 
 """
-    AbstractFPLengthDissolutionFunction <: AbstractDissolutionFunction
+    AbstractScalarDissolutionFunction <: AbstractDissolutionFunction
 
-Abstract family for first-principles length-dependent dissolution laws.  These
-laws return a dissolution rate for each mesh length and are currently
-supported by the discretised solvers only.
+Dissolution laws whose rate is independent of crystal length. The rate is
+negative below saturation and zero in the equilibrium deadband.
 """
-abstract type AbstractFPLengthDissolutionFunction <: AbstractDissolutionFunction end
-
-# Short aliases make the scalar/length distinction easy to discover while the
-# FP-prefixed names remain consistent with the existing growth hierarchy.
-const AbstractScalarDissolutionFunction = AbstractFPScalarDissolutionFunction
-const AbstractLengthDissolutionFunction = AbstractFPLengthDissolutionFunction
+abstract type AbstractScalarDissolutionFunction <: AbstractDissolutionFunction end
 
 """
-    nodissolution <: AbstractFPScalarDissolutionFunction
+    AbstractLengthDissolutionFunction <: AbstractDissolutionFunction
 
-Zero-rate dissolution model.  It deliberately has no parameters, so adding
-the independent dissolution block does not change the length of legacy
-parameter vectors or the behaviour of existing simulations.
+Dissolution laws that return a rate per crystal length. They are supported by
+the discretised solvers only.
 """
-Base.@kwdef @concrete struct nodissolution <: AbstractFPScalarDissolutionFunction
-    nparams::Int64 = 0
-    string::String = "No Dissolution"
-    symbols::Vector{Symbol} = Symbol[]
-end
-
-paramaxis(::nodissolution) = ComponentArrays.Axis()
-
-const nondissolution = nodissolution
+abstract type AbstractLengthDissolutionFunction <: AbstractDissolutionFunction end
 
 """
     AbstractAggregationFunction
@@ -126,627 +68,372 @@ Abstract supertype for all crystal breakage functions.
 """
 abstract type AbstractBreakageFunction end
 
-"""
-    nucl_CNT <: AbstractFPNucleationFunction
+# Token for the inner constructor of `@kinetic_law` structs; it keeps the
+# keyword constructor below the only zero-argument method of a field-free law.
+struct _KineticLawConstruction end
 
-Classical Nucleation Theory (CNT) nucleation function.
-
-Fields:
-- `nparams::Int64`: Number of parameters (2)
-- `string::String`: String identifier ("CNT")
-- `symbols::Vector{Symbol}`: Parameter symbols [:ln_nucleation_prefactor, :surface_energy]
-"""
-Base.@kwdef @concrete struct nucl_CNT <: AbstractFPNucleationFunction
-    nparams::Int64 = 2
-    string::String = "CNT"
-    symbols::Vector{Symbol} = [:ln_nucleation_prefactor, :surface_energy]
+# Defines a kinetic law with one keyword constructor. Struct fields are
+# configuration with defaults; any other keywords are kinetic parameter values
+# and return a bound `KineticModel`, whose constructor reports missing and
+# unknown names. `CNTNucleation()` is the unbound law, while
+# `CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4)` binds it.
+macro kinetic_law(law_definition)
+    law_definition isa Expr && law_definition.head === :struct ||
+        throw(ArgumentError("@kinetic_law expects a struct definition."))
+    law_name = law_definition.args[2].args[1]
+    typed_fields = Any[]
+    field_names = Symbol[]
+    field_defaults = Any[]
+    for field_line in law_definition.args[3].args
+        field_line isa LineNumberNode && continue
+        field_line isa Expr && field_line.head === :(=) ||
+            throw(ArgumentError("@kinetic_law configuration fields need defaults."))
+        push!(typed_fields, field_line.args[1])
+        push!(field_names, field_line.args[1].args[1])
+        push!(field_defaults, field_line.args[2])
+    end
+    inner_constructor = :($law_name(::_KineticLawConstruction, $(field_names...)) = new($(field_names...)))
+    plain_definition = Expr(:struct, law_definition.args[1], law_definition.args[2],
+        Expr(:block, typed_fields..., inner_constructor))
+    field_values = map(field_names, field_defaults) do field_name, default_value
+        :(get(law_keywords, $(QuoteNode(field_name)), $default_value))
+    end
+    return esc(quote
+        Base.@__doc__ $plain_definition
+        function $law_name(; law_keywords...)
+            kinetic_law = $law_name(_KineticLawConstruction(), $(field_values...))
+            parameter_values = Base.structdiff(values(law_keywords), NamedTuple{$(Tuple(field_names))})
+            return isempty(parameter_values) ? kinetic_law : KineticModel(kinetic_law; parameters = parameter_values)
+        end
+    end)
 end
 
-paramaxis(::nucl_CNT) = ComponentArrays.Axis(ln_nucleation_prefactor = 1, surface_energy = 2)
+"""
+    _parameter_count(kinetic_law) -> Int
+
+Number of kinetic parameters declared by `paramaxis(kinetic_law)`; zero for an
+empty axis. `paramaxis` is the single source of truth for a law's parameters.
+"""
+_parameter_count(kinetic_law) = ComponentArrays.last_index(paramaxis(kinetic_law))
 
 """
-    nucl_empirical <: AbstractFPNucleationFunction
+    NoNucleation <: AbstractNucleationFunction
 
-Empirical nucleation rate function.
-
-Fields:
-- `nparams::Int64`: Number of parameters (2)
-- `string::String`: String identifier ("Emp. Nu")
-- `symbols::Vector{Symbol}`: Parameter symbols [:log10_nucleation_prefactor, :nucleation_order]
+Zero-rate nucleation law without parameters, for growth-only models.
 """
-Base.@kwdef @concrete struct nucl_empirical <: AbstractFPNucleationFunction
-    nparams::Int64 = 2
-    string::String = "Emp. Nu"
-    symbols::Vector{Symbol} = [:log10_nucleation_prefactor, :nucleation_order]
-end
+@kinetic_law struct NoNucleation <: AbstractNucleationFunction end
 
-paramaxis(::nucl_empirical) = ComponentArrays.Axis(log10_nucleation_prefactor = 1, nucleation_order = 2)
+paramaxis(::NoNucleation) = ComponentArrays.Axis()
 
 """
-    nucl_empirical_energy <: AbstractFPNucleationFunction
+    NoDissolution <: AbstractScalarDissolutionFunction
 
-Empirical nucleation rate function.
-
-Fields:
-- `nparams::Int64`: Number of parameters (3)
-- `string::String`: String identifier ("Emp. Nu")
-- `symbols::Vector{Symbol}`: Parameter symbols [:ln_nucleation_prefactor, :activation_energy, :nucleation_order]
+Zero-rate dissolution law without parameters.
 """
-Base.@kwdef @concrete struct nucl_empirical_energy <: AbstractFPNucleationFunction
-    nparams::Int64 = 3
-    string::String = "Emp. Nu"
-    symbols::Vector{Symbol} = [:ln_nucleation_prefactor, :activation_energy, :nucleation_order]
-end
+@kinetic_law struct NoDissolution <: AbstractScalarDissolutionFunction end
 
-paramaxis(::nucl_empirical_energy) = ComponentArrays.Axis(ln_nucleation_prefactor = 1,
+paramaxis(::NoDissolution) = ComponentArrays.Axis()
+
+"""
+    CNTNucleation <: AbstractNucleationFunction
+
+Classical Nucleation Theory (CNT) nucleation law.
+Parameters: `ln_nucleation_prefactor`, `surface_energy` (J/m²).
+"""
+@kinetic_law struct CNTNucleation <: AbstractNucleationFunction end
+
+paramaxis(::CNTNucleation) = ComponentArrays.Axis(ln_nucleation_prefactor = 1, surface_energy = 2)
+
+"""
+    EmpiricalNucleation <: AbstractNucleationFunction
+
+Empirical power-law nucleation.
+Parameters: `log10_nucleation_prefactor`, `nucleation_order`.
+"""
+@kinetic_law struct EmpiricalNucleation <: AbstractNucleationFunction end
+
+paramaxis(::EmpiricalNucleation) = ComponentArrays.Axis(log10_nucleation_prefactor = 1, nucleation_order = 2)
+
+"""
+    ArrheniusNucleation <: AbstractNucleationFunction
+
+Empirical power-law nucleation with an Arrhenius temperature dependence.
+Parameters: `ln_nucleation_prefactor`, `activation_energy` (J/mol),
+`nucleation_order`.
+"""
+@kinetic_law struct ArrheniusNucleation <: AbstractNucleationFunction end
+
+paramaxis(::ArrheniusNucleation) = ComponentArrays.Axis(ln_nucleation_prefactor = 1,
                                                           activation_energy = 2,
                                                           nucleation_order = 3)
 
 """
-    nucl_CNTnoS <: AbstractFPNucleationFunction
+    CNTNucleationNoSupersaturation <: AbstractNucleationFunction
 
-Classical Nucleation Theory without supersaturation dependency.
-
-Fields:
-- `nparams::Int64`: Number of parameters (2)
-- `string::String`: String identifier ("CNT no S")
-- `symbols::Vector{Symbol}`: Parameter symbols [:ln_nucleation_prefactor, :surface_energy]
+Classical Nucleation Theory without the supersaturation prefactor.
+Parameters: `ln_nucleation_prefactor`, `surface_energy` (J/m²).
 """
-Base.@kwdef @concrete struct nucl_CNTnoS <: AbstractFPNucleationFunction
-    nparams::Int64 = 2
-    string::String = "CNT no S"
-    symbols::Vector{Symbol} = [:ln_nucleation_prefactor, :surface_energy]
+@kinetic_law struct CNTNucleationNoSupersaturation <: AbstractNucleationFunction end
+
+paramaxis(::CNTNucleationNoSupersaturation) = paramaxis(CNTNucleation())
+
+"""
+    SecondaryNucleation <: AbstractNucleationFunction
+
+Secondary nucleation proportional to the crystal third moment.
+Parameters: `ln_nucleation_prefactor`, `activation_energy` (J/mol),
+`nucleation_order`.
+"""
+@kinetic_law struct SecondaryNucleation <: AbstractNucleationFunction end
+
+paramaxis(::SecondaryNucleation) = paramaxis(ArrheniusNucleation())
+
+"""
+    CombinedNucleation(primary, secondary) <: AbstractNucleationFunction
+
+Sum of two nucleation laws. Its parameters nest each component's axis under
+`primary` and `secondary`. Passing two bound `KineticModel`s returns the bound
+combined model, e.g.
+`CombinedNucleation(CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4),
+SecondaryNucleation(ln_nucleation_prefactor = 20.0, activation_energy = 0.0, nucleation_order = 2.0))`.
+"""
+struct CombinedNucleation{Primary <: AbstractNucleationFunction,
+                          Secondary <: AbstractNucleationFunction} <: AbstractNucleationFunction
+    primary::Primary
+    secondary::Secondary
 end
 
-paramaxis(::nucl_CNTnoS) = paramaxis(nucl_CNT())
-
-"""
-    nucl_secondary <: AbstractFPNucleationFunction
-
-Secondary nucleation rate function.
-
-Fields:
-- `nparams::Int64`: Number of parameters (3)
-- `string::String`: String identifier ("Sec. Nu")
-- `symbols::Vector{Symbol}`: Parameter symbols [:ln_nucleation_prefactor, :activation_energy, :nucleation_order]
-"""
-Base.@kwdef @concrete struct nucl_secondary <: AbstractFPNucleationFunction
-    nparams::Int64 = 3
-    string::String = "Sec. Nu"
-    symbols::Vector{Symbol} = [:ln_nucleation_prefactor, :activation_energy, :nucleation_order]
-end
-
-paramaxis(::nucl_secondary) = paramaxis(nucl_empirical_energy())
-
-"""
-    nucl_prim_plus_second <: AbstractFPNucleationFunction
-
-Primary plus secondary nucleation rate function.
-
-Fields:
-- `nparams::Int64`: Number of parameters (6)
-- `string::String`: String identifier ("Prim. + Sec. Nu")
-- `symbols::Vector{Symbol}`: Flattened primary/secondary parameter symbols
-"""
-Base.@kwdef @concrete struct nucl_prim_plus_second <: AbstractFPNucleationFunction
-    nparams::Int64 = 6
-    string::String = "Prim. + Sec. Nu"
-    symbols::Vector{Symbol} = [:ln_nucleation_prefactor_primary,
-                               :activation_energy_primary,
-                               :nucleation_order_primary,
-                               :ln_nucleation_prefactor_secondary,
-                               :activation_energy_secondary,
-                               :nucleation_order_secondary]
-end
-
-paramaxis(::nucl_prim_plus_second) = ComponentArrays.Axis(prim = ViewAxis(1:3,
-                                                          paramaxis(nucl_empirical_energy())),
-                                          sec = ViewAxis(4:6, paramaxis(nucl_secondary())))
-
-"""
-    nucl_CNT_plus_second <: AbstractFPNucleationFunction
-
-Classical nucleation plus secondary nucleation.
-
-Fields:
-- `nparams::Int64`: Number of parameters (5)
-- `string::String`: String identifier ("CNT + Sec. Nu")
-- `symbols::Vector{Symbol}`: Flattened CNT/secondary parameter symbols
-"""
-Base.@kwdef @concrete struct nucl_CNT_plus_second <: AbstractFPNucleationFunction
-    nparams::Int64 = 5
-    string::String = "CNT + Sec. Nu"
-    symbols::Vector{Symbol} = [:ln_nucleation_prefactor_cnt, :surface_energy,
-                               :ln_nucleation_prefactor_secondary,
-                               :activation_energy_secondary,
-                               :nucleation_order_secondary]
-end
-
-paramaxis(::nucl_CNT_plus_second) = ComponentArrays.Axis(cnt = ViewAxis(1:2, paramaxis(nucl_CNT())),
-                                         sec = ViewAxis(3:5, paramaxis(nucl_secondary())))
-
-"""
-    nucl_CNT_fixed <: AbstractFPNucleationFunction
-
-Classical Nucleation Theory (CNT) nucleation function with fixed (pre-set) parameters.
-
-Fields:
-- `nparams::Int64`: Number of free parameters (0, since parameters are fixed)
-- `string::String`: String identifier ("CNT fixed")
-- `ln_nucleation_prefactor::Float64`: Natural-log nucleation prefactor
-- `surface_energy::Float64`: Interfacial energy (J/m²)
-"""
-Base.@kwdef @concrete struct nucl_CNT_fixed <: AbstractFPNucleationFunction
-    nparams::Int64 = 0
-    string::String = "CNT fixed"
-    ln_nucleation_prefactor::Float64
-    surface_energy::Float64
-end
-
-paramaxis(::nucl_CNT_fixed) = ComponentArrays.Axis()
-
-"""
-    _fixkinetics(NuF::nucl_CNT, params::AbstractArray{<:Real}) -> nucl_CNT_fixed
-
-Convert a `nucl_CNT` model to a `nucl_CNT_fixed` model with embedded parameters.
-
-# Arguments
-- `NuF::nucl_CNT`: The nucleation function to fix
-- `params::AbstractArray{<:Real}`: Parameter array [ln_nucleation_prefactor, surface_energy]
-
-# Returns
-- `nucl_CNT_fixed`: Fixed nucleation function with embedded parameters
-"""
-function _fixkinetics(NuF::nucl_CNT, params::AbstractArray{<:Real})
-    nucl_CNT_fixed(ln_nucleation_prefactor = params[1], surface_energy = params[2])
+function paramaxis(combined_law::CombinedNucleation)
+    primary_count = _parameter_count(combined_law.primary)
+    secondary_count = _parameter_count(combined_law.secondary)
+    return ComponentArrays.Axis(
+        primary = ViewAxis(1:primary_count, paramaxis(combined_law.primary)),
+        secondary = ViewAxis((primary_count + 1):(primary_count + secondary_count),
+            paramaxis(combined_law.secondary)))
 end
 
 """
-    nucl_CNT_fixed(params::AbstractArray{<:Real}) -> nucl_CNT_fixed
+    EmpiricalGrowth <: AbstractScalarGrowthFunction
 
-Construct a `nucl_CNT_fixed` from a parameter array.
-
-# Arguments
-- `params::AbstractArray{<:Real}`: Parameter array [ln_nucleation_prefactor, surface_energy]
-
-# Returns
-- `nucl_CNT_fixed`: Fixed nucleation function with embedded parameters
+Empirical power-law growth.
+Parameters: `growth_coefficient` (m/s), `growth_order`.
 """
-function nucl_CNT_fixed(params::AbstractArray{<:Real})
-    nucl_CNT_fixed(ln_nucleation_prefactor = params[1], surface_energy = params[2])
-end
-"""
-    nucl_empirical_fixed <: AbstractFPNucleationFunction
+@kinetic_law struct EmpiricalGrowth <: AbstractScalarGrowthFunction end
 
-Empirical nucleation function with fixed (pre-set) parameters.
-
-Fields:
-- `nparams::Int64`: Number of free parameters (0, since parameters are fixed)
-- `string::String`: String identifier ("Emp. Nu Fixed")
-- `log10_nucleation_prefactor::Float64`: Base-10 logarithm of the nucleation prefactor
-- `nucleation_order::Float64`: Supersaturation exponent
-"""
-Base.@kwdef @concrete struct nucl_empirical_fixed <: AbstractFPNucleationFunction
-    nparams::Int64 = 0
-    string::String = "Emp. Nu Fixed"
-    log10_nucleation_prefactor::Float64
-    nucleation_order::Float64
-end
-
-paramaxis(::nucl_empirical_fixed) = ComponentArrays.Axis()
+paramaxis(::EmpiricalGrowth) = ComponentArrays.Axis(growth_coefficient = 1, growth_order = 2)
 
 """
-    _fixkinetics(NuF::nucl_empirical, params::AbstractArray{<:Real}) -> nucl_empirical_fixed
+    EmpiricalLengthGrowth <: AbstractLengthGrowthFunction
 
-Convert a `nucl_empirical` model to a `nucl_empirical_fixed` model with embedded parameters.
-
-# Arguments
-- `NuF::nucl_empirical`: The nucleation function to fix
-- `params::AbstractArray{<:Real}`: Parameter array [log10_nucleation_prefactor, nucleation_order]
-
-# Returns
-- `nucl_empirical_fixed`: Fixed nucleation function with embedded parameters
+Empirical growth multiplied by the length factor
+`(1 + size_dependence_coefficient * L / Lref)^size_dependence_exponent`.
+Parameters: `growth_coefficient`, `growth_order`, `size_dependence_coefficient`,
+`size_dependence_exponent`. Configuration: `Lref` (m, default 1 µm).
 """
-function _fixkinetics(NuF::nucl_empirical, params::AbstractArray{<:Real})
-    nucl_empirical_fixed(log10_nucleation_prefactor = params[1], nucleation_order = params[2])
-end
-
-"""
-    nucl_empirical_fixed(params::AbstractArray{<:Real}) -> nucl_empirical_fixed
-
-Construct a `nucl_empirical_fixed` from a parameter array.
-
-# Arguments
-- `params::AbstractArray{<:Real}`: Parameter array [log10_nucleation_prefactor, nucleation_order]
-
-# Returns
-- `nucl_empirical_fixed`: Fixed nucleation function with embedded parameters
-"""
-function nucl_empirical_fixed(params::AbstractArray{<:Real})
-    nucl_empirical_fixed(log10_nucleation_prefactor = params[1], nucleation_order = params[2])
-end
-
-
-"""
-    growth_empirical <: AbstractFPScalarGrowthFunction
-
-Empirical crystal growth rate function.
-
-Fields:
-- `nparams::Int64`: Number of parameters (2)
-- `string::String`: String identifier ("Emp. Gr")
-- `symbols::Vector{Symbol}`: Parameter symbols [:growth_coefficient, :growth_order]
-"""
-Base.@kwdef @concrete struct growth_empirical <: AbstractFPScalarGrowthFunction
-    nparams::Int64 = 2
-    string::String = "Emp. Gr"
-    symbols::Vector{Symbol} = [:growth_coefficient, :growth_order]
-end
-
-paramaxis(::growth_empirical) = ComponentArrays.Axis(growth_coefficient = 1, growth_order = 2)
-
-"""
-    growth_empirical_length <: AbstractFPLengthGrowthFunction
-
-Empirical length-dependent crystal growth rate function.
-
-The scalar empirical supersaturation law is multiplied by a dimensionless
-length factor. `Lref` is a fixed reference length, not a fitted parameter.
-
-Fields:
-- `nparams::Int64`: Number of parameters (4)
-- `string::String`: String identifier ("Emp. Gr Length")
-- `symbols::Vector{Symbol}`: Parameter symbols
-- `Lref::Float64`: Reference length in metres (default: 1 µm)
-"""
-Base.@kwdef @concrete struct growth_empirical_length <: AbstractFPLengthGrowthFunction
-    nparams::Int64 = 4
-    string::String = "Emp. Gr Length"
-    symbols::Vector{Symbol} = [:growth_coefficient, :growth_order,
-                               :size_dependence_coefficient,
-                               :size_dependence_exponent]
+@kinetic_law struct EmpiricalLengthGrowth <: AbstractLengthGrowthFunction
     Lref::Float64 = CRISTOOL_DISSOLUTION_LREF
 end
 
-paramaxis(::growth_empirical_length) = ComponentArrays.Axis(
+paramaxis(::EmpiricalLengthGrowth) = ComponentArrays.Axis(
     growth_coefficient = 1,
     growth_order = 2,
     size_dependence_coefficient = 3,
     size_dependence_exponent = 4)
 
 """
-    growth_energy <: AbstractFPScalarGrowthFunction
+    ArrheniusGrowth <: AbstractScalarGrowthFunction
 
-Empirical crystal growth rate function with activation energy.
-
-Fields:
-- `nparams::Int64`: Number of parameters (2)
-- `string::String`: String identifier ("Emp. Gr")
-- `symbols::Vector{Symbol}`: Parameter symbols [:log10_growth_coefficient, :growth_order]
-- `activation_energy::Float64`: Activation energy (J/mol)
+Power-law growth with an Arrhenius temperature dependence.
+Parameters: `log10_growth_coefficient`, `activation_energy` (J/mol),
+`growth_order`. Fix the activation energy by leaving it out of the fitted
+parameter selection.
 """
-Base.@kwdef @concrete struct growth_energy <: AbstractFPScalarGrowthFunction
-    nparams::Int64 = 2
-    string::String = "GrEnergy"
-    symbols::Vector{Symbol} = [:log10_growth_coefficient, :growth_order]
-    activation_energy::Float64 = 53e3
-end
+@kinetic_law struct ArrheniusGrowth <: AbstractScalarGrowthFunction end
 
-paramaxis(::growth_energy) = ComponentArrays.Axis(log10_growth_coefficient = 1, growth_order = 2)
+paramaxis(::ArrheniusGrowth) = ComponentArrays.Axis(log10_growth_coefficient = 1,
+                                                  activation_energy = 2,
+                                                  growth_order = 3)
 
 """
-    growth_energy_est <: AbstractFPScalarGrowthFunction
+    BCFGrowth <: AbstractScalarGrowthFunction
 
-Empirical crystal growth rate function with activation energy.
-
-Fields:
-- `nparams::Int64`: Number of parameters (2)
-- `string::String`: String identifier ("Emp. Gr")
-- `symbols::Vector{Symbol}`: Parameter symbols [:log10_growth_coefficient, :activation_energy, :growth_order]
+Burton-Cabrera-Frank (BCF) growth.
+Parameters: `growth_coefficient` (m/s), `activation_temperature` (K).
 """
-Base.@kwdef @concrete struct growth_energy_est <: AbstractFPScalarGrowthFunction
-    nparams::Int64 = 3
-    string::String = "GrEnergy_Est"
-    symbols::Vector{Symbol} = [:log10_growth_coefficient, :activation_energy, :growth_order]
-end
+@kinetic_law struct BCFGrowth <: AbstractScalarGrowthFunction end
 
-paramaxis(::growth_energy_est) = ComponentArrays.Axis(log10_growth_coefficient = 1,
-                                                      activation_energy = 2,
-                                                      growth_order = 3)
-
-"""
-    growth_BCF <: AbstractFPScalarGrowthFunction
-
-Burton-Cabrera-Frank (BCF) crystal growth rate function.
-
-Fields:
-- `nparams::Int64`: Number of parameters (2)
-- `string::String`: String identifier ("BCF Gr")
-- `symbols::Vector{Symbol}`: Parameter symbols [:growth_coefficient, :activation_temperature]
-"""
-Base.@kwdef @concrete struct growth_BCF <: AbstractFPScalarGrowthFunction
-    nparams::Int64 = 2
-    string::String = "BCF Gr"
-    symbols::Vector{Symbol} = [:growth_coefficient, :activation_temperature]
-end
-
-paramaxis(::growth_BCF) = ComponentArrays.Axis(growth_coefficient = 1,
+paramaxis(::BCFGrowth) = ComponentArrays.Axis(growth_coefficient = 1,
                                                activation_temperature = 2)
 
 """
-    growth_BpS <: AbstractFPScalarGrowthFunction
+    BirthSpreadGrowth <: AbstractScalarGrowthFunction
 
-Birth and Spread (B+S) crystal growth rate function.
-
-Fields:
-- `nparams::Int64`: Number of parameters (2)
-- `string::String`: String identifier ("BpS Gr")
-- `symbols::Vector{Symbol}`: Parameter symbols [:growth_coefficient, :energy_barrier_temperature_squared]
+Birth-and-spread growth.
+Parameters: `growth_coefficient` (m/s), `energy_barrier_temperature_squared` (K²).
 """
-Base.@kwdef @concrete struct growth_BpS <: AbstractFPScalarGrowthFunction
-    nparams::Int64 = 2
-    string::String = "BpS Gr"
-    symbols::Vector{Symbol} = [:growth_coefficient, :energy_barrier_temperature_squared]
-end
+@kinetic_law struct BirthSpreadGrowth <: AbstractScalarGrowthFunction end
 
-paramaxis(::growth_BpS) = ComponentArrays.Axis(growth_coefficient = 1,
+paramaxis(::BirthSpreadGrowth) = ComponentArrays.Axis(growth_coefficient = 1,
                                                energy_barrier_temperature_squared = 2)
-
-"""
-    growth_empirical_fixed <: AbstractFPScalarGrowthFunction
-
-Empirical growth function with fixed (pre-set) parameters.
-
-Fields:
-- `nparams::Int64`: Number of free parameters (0, since parameters are fixed)
-- `growth_coefficient::Float64`: Growth coefficient (m/s)
-- `growth_order::Float64`: Supersaturation exponent
-- `string::String`: String identifier ("Emp. Gr Fixed")
-"""
-Base.@kwdef @concrete struct growth_empirical_fixed <: AbstractFPScalarGrowthFunction
-    nparams::Int64 = 0
-    growth_coefficient::Float64
-    growth_order::Float64
-    string::String = "Emp. Gr Fixed"
-end
-
-paramaxis(::growth_empirical_fixed) = ComponentArrays.Axis()
-
-"""
-    _fixkinetics(GrF::growth_empirical, params::AbstractArray{<:Real}) -> growth_empirical_fixed
-
-Convert a `growth_empirical` model to a `growth_empirical_fixed` model with embedded parameters.
-
-# Arguments
-- `GrF::growth_empirical`: The growth function to fix
-- `params::AbstractArray{<:Real}`: Parameter array [growth_coefficient, growth_order]
-
-# Returns
-- `growth_empirical_fixed`: Fixed growth function with embedded parameters
-"""
-function _fixkinetics(GrF::growth_empirical, params::AbstractArray{<:Real})
-    growth_empirical_fixed(growth_coefficient = params[1], growth_order = params[2])
-end
-
-"""
-    growth_empirical_fixed(params::AbstractArray{<:Real}) -> growth_empirical_fixed
-
-Construct a `growth_empirical_fixed` from a parameter array.
-
-# Arguments
-- `params::AbstractArray{<:Real}`: Parameter array [growth_coefficient, growth_order]
-
-# Returns
-- `growth_empirical_fixed`: Fixed growth function with embedded parameters
-"""
-function growth_empirical_fixed(params::AbstractArray{<:Real})
-    growth_empirical_fixed(growth_coefficient = params[1], growth_order = params[2])
-end
-
 
 #### Dissolution
 """
-    growth_dissolution <: AbstractFPScalarGrowthFunction
+    ArrheniusDissolution <: AbstractScalarDissolutionFunction
 
-Empirical crystal growth rate function with activation energy.
-
-Fields:
-- `nparams::Int64`: Number of parameters (3)
-- `string::String`: String identifier ("GrDissolution")
-- `symbols::Vector{Symbol}`: Parameter symbols [:dissolution_coefficient, :activation_energy, :dissolution_order]
+Scalar dissolution with an Arrhenius temperature dependence.
+Parameters: `dissolution_coefficient` (m/s), `activation_energy` (J/mol),
+`dissolution_order`.
 """
-Base.@kwdef @concrete struct growth_dissolution <: AbstractFPScalarDissolutionFunction
-    nparams::Int64 = 3
-    string::String = "GrDissolution"
-    symbols::Vector{Symbol} = [:dissolution_coefficient, :activation_energy, :dissolution_order]
-end
+@kinetic_law struct ArrheniusDissolution <: AbstractScalarDissolutionFunction end
 
-paramaxis(::growth_dissolution) = ComponentArrays.Axis(dissolution_coefficient = 1,
+paramaxis(::ArrheniusDissolution) = ComponentArrays.Axis(dissolution_coefficient = 1,
                                                        activation_energy = 2,
                                                        dissolution_order = 3)
-"""
-    growth_dissolution_length <: AbstractFPLengthGrowthFunction
 
-Length-dependent dissolution growth function with activation energy.
-
-Fields:
-- `nparams::Int64`: Number of parameters (5)
-- `string::String`: String identifier ("GrDissolution_length")
-- `symbols::Vector{Symbol}`: Parameter symbols [:dissolution_coefficient, :activation_energy, :dissolution_order, :size_dependence_coefficient, :size_dependence_exponent]
 """
-Base.@kwdef @concrete struct growth_dissolution_length <: AbstractFPLengthDissolutionFunction
-    nparams::Int64 = 5
-    string::String = "GrDissolution_length"
-    symbols::Vector{Symbol} = [:dissolution_coefficient, :activation_energy,
-                               :dissolution_order, :size_dependence_coefficient,
-                               :size_dependence_exponent]
+    ArrheniusLengthDissolution <: AbstractLengthDissolutionFunction
+
+Arrhenius dissolution multiplied by the length factor
+`(1 + size_dependence_coefficient * L / Lref)^size_dependence_exponent`.
+Parameters: `dissolution_coefficient`, `activation_energy`,
+`dissolution_order`, `size_dependence_coefficient`,
+`size_dependence_exponent`. Configuration: `Lref` (m, default 1 µm).
+"""
+@kinetic_law struct ArrheniusLengthDissolution <: AbstractLengthDissolutionFunction
     Lref::Float64 = CRISTOOL_DISSOLUTION_LREF
 end
 
-paramaxis(::growth_dissolution_length) = ComponentArrays.Axis(
+paramaxis(::ArrheniusLengthDissolution) = ComponentArrays.Axis(
     dissolution_coefficient = 1, activation_energy = 2, dissolution_order = 3,
     size_dependence_coefficient = 4, size_dependence_exponent = 5)
 
 """
-    growth_energy_dissolution <: AbstractFPScalarGrowthFunction
+    NoBreakage <: AbstractBreakageFunction
 
-Combined scalar growth and dissolution rate function.
-
-Fields:
-- `nparams::Int64`: Number of parameters (5)
-- `string::String`: String identifier ("GrEnergyDissolution")
-- `symbols::Vector{Symbol}`: Parameter symbols [:log10_growth_coefficient, :growth_order, :dissolution_coefficient, :activation_energy, :dissolution_order]
+Zero-rate breakage law without parameters.
 """
-Base.@kwdef @concrete struct growth_energy_dissolution <: AbstractFPScalarDissolutionFunction
-    nparams::Int64 = 5
-    string::String = "GrEnergyDissolution"
-    symbols::Vector{Symbol} = [:log10_growth_coefficient, :growth_order,
-                               :dissolution_coefficient, :activation_energy,
-                               :dissolution_order]
-end
+@kinetic_law struct NoBreakage <: AbstractBreakageFunction end
 
-paramaxis(::growth_energy_dissolution) = ComponentArrays.Axis(
-    log10_growth_coefficient = 1, growth_order = 2, dissolution_coefficient = 3,
-    activation_energy = 4, dissolution_order = 5)
-
+paramaxis(::NoBreakage) = ComponentArrays.Axis()
 
 """
-    nobreakage <: AbstractBreakageFunction
+    EmpiricalBreakage <: AbstractBreakageFunction
 
-Placeholder for simulations without crystal breakage.
-
-Fields:
-- `nparams::Int64`: Number of parameters (0)
-- `string::String`: String identifier ("No Breakage")
-- `symbols::Vector{Symbol}`: Empty parameter symbols
+Binary breakage with uniform-volume daughters and a power-law frequency.
+Parameters: `breakage_coefficient`, `breakage_size_exponent`.
 """
-Base.@kwdef @concrete struct nobreakage <: AbstractBreakageFunction
-    nparams::Int64 = 0
-    string::String = "No Breakage"
-    symbols::Vector{Symbol} = []
-end
+@kinetic_law struct EmpiricalBreakage <: AbstractBreakageFunction end
 
-paramaxis(::nobreakage) = ComponentArrays.Axis()
-
-"""
-    breakage_empirical <: AbstractBreakageFunction
-
-Empirical crystal breakage function.
-
-Fields:
-- `nparams::Int64`: Number of parameters (2)
-- `string::String`: String identifier ("Emp. Br")
-"""
-Base.@kwdef @concrete struct breakage_empirical <: AbstractBreakageFunction
-    nparams::Int64 = 2
-    string::String = "Emp. Br"
-    symbols::Vector{Symbol} = [:breakage_coefficient, :breakage_size_exponent]
-end
-
-paramaxis(::breakage_empirical) = ComponentArrays.Axis(breakage_coefficient = 1,
+paramaxis(::EmpiricalBreakage) = ComponentArrays.Axis(breakage_coefficient = 1,
                                                        breakage_size_exponent = 2)
 
 """
-    breakage_uniform <: AbstractBreakageFunction
+    UniformBreakage <: AbstractBreakageFunction
 
-Uniform crystal breakage function (daughter fragments uniformly distributed).
-
-Fields:
-- `nparams::Int64`: Number of parameters (2)
-- `string::String`: String identifier ("Uniform. Br")
+Binary breakage with uniform-volume daughters and a log-parameterised
+frequency. Parameters: `ln_breakage_coefficient`, `breakage_size_exponent`.
+Configuration: `reference_length` (m, default 1 µm).
 """
-Base.@kwdef @concrete struct breakage_uniform <: AbstractBreakageFunction
-    nparams::Int64 = 2
-    string::String = "Uniform. Br"
-    symbols::Vector{Symbol} = [:ln_breakage_coefficient, :breakage_size_exponent]
+@kinetic_law struct UniformBreakage <: AbstractBreakageFunction
     reference_length::Float64 = 1e-6
 end
 
-paramaxis(::breakage_uniform) = ComponentArrays.Axis(ln_breakage_coefficient = 1,
+paramaxis(::UniformBreakage) = ComponentArrays.Axis(ln_breakage_coefficient = 1,
                                                      breakage_size_exponent = 2)
 
 """
-    noaggregation <: AbstractAggregationFunction
+    NoAggregation <: AbstractAggregationFunction
 
-Placeholder for simulations without crystal aggregation.
-
-Fields:
-- `nparams::Int64`: Number of parameters (0)
-- `string::String`: String identifier ("No Aggregation")
-- `symbols::Vector{Symbol}`: Empty parameter symbols
+Zero-rate aggregation law without parameters.
 """
-Base.@kwdef @concrete struct noaggregation <: AbstractAggregationFunction
-    nparams::Int64 = 0
-    string::String = "No Aggregation"
-    symbols::Vector{Symbol} = []
-end
+@kinetic_law struct NoAggregation <: AbstractAggregationFunction end
 
-paramaxis(::noaggregation) = ComponentArrays.Axis()
+paramaxis(::NoAggregation) = ComponentArrays.Axis()
 
 """
-    aggr_scalar <: AbstractAggregationFunction
+    ConstantAggregation <: AbstractAggregationFunction
 
-Size-independent (scalar) aggregation kernel.
-
-Fields:
-- `nparams::Int64`: Number of parameters (1)
-- `string::String`: String identifier ("Scalar Aggr")
+Size-independent aggregation kernel. Parameter: `log10_aggregation_coefficient`.
 """
-Base.@kwdef @concrete struct aggr_scalar <: AbstractAggregationFunction
-    nparams::Int64 = 1
-    string::String = "Scalar Aggr"
-    symbols::Vector{Symbol} = [:log10_aggregation_coefficient]
-end
+@kinetic_law struct ConstantAggregation <: AbstractAggregationFunction end
 
-paramaxis(::aggr_scalar) = ComponentArrays.Axis(log10_aggregation_coefficient = 1)
+paramaxis(::ConstantAggregation) = ComponentArrays.Axis(log10_aggregation_coefficient = 1)
 
 """
-    aggr_linear <: AbstractAggregationFunction
+    SizeSumAggregation <: AbstractAggregationFunction
 
-Linear size-dependent aggregation kernel (proportional to sum of sizes).
-
-Fields:
-- `nparams::Int64`: Number of parameters (1)
-- `string::String`: String identifier ("Linear Aggr")
+Aggregation kernel proportional to the sum of sizes.
+Parameter: `log10_aggregation_coefficient`.
 """
-Base.@kwdef @concrete struct aggr_linear <: AbstractAggregationFunction
-    nparams::Int64 = 1
-    string::String = "Linear Aggr"
-    symbols::Vector{Symbol} = [:log10_aggregation_coefficient]
-end
+@kinetic_law struct SizeSumAggregation <: AbstractAggregationFunction end
 
-paramaxis(::aggr_linear) = ComponentArrays.Axis(log10_aggregation_coefficient = 1)
+paramaxis(::SizeSumAggregation) = ComponentArrays.Axis(log10_aggregation_coefficient = 1)
 
 """
-    aggr_linearvol <: AbstractAggregationFunction
+    VolumeSumAggregation <: AbstractAggregationFunction
 
-Linear volume-dependent aggregation kernel (proportional to sum of volumes).
-
-Fields:
-- `nparams::Int64`: Number of parameters (1)
-- `string::String`: String identifier ("Linear Volume Aggr")
+Aggregation kernel proportional to the sum of volumes.
+Parameter: `log10_aggregation_coefficient`.
 """
-Base.@kwdef @concrete struct aggr_linearvol <: AbstractAggregationFunction
-    nparams::Int64 = 1
-    string::String = "Linear Volume Aggr"
-    symbols::Vector{Symbol} = [:log10_aggregation_coefficient]
-end
+@kinetic_law struct VolumeSumAggregation <: AbstractAggregationFunction end
 
-paramaxis(::aggr_linearvol) = ComponentArrays.Axis(log10_aggregation_coefficient = 1)
+paramaxis(::VolumeSumAggregation) = ComponentArrays.Axis(log10_aggregation_coefficient = 1)
 
 """
-    aggr_avg <: AbstractAggregationFunction
+    AverageAggregation <: AbstractAggregationFunction
 
-Average-based aggregation kernel.
-
-Fields:
-- `nparams::Int64`: Number of parameters (1)
-- `string::String`: String identifier ("Average Aggr")
+Aggregation kernel proportional to the mean of sizes.
+Parameter: `log10_aggregation_coefficient`.
 """
-Base.@kwdef @concrete struct aggr_avg <: AbstractAggregationFunction
-    nparams::Int64 = 1
-    string::String = "Average Aggr"
-    symbols::Vector{Symbol} = [:log10_aggregation_coefficient]
-end
+@kinetic_law struct AverageAggregation <: AbstractAggregationFunction end
 
-paramaxis(::aggr_avg) = ComponentArrays.Axis(log10_aggregation_coefficient = 1)
+paramaxis(::AverageAggregation) = ComponentArrays.Axis(log10_aggregation_coefficient = 1)
+
+## Kinetic traits. Each has a `false` default; custom laws opt in by adding a method.
+
+"""
+    _is_length_law(kinetic_law) -> Bool
+
+Whether a growth or dissolution law returns a rate per crystal length rather
+than one scalar rate. Subtypes of the `*Length*` families are length laws.
+"""
+_is_length_law(kinetic_law) = false
+_is_length_law(::AbstractLengthGrowthFunction) = true
+_is_length_law(::AbstractLengthDissolutionFunction) = true
+
+"""
+    _is_null_kinetic(kinetic_law) -> Bool
+
+Whether a law is a zero-rate placeholder (`NoNucleation`, `NoDissolution`,
+`NoAggregation`, `NoBreakage`), letting solvers skip the corresponding source.
+"""
+_is_null_kinetic(kinetic_law) = false
+_is_null_kinetic(::Union{NoNucleation, NoDissolution, NoAggregation, NoBreakage}) = true
+
+"""
+    _has_moment_closure(kinetic_law) -> Bool
+
+Whether an aggregation or breakage law has a validated QMOM/DQMOM moment
+source closure.
+"""
+_has_moment_closure(kinetic_law) = false
+_has_moment_closure(::Union{NoAggregation, ConstantAggregation, SizeSumAggregation, VolumeSumAggregation, AverageAggregation,
+                            NoBreakage, EmpiricalBreakage, UniformBreakage}) = true
+
+"""
+    _is_time_invariant(model_component) -> Bool
+
+Whether a kinetic law, temperature profile or solubility model depends on time
+only through the state, so a steady MSMPR equilibrium is well defined. Opaque
+callables and custom types default to `false`; steady solves then require
+`autonomous = true`.
+"""
+_is_time_invariant(model_component) = false
+_is_time_invariant(::Union{NoNucleation, CNTNucleation, EmpiricalNucleation, ArrheniusNucleation, CNTNucleationNoSupersaturation,
+                           SecondaryNucleation, EmpiricalGrowth, EmpiricalLengthGrowth,
+                           ArrheniusGrowth, BCFGrowth, BirthSpreadGrowth, NoDissolution,
+                           ArrheniusDissolution, ArrheniusLengthDissolution,
+                           NoBreakage, EmpiricalBreakage, UniformBreakage, NoAggregation,
+                           ConstantAggregation, SizeSumAggregation, VolumeSumAggregation, AverageAggregation}) = true
+_is_time_invariant(combined_law::CombinedNucleation) =
+    _is_time_invariant(combined_law.primary) && _is_time_invariant(combined_law.secondary)

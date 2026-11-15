@@ -1,13 +1,13 @@
-"""
+#=
 Tutorial 3: Sensitivity analysis.
 
 Two complementary global sensitivity workflows on the terminal concentration:
   1. Sobol indices (variance-decomposition) via `gsa(...; Sobol2007 estimator)`.
   2. DGSM (derivative-based) via `gsa(...; DGSM())`.
 
-Both wrap the same `runsimulation` forward map. Bounds are 0.5×–1.5× around
+Both wrap the same `runsimulation(parameters, problem)` forward map. Bounds are 0.5×–1.5× around
 a baseline parameter set.
-"""
+=#
 
 using CriSTool
 using GlobalSensitivity, QuasiMonteCarlo, Distributions
@@ -16,20 +16,20 @@ using Random
 function main()
     Random.seed!(0)
 
-    # Baseline kinetics + flat SI parameter vector.
-    nucl, gr   = nucl_CNT(), growth_empirical()
-    agg, br    = noaggregation(), nobreakage()
-    solver     = MoM()
+    # Baseline kinetics configured once; the flat SI parameter vector follows
+    # the composite paramaxis order [ln prefactor, surface energy, kg, g].
     base_p     = [38.0, 0.0007, 1e-9 / 60, 3.0]
+    baseline_model = CrystallisationModel(LysozymeSystem();
+        nucleation = CNTNucleation(ln_nucleation_prefactor = base_p[1], surface_energy = base_p[2]),
+        growth = EmpiricalGrowth(growth_coefficient = base_p[3], growth_order = base_p[4]))
+    problem    = CrystallisationProblem(baseline_model,
+        RunConditions(temperature = 293.15, concentration = 18.0); solver = MoM())
     save_grid  = 0.0:360.0:21600.0    # seconds
-    C0         = 18.0
 
     # Forward map: parameters → terminal concentration. GSA samples pass in
-    # flat parameter vectors; we let runsimulation wrap them internally.
+    # flat parameter vectors, which replace the kinetic blocks of `problem`.
     sim_end = function (p)
-        _, sol = runsimulation(p; nucl=nucl, gr=gr, agg=agg, br=br,
-                                initial_concentration=C0, solver=solver,
-                                save_idx=save_grid)
+        _, sol = runsimulation(p, problem; save_idx = save_grid)
         return sol.concentration[end]
     end
 

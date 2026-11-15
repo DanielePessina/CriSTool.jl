@@ -4,14 +4,18 @@
 
 using CriSTool, Chairmarks, Printf, StatsBase
 
+using OrdinaryDiffEq: SSPRK43, Tsit5, Kvaerno5
+
 chosen_θ = Float64[38.0, 0.00055, 0.7e-9 / 60, 2.3]
-nucl_func = CriSTool.nucl_CNT()
-growth_func = CriSTool.growth_empirical()
+thesis_model = CrystallisationModel(LysozymeSystem();
+    nucleation = CNTNucleation(ln_nucleation_prefactor = chosen_θ[1], surface_energy = chosen_θ[2]),
+    growth = EmpiricalGrowth(growth_coefficient = chosen_θ[3], growth_order = chosen_θ[4]))
+thesis_conditions = RunConditions(temperature = 293.15, concentration = 18.0)
 save_idx = 0:240:24000                 # 0:4:400 minutes, expressed in seconds
-initial_conc = 18.0
 
 meshsizes = [50, 100, 200, 500]
-timesteppings = (:ssprk43, :tsit5, :kvaerno5)
+timesteppings = (SSPRK43(), Tsit5(), Kvaerno5())
+timestepping_label(algorithm) = string(nameof(typeof(algorithm)))
 
 function ode_stat(sol, name::Symbol)
     stats = sol.ode_stats
@@ -23,46 +27,31 @@ rows = Any[]
 for ts in timesteppings
     for ms in meshsizes
         solver = CriSTool.FiniteVol(meshsize = ms, timestepping_algorithm = ts)
-        b = @be problem, sol = CriSTool.runsimulation($chosen_θ, nucl = $nucl_func,
-                                                      gr = $growth_func,
-                                                      initial_concentration = $initial_conc,
-                                                      solver = $solver,
-                                                      save_idx = $save_idx) evals=1 seconds=6
-        _, sol = CriSTool.runsimulation(chosen_θ, nucl = nucl_func, gr = growth_func,
-                                        initial_concentration = initial_conc,
-                                        solver = solver, save_idx = save_idx)
+        problem = CrystallisationProblem(thesis_model, thesis_conditions; solver)
+        b = @be CriSTool.runsimulation($chosen_θ, $problem; save_idx = $save_idx) evals=1 seconds=6
+        _, sol = CriSTool.runsimulation(chosen_θ, problem; save_idx)
         t_ms = StatsBase.median([s.time for s in b.samples]) * 1e3
         a = StatsBase.median([s.allocs for s in b.samples])
-        push!(rows, (solver = "FV", ts = ts, ms = ms, t_ms = t_ms, allocs = a,
+        push!(rows, (solver = "FV", ts = timestepping_label(ts), ms = ms, t_ms = t_ms, allocs = a,
                      nf = ode_stat(sol, :nf), naccept = ode_stat(sol, :naccept)))
 
         solver = CriSTool.WENO(meshsize = ms, timestepping_algorithm = ts)
-        b = @be problem, sol = CriSTool.runsimulation($chosen_θ, nucl = $nucl_func,
-                                                      gr = $growth_func,
-                                                      initial_concentration = $initial_conc,
-                                                      solver = $solver,
-                                                      save_idx = $save_idx) evals=1 seconds=6
-        _, sol = CriSTool.runsimulation(chosen_θ, nucl = nucl_func, gr = growth_func,
-                                        initial_concentration = initial_conc,
-                                        solver = solver, save_idx = save_idx)
+        problem = CrystallisationProblem(thesis_model, thesis_conditions; solver)
+        b = @be CriSTool.runsimulation($chosen_θ, $problem; save_idx = $save_idx) evals=1 seconds=6
+        _, sol = CriSTool.runsimulation(chosen_θ, problem; save_idx)
         t_ms = StatsBase.median([s.time for s in b.samples]) * 1e3
         a = StatsBase.median([s.allocs for s in b.samples])
-        push!(rows, (solver = "WENO", ts = ts, ms = ms, t_ms = t_ms, allocs = a,
+        push!(rows, (solver = "WENO", ts = timestepping_label(ts), ms = ms, t_ms = t_ms, allocs = a,
                      nf = ode_stat(sol, :nf), naccept = ode_stat(sol, :naccept)))
     end
 
     solver = CriSTool.MoM(timestepping_algorithm = ts)
-    b = @be problem, sol = CriSTool.runsimulation($chosen_θ, nucl = $nucl_func,
-                                                  gr = $growth_func,
-                                                  initial_concentration = $initial_conc,
-                                                  solver = $solver,
-                                                  save_idx = $save_idx) evals=1 seconds=6
-    _, sol = CriSTool.runsimulation(chosen_θ, nucl = nucl_func, gr = growth_func,
-                                    initial_concentration = initial_conc,
-                                    solver = solver, save_idx = save_idx)
+    problem = CrystallisationProblem(thesis_model, thesis_conditions; solver)
+    b = @be CriSTool.runsimulation($chosen_θ, $problem; save_idx = $save_idx) evals=1 seconds=6
+    _, sol = CriSTool.runsimulation(chosen_θ, problem; save_idx)
     t_ms = StatsBase.median([s.time for s in b.samples]) * 1e3
     a = StatsBase.median([s.allocs for s in b.samples])
-    push!(rows, (solver = "MoM", ts = ts, ms = 0, t_ms = t_ms, allocs = a,
+    push!(rows, (solver = "MoM", ts = timestepping_label(ts), ms = 0, t_ms = t_ms, allocs = a,
                  nf = ode_stat(sol, :nf), naccept = ode_stat(sol, :naccept)))
 end
 
