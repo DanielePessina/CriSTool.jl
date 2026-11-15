@@ -1,6 +1,6 @@
 """
 Task-local state, the Turing-extension entry point `nuts_model` behind
-`solve(::EstimationProblem, NUTS())`, and chain renaming. Chain trace/density plots (`plot_chain_diagnostics`) live in
+`sample(::EstimationProblem, NUTS(), n)`, and chain renaming. Chain trace/density plots (`plot_chain_diagnostics`) live in
 the Makie extension.
 """
 
@@ -53,7 +53,7 @@ end
 """
     nuts_model(problem::EstimationProblem[, ensemble])
 
-The Turing model behind `solve(problem, NUTS())`: the problem's priors and its
+The Turing model behind `sample(problem, NUTS(), n)`: the problem's priors and its
 loss as the negative log likelihood. An optional second argument selects the
 chain ensemble (`MCMCSerial()` or `MCMCThreads()`). Methods are provided by the
 `CriSToolTuringExt` package extension; load it with `using Turing`.

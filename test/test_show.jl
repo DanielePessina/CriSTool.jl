@@ -179,15 +179,16 @@ end
 
 @testset "Display: fit, inference and prediction results" begin
     hand_fit = FitResult(nothing, (growth = (growth_coefficient = 1.667e-11,), nucleation = (ln_nucleation_prefactor = 38.21,)),
-        (concentration = 0.02, d43 = 0.0121), OptimizationOptimJL.LBFGS(), nothing, nothing)
+        (concentration = 0.02, d43 = 0.0121), 0.0321, [1.667e-11, 38.21], ReturnCode.Success,
+        OptimizationOptimJL.LBFGS(), nothing, nothing)
     @test show_plain(hand_fit) == """
         FitResult — LBFGS, loss = 0.0321
           growth.growth_coefficient            1.667e-11
           nucleation.ln_nucleation_prefactor   38.21"""
     @test sprint(show, hand_fit) == "FitResult(LBFGS, loss = 0.0321, 2 parameters)"
     # A Metaheuristics algorithm is labelled by its method, not its wrapper type.
-    @test occursin("FitResult — DE,", show_plain(FitResult(nothing, (growth = (speed = 0.01,),), (total = 1.0,), DE(),
-        nothing, nothing)))
+    @test occursin("FitResult — DE,", show_plain(FitResult(nothing, (growth = (speed = 0.01,),), (total = 1.0,), 1.0,
+        [0.01], ReturnCode.Success, DE(), nothing, nothing)))
 
     # A fit through Optimization.jl reports convergence from its return code.
     lbfgs_experiment = fixture_experiment((time = [0.0, 300.0, 600.0],
@@ -214,11 +215,14 @@ end
 
     posterior_samples = ParameterSamples(growth = (speed = [0.01, 0.02, 0.03],); source = :nuts)
     @test sprint(show, posterior_samples) == "ParameterSamples(1 parameters, 3 draws, source = :nuts)"
-    hand_inference = InferenceResult(nothing, posterior_samples, ABCDE(), nothing, nothing)
+    hand_inference = InferenceResult(nothing, posterior_samples, ReturnCode.Success, ABCDE(), nothing, nothing)
     @test show_plain(hand_inference) == """
         InferenceResult — ABCDE, 3 draws
           growth.speed   0.02 ± 0.01"""
     @test sprint(show, hand_inference) == "InferenceResult(ABCDE, 1 parameters, 3 draws)"
+    # An ABC run whose generations ran out before the target says so.
+    exhausted_inference = InferenceResult(nothing, posterior_samples, ReturnCode.MaxIters, ABCDE(), nothing, nothing)
+    @test first(split(show_plain(exhausted_inference), '\n')) == "InferenceResult — ABCDE, 3 draws, MaxIters"
 
     prediction_times = [0.0, 100.0]
     hand_ensemble = CriSTool.PredictionEnsemble(prediction_times, (concentration = ones(3, 2), d43 = ones(3, 2)),

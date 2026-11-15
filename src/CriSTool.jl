@@ -26,6 +26,9 @@ using PreallocationTools: DiffCache, get_tmp
 using DataFrames
 using ComponentArrays
 using Distributions
+# `sample` is the StatsBase/AbstractMCMC verb (the same function Turing extends).
+import AbstractMCMC
+using AbstractMCMC: sample
 using QuadGK: quadgk
 using MCMCChains
 import Base.Iterators
@@ -66,7 +69,7 @@ export CrystallisationSolution, AbstractPopulationTrajectory, MeshPopulation,
        MomentPopulation, QuadraturePopulation,
        CrystallisationSteadyStateSolution, SteadyStateConvergenceError, SteadyStateOptions,
        CrystallisationProblem, CrystallisationSteadyStateProblem
-export solve, remake, ReturnCode, successful_retcode
+export solve, remake, sample, ReturnCode, successful_retcode
 export Observable, ObservableColumns, CrystallisationExperiment,
        initial_concentration
 export AbstractCrystallisationOperation, BatchOperation, MSMPROperation, FedBatchOperation,

@@ -287,17 +287,32 @@ loss_terms(estimation_problem::EstimationProblem, selected_values::AbstractVecto
         _expanded_parameters(estimation_problem.selection, selected_values))
 
 """
-A fitted model, named selected values, observable objectives, the optimisation
-algorithm, its native result, and the `EstimationProblem` that was solved.
+    FitResult
+
+The result of `solve(problem::EstimationProblem, optimiser)`, shaped like a
+SciML optimisation solution:
+
+- `u`: the selected parameter values as a flat vector, in selection order;
+- `objective`: the total loss at `u`;
+- `retcode`: a `ReturnCode.T`; check it with `successful_retcode(result)`;
+- `parameters`: the same values, named and nested like the bounds;
+- `objectives`: the named observable objectives whose sum is `objective`;
+- `model`: the model with the fitted values;
+- `alg`, `original` (the optimiser's own result) and `estimation_problem`.
 """
-struct FitResult{Model, Parameters, Objectives, Algorithm, Backend, Problem}
+struct FitResult{Model, Parameters, Objectives, Algorithm, Original, Problem}
     model::Model
     parameters::Parameters
     objectives::Objectives
+    objective::Float64
+    u::Vector{Float64}
+    retcode::ReturnCode.T
     alg::Algorithm
-    backend_result::Backend
+    original::Original
     estimation_problem::Problem
 end
+
+SciMLBase.successful_retcode(fit_result::FitResult) = SciMLBase.successful_retcode(fit_result.retcode)
 
 """Parallel level of a solve: candidates (population, particles or chains) run under `parallel`."""
 struct ParallelCandidates end
@@ -309,12 +324,11 @@ struct ParallelExperiments end
 
 The one level of an estimation that receives `solve(...; parallel)`; the other
 level runs serially, since threading both levels only adds scheduling overhead.
-MCMC samplers choose by chain count through `_chain_parallel_level`.
+MCMC samplers take the chain level as an explicit `MCMCSerial()`/`MCMCThreads()` argument instead.
 """
 _parallel_level(::Metaheuristics.Algorithm) = ParallelCandidates()
 _parallel_level(::AbstractABCSampler) = ParallelCandidates()
 _parallel_level(optimiser) = ParallelExperiments()
-_chain_parallel_level(chain_count::Integer) = chain_count > 1 ? ParallelCandidates() : ParallelExperiments()
 
 _candidate_parallel(::ParallelCandidates, parallel::SciMLBase.BasicEnsembleAlgorithm) = parallel
 _candidate_parallel(::ParallelExperiments, parallel::SciMLBase.BasicEnsembleAlgorithm) = EnsembleSerial()
@@ -385,7 +399,8 @@ function SciMLBase.solve(estimation_problem::EstimationProblem, optimiser; adtyp
     optimization_problem = OptimizationBase.OptimizationProblem(optimization_function,
         starting_values, split_problem; lb = lower_bounds, ub = upper_bounds)
     optimization_solution = OptimizationBase.solve(optimization_problem, optimiser; optimiser_options...)
-    return _model_fit_result(split_problem, optimiser, optimization_solution.u, optimization_solution)
+    return _model_fit_result(split_problem, optimiser, optimization_solution.u, optimization_solution,
+        optimization_solution.retcode)
 end
 
 """
@@ -452,8 +467,11 @@ _population_scores(::Metaheuristics.NSGA2, candidate_scores) =
     (permutedims(reduce(hcat, first.(candidate_scores))),
      zeros(length(candidate_scores), 1), zeros(length(candidate_scores), 1))
 
+# A population search has no convergence test: it succeeds when its best objective is finite.
+_metaheuristics_retcode(objective_value::Real) = isfinite(objective_value) ? ReturnCode.Success : ReturnCode.Failure
 _metaheuristics_fit_results(::Metaheuristics.AbstractParameters, estimation_problem, supplied_algorithm, final_state) =
-    _model_fit_result(estimation_problem, supplied_algorithm, Metaheuristics.minimizer(final_state), final_state)
+    _model_fit_result(estimation_problem, supplied_algorithm, Metaheuristics.minimizer(final_state), final_state,
+        _metaheuristics_retcode(Metaheuristics.minimum(final_state)))
 function _metaheuristics_fit_results(::Metaheuristics.NSGA2, estimation_problem, supplied_algorithm, final_state)
     pareto_solutions = Metaheuristics.get_non_dominated_solutions(final_state.population)
     pareto_values = Metaheuristics.positions(pareto_solutions)
@@ -461,18 +479,21 @@ function _metaheuristics_fit_results(::Metaheuristics.NSGA2, estimation_problem,
     pareto_objectives = Metaheuristics.fvals(pareto_solutions)
     objective_names = Tuple(estimation_problem.setup.observable_names)
     return [_model_fit_result(estimation_problem, supplied_algorithm, collect(candidate_values),
-                NamedTuple{objective_names}(Tuple(candidate_objectives)), final_state)
+                NamedTuple{objective_names}(Tuple(candidate_objectives)), final_state,
+                _metaheuristics_retcode(sum(candidate_objectives)))
             for (candidate_values, candidate_objectives) in zip(eachrow(pareto_values), eachrow(pareto_objectives))]
 end
 
-_model_fit_result(estimation_problem, fit_algorithm, optimal_values, backend_result) =
+_model_fit_result(estimation_problem, fit_algorithm, optimal_values, original_result, fit_retcode::ReturnCode.T) =
     _model_fit_result(estimation_problem, fit_algorithm, optimal_values,
-        loss_terms(estimation_problem, optimal_values), backend_result)
+        loss_terms(estimation_problem, optimal_values), original_result, fit_retcode)
 
-function _model_fit_result(estimation_problem, fit_algorithm, optimal_values, objective_terms, backend_result)
+function _model_fit_result(estimation_problem, fit_algorithm, optimal_values, objective_terms, original_result,
+        fit_retcode::ReturnCode.T)
     fitted_model = _selected_model(estimation_problem.model, estimation_problem.selection, optimal_values)
     return FitResult(fitted_model, _selected_named_values(estimation_problem.selection, optimal_values),
-        objective_terms, fit_algorithm, backend_result, estimation_problem)
+        objective_terms, Float64(sum(values(objective_terms))), collect(Float64, optimal_values), fit_retcode,
+        fit_algorithm, original_result, estimation_problem)
 end
 
 """Joint parameter draws: selected named paths in rows, common sample IDs in columns."""
@@ -504,16 +525,24 @@ function ParameterSamples(; source = :user, kwargs...)
 end
 
 """
-Posterior draws, the sampling algorithm, its native chain or sampler result, and
-the `EstimationProblem` that was solved.
+    InferenceResult
+
+The result of `sample(problem::EstimationProblem, sampler, n)`: the model,
+named posterior draws `samples` (a `ParameterSamples`), a `retcode` (check it
+with `successful_retcode(result)`), the sampler `alg`, its own result
+`original` (an MCMC chain or the ABC particles), and the `EstimationProblem`.
 """
-struct InferenceResult{Model, Samples, Algorithm, Backend, Problem}
+struct InferenceResult{Model, Samples, Algorithm, Original, Problem}
     model::Model
     samples::Samples
+    retcode::ReturnCode.T
     alg::Algorithm
-    backend_result::Backend
+    original::Original
     estimation_problem::Problem
 end
+
+SciMLBase.successful_retcode(inference_result::InferenceResult) =
+    SciMLBase.successful_retcode(inference_result.retcode)
 
 """Check what MCMC sampling needs: priors, a likelihood loss and positive counts."""
 function _validate_posterior_sampling(estimation_problem::EstimationProblem, sample_count::Integer,
@@ -531,22 +560,30 @@ function _chain_inference_result(estimation_problem::EstimationProblem, sampler,
     renamed_chain = rename_chain(posterior_chain, selected_symbols)
     posterior_draws = ParameterSamples(estimation_problem.selection.names,
         chains_to_matrix(renamed_chain; params = selected_symbols); source = :nuts)
-    return InferenceResult(estimation_problem.model, posterior_draws, sampler, renamed_chain, estimation_problem)
+    return InferenceResult(estimation_problem.model, posterior_draws, ReturnCode.Success, sampler, renamed_chain,
+        estimation_problem)
 end
 
 """
-    solve(problem::EstimationProblem, sampler::AbstractABCSampler; target, n_particles=1024,
-          n_generations=128, stopping=AllGenerations(), parallel=EnsembleSerial()) -> InferenceResult
+    sample([rng], problem::EstimationProblem, sampler::AbstractABCSampler, n_particles; target,
+           n_generations=128, stopping=AllGenerations(), parallel=EnsembleSerial()) -> InferenceResult
 
 Sample the priors by approximate Bayesian computation (`ABCDE()` or
-`ABCDETurner()`), accepting particles whose loss is within the explicit finite
-discrepancy threshold `target`. `parallel = EnsembleThreads()` evaluates
-particles on threads, each on a private copy of the solve templates; the
-experiments of one discrepancy run serially.
+`ABCDETurner()`) with `n_particles` particles, accepting particles whose loss
+is within the explicit finite discrepancy threshold `target`. `rng` makes the
+draws reproducible. The `retcode` is `ReturnCode.Success` when every particle
+reaches `target`, and `ReturnCode.MaxIters` when the generations run out
+first. `parallel = EnsembleThreads()` evaluates particles on threads, each on a
+private copy of the solve templates; the experiments of one discrepancy run
+serially.
 """
-function SciMLBase.solve(estimation_problem::EstimationProblem, abc_sampler::AbstractABCSampler;
-        target::Real, n_particles::Integer = 1024, n_generations::Integer = 128, stopping::AbstractABCStopping = AllGenerations(),
-        parallel::SciMLBase.BasicEnsembleAlgorithm = EnsembleSerial())
+AbstractMCMC.sample(estimation_problem::EstimationProblem, abc_sampler::AbstractABCSampler,
+        n_particles::Integer; abc_options...) =
+    AbstractMCMC.sample(Random.default_rng(), estimation_problem, abc_sampler, n_particles; abc_options...)
+
+function AbstractMCMC.sample(rng::Random.AbstractRNG, estimation_problem::EstimationProblem,
+        abc_sampler::AbstractABCSampler, n_particles::Integer; target::Real, n_generations::Integer = 128,
+        stopping::AbstractABCStopping = AllGenerations(), parallel::SciMLBase.BasicEnsembleAlgorithm = EnsembleSerial())
     isfinite(target) || throw(ArgumentError("ABC target must be explicit and finite."))
     n_particles > 0 && n_generations > 0 || throw(ArgumentError("Particle and generation counts must be positive."))
     joint_prior = product_distribution(_prior_distributions(estimation_problem.priors))
@@ -554,11 +591,26 @@ function SciMLBase.solve(estimation_problem::EstimationProblem, abc_sampler::Abs
     reference_values = _selected_baseline(split_problem.selection)
     abc_result = _runsampler(abc_sampler, joint_prior, _particle_discrepancy(split_problem, particle_parallel),
         target, () -> loss(split_problem, reference_values); nparticles = n_particles,
-        generations = n_generations, HPC = _threads_candidates(particle_parallel), stopping)
+        generations = n_generations, HPC = _threads_candidates(particle_parallel), stopping, rng)
     posterior_draws = ParameterSamples(split_problem.selection.names, _abc_particles_matrix(abc_result.P);
         source = :abc)
-    return InferenceResult(split_problem.model, posterior_draws, abc_sampler, abc_result, split_problem)
+    return InferenceResult(split_problem.model, posterior_draws, _abc_retcode(abc_result), abc_sampler, abc_result,
+        split_problem)
 end
+
+# KissABC reports whether every particle reached the target; a custom sampler without that flag succeeded.
+_abc_retcode(abc_result) = _abc_retcode(get(abc_result, :reached_ϵ, true))
+_abc_retcode(reached_target::Bool) = reached_target ? ReturnCode.Success : ReturnCode.MaxIters
+
+"""
+    solve(problem::EstimationProblem, sampler)
+
+Samplers are not solved: draw from a posterior with
+`sample(problem, sampler, n)`. `solve` takes optimisers.
+"""
+SciMLBase.solve(::EstimationProblem, sampler::Union{AbstractABCSampler, AbstractMCMC.AbstractSampler};
+        unused_options...) = throw(ArgumentError(
+    "$(nameof(typeof(sampler))) is a sampler: draw with sample(problem, sampler, n). solve takes optimisers."))
 
 # Threaded ABC evaluates particles concurrently; each borrows a private copy so mesh
 # solvers never share their in-place caches across threads.

@@ -1,9 +1,9 @@
 """
 Approximate Bayesian computation samplers, the algorithms of
-`solve(::EstimationProblem, ::AbstractABCSampler)`. To add a sampler, define a
+`sample(::EstimationProblem, ::AbstractABCSampler, n_particles)`. To add a sampler, define a
 new `<:AbstractABCSampler` struct and a `_runsampler` method returning the
 result; `result.P` must hold the particles: KissABC `Particles`, or a
-parameters × samples matrix. The runner receives
+parameters × samples matrix. The runner also receives the caller's `rng`. The runner receives
 `reference_loss`, a zero-argument function evaluating the loss at the model's current
 values, so samplers that do not need it never pay for the solve.
 """
@@ -21,7 +21,7 @@ _abc_particles_matrix(particles::AbstractVector{<:MonteCarloMeasurements.Abstrac
     AbstractABCSampler
 
 Abstract supertype of the approximate Bayesian computation algorithms that
-`solve(::EstimationProblem, sampler; target, ...)` accepts. Implementations hold
+`sample(::EstimationProblem, sampler, n_particles; target, ...)` accepts. Implementations hold
 the algorithm-specific parameters and dispatch through the internal sampler runner.
 """
 abstract type AbstractABCSampler end
@@ -80,14 +80,14 @@ _stops_at_target(::StopAtTarget) = true
 
 # Sampler-specific call into KissABC. Returns the sampler result.
 function _runsampler(s::ABCDE, prior, lossfn, target, reference_loss;
-                     nparticles, generations, HPC, stopping)
+                     nparticles, generations, HPC, stopping, rng)
     return KissABC.ABCDE(prior, lossfn, target;
                  nparticles = nparticles, generations = generations,
-                 α = s.α, HPC = HPC, earlystop = _stops_at_target(stopping))
+                 α = s.α, HPC = HPC, earlystop = _stops_at_target(stopping), rng)
 end
 
 function _runsampler(s::ABCDETurner, prior, lossfn, target, reference_loss;
-                     nparticles, generations, HPC, stopping)
+                     nparticles, generations, HPC, stopping, rng)
     optimallossfunction = reference_loss()
     δ_derived = max(target - optimallossfunction, eps())
     return KissABC.ABCDE_Turner(prior, lossfn, target;
@@ -95,5 +95,5 @@ function _runsampler(s::ABCDETurner, prior, lossfn, target, reference_loss;
                        K = s.K, p_migration = s.p_migration, p_crossover = s.p_crossover,
                        κ = s.κ, γ2_burnin = s.γ2_burnin, kernel = s.kernel,
                        δ = δ_derived, best_cost = optimallossfunction,
-                       burnin_frac = s.burnin_frac, earlystop = _stops_at_target(stopping), HPC = HPC)
+                       burnin_frac = s.burnin_frac, earlystop = _stops_at_target(stopping), HPC = HPC, rng)
 end

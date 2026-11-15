@@ -271,3 +271,13 @@ deprecation shims.
 | `model.growth.parameters.growth_order` | `model.growth.growth_order`; a callable law keeps `model.growth.parameters` |
 | `EmpiricalLengthGrowth(Lref = 2e-6)`, configuration without values | `EmpiricalLengthGrowth(growth_coefficient = ..., ..., Lref = 2e-6)`; configuration fields keep their defaults and stay out of `paramaxis` |
 | a custom law `struct MyGrowth <: AbstractScalarGrowthFunction end` plus `paramaxis(::MyGrowth)` and `KineticModel(MyGrowth(); parameters)` | `Base.@kwdef struct MyGrowth{T <: Real} <: AbstractScalarGrowthFunction` with one field per parameter; the default `paramaxis` names the fields |
+| `solve(problem, NUTS(); n_samples = 500)` | `sample(problem, NUTS(), 500)`, the `Turing.sample` argument order |
+| `solve(problem, NUTS(); n_samples, n_chains = 4, parallel = EnsembleThreads())` | `sample(problem, NUTS(), MCMCThreads(), n_samples, 4)`; `parallel` now only threads the experiments of each chain |
+| `solve(problem, NUTS(); rng = MersenneTwister(1))` | `sample(MersenneTwister(1), problem, NUTS(), n)` |
+| `solve(problem, ABCDE(); target, n_particles = 128)` | `sample(problem, ABCDE(), 128; target)`; an optional first `rng` argument now makes ABC draws reproducible |
+| `solve(problem, sampler)` | an `ArgumentError`: `solve` runs optimisers only |
+| `result.backend_result` | `result.original` |
+| `sum(values(fit.objectives))` | `fit.objective` |
+| selected values as a vector: `last.(…leaves of fit.parameters)` | `fit.u` |
+| no status on fits and posteriors | `fit.retcode`, `posterior.retcode` and `successful_retcode(result)`; an ABC run whose generations end before every particle reaches `target` is `ReturnCode.MaxIters` |
+| `using CriSTool, Metaheuristics` | still works, but `sample` is then ambiguous: write `using Metaheuristics: DE, Options` (or `using CriSTool: sample`) |

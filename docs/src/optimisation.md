@@ -15,6 +15,7 @@ For Optimization.jl, pass for example `OptimizationOptimJL.LBFGS()` as `alg`:
 differentiates the loss and the remaining keywords go to the Optimization.jl
 `solve`. The objective is `loss(problem, selected_vector)` for advanced use.
 
-Keep algorithm search options separate from forward `solve_options`. All native
-backend diagnostics remain available in `backend_result`. See
+Keep algorithm search options separate from forward `solve_options`. The optimiser's own
+result remains available in `result.original`; check `successful_retcode(result)`
+before using `result.u` or `result.objective`. See
 [Parameter estimation](parameter-estimation.md) for the model workflow.

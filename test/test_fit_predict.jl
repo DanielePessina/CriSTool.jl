@@ -101,7 +101,9 @@ Random.rand(sequence_rng::FitPredictSequenceRNG) =
     prior_only_estimation = remake(fitpredict_estimation; bounds = nothing,
         priors = (growth = (speed = Uniform(0.001, 0.03),),))
     @test_throws ArgumentError solve(prior_only_estimation, DE())
-    @test_throws ArgumentError solve(fitpredict_estimation, ABCDE(); target = 1.0)
+    @test_throws ArgumentError sample(fitpredict_estimation, ABCDE(), 8; target = 1.0)
+    # Samplers are drawn from with `sample`; `solve` refuses them instead of treating them as optimisers.
+    @test_throws ArgumentError solve(prior_only_estimation, ABCDE(); target = 1.0)
 end
 
 @testset "Pooled observable objectives (hand-computed MAE and NLL)" begin
@@ -167,6 +169,11 @@ end
     @test lbfgs_fit.model.growth.parameters == (speed = fitted_speed, held_order = 2.0)
     @test fitpredict_model.growth.parameters.speed == fitpredict_true_speed
     @test sum(values(lbfgs_fit.objectives)) ≈ loss(lbfgs_estimation, [fitted_speed]) rtol = 1e-12
+    # SciML-shaped fields: flat u in selection order, the total objective and the optimiser's retcode.
+    @test lbfgs_fit.u == [fitted_speed]
+    @test lbfgs_fit.objective ≈ loss(lbfgs_estimation, lbfgs_fit.u) rtol = 1e-12
+    @test successful_retcode(lbfgs_fit)
+    @test lbfgs_fit.retcode === lbfgs_fit.original.retcode
     # predict(fit) uses the fitted draw, experiments, solver and observation times.
     fitted_prediction = predict(lbfgs_fit)
     @test fitted_prediction.experiments == [31]
@@ -194,8 +201,10 @@ end
         Metaheuristics.boxconstraints([0.001], [0.03]), direct_de)
     de_fit = solve(de_estimation, supplied_de)
     @test de_fit.alg === supplied_de
-    @test Metaheuristics.minimizer(de_fit.backend_result) == Metaheuristics.minimizer(direct_result)
-    @test de_fit.backend_result.f_calls == direct_result.f_calls
+    @test Metaheuristics.minimizer(de_fit.original) == Metaheuristics.minimizer(direct_result)
+    @test de_fit.original.f_calls == direct_result.f_calls
+    @test de_fit.objective ≈ Metaheuristics.minimum(direct_result) rtol = 1e-12
+    @test de_fit.retcode == ReturnCode.Success
     @test [de_fit.parameters.growth.speed] == Metaheuristics.minimizer(direct_result)
     @test sum(values(de_fit.objectives)) ≈ Metaheuristics.minimum(direct_result) rtol = 1e-12
     @test 0.001 <= de_fit.parameters.growth.speed <= 0.03
@@ -228,7 +237,7 @@ end
     # Each candidate's named objectives are the serial loss at its parameters.
     @test all(pareto_result -> sum(values(pareto_result.objectives)) ≈
                                loss(pareto_estimation, [pareto_result.parameters.growth.speed]), pareto_results)
-    @test sort(first.(pareto_objectives)) ≈ sort(Metaheuristics.pareto_front(first(pareto_results).backend_result)[:, 1])
+    @test sort(first.(pareto_objectives)) ≈ sort(Metaheuristics.pareto_front(first(pareto_results).original)[:, 1])
 end
 
 @testset "Bootstrap fits on noise-free data all recover the truth" begin
@@ -272,18 +281,22 @@ end
     @test loss(size_estimation, [0.01]) ≈ 0.5 * sum(log.(2π .* size_variances) .+ size_offsets .^ 2 ./ size_variances) rtol = 1e-6
 end
 
-@testset "Turing extension: solve contract and AIS guard" begin
+@testset "Turing extension: sample contract and AIS guard" begin
     prior_estimation = EstimationProblem(fitpredict_model, [fitpredict_experiment];
         priors = (growth = (speed = Uniform(0.001, 0.03),),))
     @test Base.get_extension(CriSTool, :CriSToolTuringExt) !== nothing
     # `using CriSTool, Turing` must not make `predict` ambiguous: both export StatsAPI.predict.
     @test CriSTool.predict === Turing.predict
     # Posterior sampling needs priors, a likelihood and positive counts; nothing is sampled first.
-    @test_throws ArgumentError solve(remake(prior_estimation; loss = MeanAbsoluteError()), Turing.NUTS())
-    @test_throws ArgumentError solve(remake(prior_estimation; priors = nothing, bounds = fitpredict_bounds),
-        Turing.NUTS())
-    @test_throws ArgumentError solve(prior_estimation, Turing.NUTS(); n_samples = 0)
-    @test_throws ArgumentError solve(prior_estimation, Turing.NUTS(); n_chains = 0)
+    @test_throws ArgumentError sample(remake(prior_estimation; loss = MeanAbsoluteError()), Turing.NUTS(), 5)
+    @test_throws ArgumentError sample(remake(prior_estimation; priors = nothing, bounds = fitpredict_bounds),
+        Turing.NUTS(), 5)
+    @test_throws ArgumentError sample(prior_estimation, Turing.NUTS(), 0)
+    @test_throws ArgumentError sample(prior_estimation, Turing.NUTS(), Turing.MCMCSerial(), 5, 0)
+    # Threading chains and experiments together is refused; samplers are not solved.
+    @test_throws ArgumentError sample(prior_estimation, Turing.NUTS(), Turing.MCMCThreads(), 5, 2;
+        parallel = EnsembleThreads())
+    @test_throws ArgumentError solve(prior_estimation, Turing.NUTS())
     # The vendored AIS step must not dispatch ambiguously into DynamicPPL.
     @test_throws ErrorException Turing.AbstractMCMC.step(Random.default_rng(),
         CriSTool.nuts_model(prior_estimation), CriSTool.KissABC.AIS(25))
@@ -296,13 +309,14 @@ end
     @test Turing.DynamicPPL.logjoint(CriSTool.nuts_model(bayesian_estimation), (θ = [0.015],)) ≈
           logpdf(Uniform(0.001, 0.03), 0.015) - loss(bayesian_estimation, [0.015]) rtol = 1e-10
     nuts_sampler = Turing.NUTS(5, 0.65)
-    tiny_posterior = solve(bayesian_estimation, nuts_sampler; n_samples = 5, n_chains = 2, rng = MersenneTwister(72),
-        parallel = EnsembleThreads(), progress = false)
+    tiny_posterior = sample(MersenneTwister(72), bayesian_estimation, nuts_sampler, Turing.MCMCThreads(), 5, 2;
+        progress = false)
     @test tiny_posterior.alg === nuts_sampler
+    @test successful_retcode(tiny_posterior)
     @test tiny_posterior.samples.names == ["growth.speed"]
     @test size(tiny_posterior.samples.values) == (1, 10)
     @test tiny_posterior.samples.values ==
-          CriSTool.chains_to_matrix(tiny_posterior.backend_result; params = [Symbol("growth.speed")])
+          CriSTool.chains_to_matrix(tiny_posterior.original; params = [Symbol("growth.speed")])
     @test all(0.001 .< tiny_posterior.samples.values .< 0.03)
     # Each posterior draw predicts its own closed-form trajectory.
     posterior_predictions = predict(tiny_posterior; observables = (:concentration,))
@@ -315,26 +329,34 @@ end
     received_target, received_reference_loss = Ref(NaN), Ref(NaN)
     target_sampler = FitPredictTargetSampler(received_target, received_reference_loss)
     abc_priors = (growth = (speed = Uniform(0.005, 0.02),),)
-    forwarded_result = solve(EstimationProblem(fitpredict_model, [fitpredict_experiment]; priors = abc_priors),
-        target_sampler; target = 1.5)
+    forwarded_result = sample(EstimationProblem(fitpredict_model, [fitpredict_experiment]; priors = abc_priors),
+        target_sampler, 2; target = 1.5)
     # The reference loss is the likelihood at the model's current (true) speed.
     @test received_reference_loss[] ≈ 3 * fitpredict_gaussian_nll(0.0, 0.01) + 4 * fitpredict_gaussian_nll(0.0, 1e-14) rtol = 1e-9
     @test received_target[] == 1.5
     @test forwarded_result.samples.values == [0.4 0.6]
     @test forwarded_result.samples.source == :abc
+    # A custom sampler result without a reached-target flag counts as a success.
+    @test successful_retcode(forwarded_result)
 
     abc_estimation = EstimationProblem(fitpredict_model, [fitpredict_experiment]; priors = abc_priors,
         loss = MeanAbsoluteError())
-    @test_throws ArgumentError solve(abc_estimation, ABCDE(); target = Inf)
-    @test_throws ArgumentError solve(abc_estimation, ABCDE(); target = 1.0, n_particles = 0)
-    tiny_abc = solve(abc_estimation, ABCDE(); target = 1.0, n_particles = 8, n_generations = 1,
-        parallel = EnsembleThreads())
+    @test_throws ArgumentError sample(abc_estimation, ABCDE(), 8; target = Inf)
+    @test_throws ArgumentError sample(abc_estimation, ABCDE(), 0; target = 1.0)
+    tiny_abc = sample(abc_estimation, ABCDE(), 8; target = 1.0, n_generations = 1, parallel = EnsembleThreads())
     @test tiny_abc.alg === ABCDE()
-    @test vec(tiny_abc.samples.values) == collect(tiny_abc.backend_result.P.particles)
+    @test vec(tiny_abc.samples.values) == collect(tiny_abc.original.P.particles)
+    # The caller's RNG makes ABC draws reproducible.
+    seeded_abc_draws() = sample(Xoshiro(11), abc_estimation, ABCDE(), 8; target = 1.0, n_generations = 1).samples.values
+    @test seeded_abc_draws() == seeded_abc_draws()
+    # An unreachable target exhausts the generations: MaxIters, not Success.
+    exhausted_abc = sample(Xoshiro(12), abc_estimation, ABCDE(), 8; target = 1e-12, n_generations = 1)
+    @test exhausted_abc.retcode == ReturnCode.MaxIters
+    @test !successful_retcode(exhausted_abc)
     @test all(0.005 .<= tiny_abc.samples.values .<= 0.02)
     unreachable_result = CriSTool._runsampler(ABCDE(),
         product_distribution([Uniform(0.0, 1.0)]), candidate -> 100.0, 0.0, () -> 100.0;
-        nparticles = 8, generations = 1, HPC = false, stopping = AllGenerations())
+        nparticles = 8, generations = 1, HPC = false, stopping = AllGenerations(), rng = Xoshiro(1))
     @test !unreachable_result.reached_ϵ
     # One Particles per parameter becomes the parameters × samples draw matrix.
     @test CriSTool._abc_particles_matrix([CriSTool.MonteCarloMeasurements.Particles([1.0, 2.0, 3.0]),
@@ -404,7 +426,7 @@ end
     length_estimation = EstimationProblem(length_model, [fitpredict_experiment];
         priors = (growth = (speed = Uniform(0.001, 0.03),),), solver = DQMOM(nquadrature = 3))
     length_posterior = CriSTool.InferenceResult(length_model, ParameterSamples(growth = (speed = [0.01, 0.02],)),
-        nothing, nothing, length_estimation)
+        ReturnCode.Success, nothing, nothing, length_estimation)
     @test observable_values(predict(length_posterior; observables = (:concentration,)).ensembles[1], :concentration) ≈
           [fixture_translation_concentration(prediction_time; speed = draw_speed)
            for draw_speed in (0.01, 0.02), prediction_time in fitpredict_times] atol = 1e-7
@@ -489,9 +511,11 @@ end
     for (level_algorithm, expected_level) in expected_levels
         @test CriSTool._parallel_level(level_algorithm) === expected_level
     end
-    # MCMC threads several chains, or the experiments of a single chain.
-    @test CriSTool._chain_parallel_level(1) === CriSTool.ParallelExperiments()
-    @test CriSTool._chain_parallel_level(4) === CriSTool.ParallelCandidates()
+    # MCMC threads chains through MCMCThreads(); `parallel` threads the experiments of each chain.
+    single_chain = sample(MersenneTwister(5), EstimationProblem(fitpredict_model, [fitpredict_experiment];
+            priors = (growth = (speed = Uniform(0.001, 0.03),),)), Turing.NUTS(3, 0.65), 3;
+        parallel = EnsembleThreads(), progress = false)
+    @test single_chain.estimation_problem.setup.parallel isa EnsembleThreads
     # The chosen level gets the supplied ensemble; the loss of the other level is serial.
     candidate_estimation = EstimationProblem(fitpredict_model, [fitpredict_experiment]; bounds = fitpredict_bounds)
     candidate_ensemble, candidate_split = CriSTool._split_parallel(candidate_estimation,

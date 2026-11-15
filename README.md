@@ -38,8 +38,9 @@ and `remake(problem; conditions, tspan, p)` changes the run.
 ## Fit and predict
 
 ```julia
-using Metaheuristics, Distributions
-using Turing: NUTS   # Turing is optional; loading it enables solve(problem, NUTS())
+using Distributions
+using Metaheuristics: DE   # Metaheuristics exports an unrelated `sample`; import names explicitly
+using Turing: NUTS        # Turing is optional; loading it enables sample(problem, NUTS(), n)
 
 experiments = load_measurements("measurements.csv")  # each run starts from its time-zero data
 estimation = EstimationProblem(crystal_model, experiments; solver = QMOM(),
@@ -47,8 +48,9 @@ estimation = EstimationProblem(crystal_model, experiments; solver = QMOM(),
     priors = (growth = (growth_coefficient = Uniform(1e-12, 1e-9),),))
 fitted = solve(estimation, DE(N = 32))   # optimisers search inside the bounds
 fitted.parameters                        # (growth = (growth_coefficient = ...,),)
+successful_retcode(fitted), fitted.u, fitted.objective
 
-posterior = solve(estimation, NUTS(); n_samples = 500)   # samplers draw under the priors
+posterior = sample(estimation, NUTS(), 500)   # samplers draw under the priors
 predictions = predict(posterior)         # same runs, solver and settings as the fit
 bands = prediction_summary(predictions, :concentration)
 ```
@@ -61,9 +63,10 @@ physical trajectories; adding measurement noise is a separate, explicit step
 (`measurement_samples`).
 
 As with simulation, the problem holds no algorithm: `solve(problem, alg)`
-takes a Metaheuristics algorithm, an Optimization.jl optimiser (`LBFGS()`),
-`NUTS()` or `ABCDE()`, and `remake(problem; loss, solver, ...)` changes the
-study. Turing is optional: `solve(problem, NUTS())` needs `using Turing`.
+takes a Metaheuristics algorithm or an Optimization.jl optimiser (`LBFGS()`),
+`sample(problem, sampler, n)` takes `NUTS()` or `ABCDE()`, and
+`remake(problem; loss, solver, ...)` changes the study. Turing is optional:
+`sample(problem, NUTS(), n)` needs `using Turing`.
 
 Plotting is a package extension: run `using CairoMakie` to enable
 `plot_predictions` and `plot_chain_diagnostics`, and add `using PairPlots` for

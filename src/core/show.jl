@@ -292,16 +292,15 @@ _algorithm_label(::Nothing) = "default"
 _algorithm_label(algorithm::Metaheuristics.Algorithm) = string(nameof(typeof(algorithm.parameters)))
 
 # Only Optimization.jl results report a convergence status.
-_fit_status_suffix(backend_result) = ""
-_fit_status_suffix(backend_result::SciMLBase.AbstractOptimizationSolution) =
-    SciMLBase.successful_retcode(backend_result.retcode) ? ", converged" :
-    string(", not converged (", backend_result.retcode, ")")
-
-_total_loss(fit_result::FitResult) = sum(values(fit_result.objectives))
+_fit_status_suffix(original_result, fit_retcode) = _retcode_suffix(fit_retcode)
+_fit_status_suffix(::SciMLBase.AbstractOptimizationSolution, fit_retcode) =
+    SciMLBase.successful_retcode(fit_retcode) ? ", converged" : string(", not converged (", fit_retcode, ")")
+# Results without a convergence test report only an unsuccessful retcode.
+_retcode_suffix(result_retcode) = SciMLBase.successful_retcode(result_retcode) ? "" : string(", ", result_retcode)
 
 function Base.show(display_io::IO, ::MIME"text/plain", fit_result::FitResult)
     print(display_io, "FitResult — ", _algorithm_label(fit_result.alg),
-        ", loss = ", _number_text(_total_loss(fit_result)), _fit_status_suffix(fit_result.backend_result))
+        ", loss = ", _number_text(fit_result.objective), _fit_status_suffix(fit_result.original, fit_result.retcode))
     parameter_leaves = _named_parameter_leaves(fit_result.parameters)
     isempty(parameter_leaves) && return nothing
     name_width = maximum(length ∘ first, parameter_leaves)
@@ -311,7 +310,7 @@ function Base.show(display_io::IO, ::MIME"text/plain", fit_result::FitResult)
 end
 Base.show(display_io::IO, fit_result::FitResult) =
     print(display_io, "FitResult(", _algorithm_label(fit_result.alg),
-        ", loss = ", _number_text(_total_loss(fit_result)), ", ", length(_named_parameter_leaves(fit_result.parameters)),
+        ", loss = ", _number_text(fit_result.objective), ", ", length(_named_parameter_leaves(fit_result.parameters)),
         " parameters)")
 
 _draw_count(samples::ParameterSamples) = size(samples.values, 2)
@@ -324,7 +323,7 @@ Base.show(display_io::IO, ::MIME"text/plain", samples::ParameterSamples) = show(
 function Base.show(display_io::IO, ::MIME"text/plain", inference_result::InferenceResult)
     posterior_samples = inference_result.samples
     print(display_io, "InferenceResult — ", _algorithm_label(inference_result.alg),
-        ", ", _draw_count(posterior_samples), " draws")
+        ", ", _draw_count(posterior_samples), " draws", _retcode_suffix(inference_result.retcode))
     name_width = maximum(length, posterior_samples.names)
     for (row_index, parameter_path) in enumerate(posterior_samples.names)
         draws = view(posterior_samples.values, row_index, :)

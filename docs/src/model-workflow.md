@@ -32,11 +32,12 @@ can be selected. Construction resolves names and builds solve templates once
 (`mode` is `TransientMode()` or `SteadyMode(SteadyStateOptions(...))`);
 `loss(problem, values)` exposes the selected-vector objective for advanced users
 and autodiff. `solve(problem, alg; parallel=EnsembleSerial())` runs the study
-with a Metaheuristics algorithm, an Optimization.jl optimiser, a Turing sampler
-such as `NUTS()` or `ABCDE()`; `parallel = EnsembleThreads()` threads either the
-candidates (Metaheuristics population, ABC particles, several MCMC chains) or
-the experiments of each loss evaluation (Optimization.jl optimisers, one MCMC
-chain), never both.
+with a Metaheuristics algorithm or an Optimization.jl optimiser;
+`sample(problem, sampler, n)` draws with a Turing sampler such as `NUTS()` or
+with `ABCDE()`. `parallel = EnsembleThreads()` threads either the candidates
+(Metaheuristics population, ABC particles) or the experiments of each loss
+evaluation (Optimization.jl optimisers, MCMC chains), never both; MCMC chains
+run on threads with `sample(problem, NUTS(), MCMCThreads(), n, n_chains)`.
 
 `solve` returns a `FitResult` for optimisation or `InferenceResult` for sampling.
 An optimisation result contains a new fitted model, named estimates, observable
