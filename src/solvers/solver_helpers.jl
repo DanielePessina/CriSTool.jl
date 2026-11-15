@@ -369,6 +369,7 @@ function _solve_crystallisation_ode(problem::DiscretisedProblem, odeproblem,
     _validate_crystallisation_solve_options(solve_options)
     solver_defaults = (reltol = problem.solver.reltol,
                        abstol = _solver_absolute_floor(problem, odeproblem),
+                       _solver_initial_step(problem.solver)...,
                        dense, maxiters = CRISTOOL_MAX_SOLVER_ITERS,
                        internalnorm = _primal_error_norm)
     selected_options = merge(solver_defaults, solve_options)
@@ -383,6 +384,19 @@ function _solve_crystallisation_ode(problem::DiscretisedProblem, odeproblem,
     return solve(odeproblem, algorithm; selected_options..., abstol = abstol,
                  saveat = saveat, callback = solve_callback)
 end
+
+"""
+    _solver_initial_step(solver) -> NamedTuple
+
+First integrator step, as a `dt` integrator option. Mesh populations have
+sharp seed edges or empty cells that nucleation fills, so the Hairer-Wanner
+initial-step estimate falls below machine epsilon and OrdinaryDiffEq falls
+back to `dt = 1e-6` s with a warning. Mesh solvers start from that step
+directly; the adaptive controller grows it within a few steps. `solve_options =
+(; dt = ...)` overrides it. Moment solvers keep the estimate.
+"""
+_solver_initial_step(::AbstractSolver) = (;)
+_solver_initial_step(::AbstractDiscretisedSolver) = (; dt = CRISTOOL_MESH_INITIAL_STEP)
 
 """Check prepared save times: finite, nonnegative SI seconds in increasing order."""
 function _validate_save_times(save_times)
