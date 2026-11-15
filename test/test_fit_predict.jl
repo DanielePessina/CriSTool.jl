@@ -404,6 +404,9 @@ end
         solve_options = (maxiters = 1,), observables = (:concentration,))
     @test failed_predictions.ensembles[1].success == [false, false, false]
     @test all(==(ReturnCode.MaxIters), getproperty.(failed_predictions.ensembles[1].diagnostics, :retcode))
+    # Per-sample diagnostics are one concrete type, preallocated per run.
+    @test isconcretetype(eltype(failed_predictions.ensembles[1].diagnostics))
+    @test !any(getproperty.(failed_predictions.ensembles[1].diagnostics, :success))
     @test_throws ArgumentError prediction_summary(failed_predictions, :concentration)
     @test_throws ArgumentError prediction_summary(failed_predictions, :concentration; skip_failed = true)
 

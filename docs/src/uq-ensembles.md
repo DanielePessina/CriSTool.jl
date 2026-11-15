@@ -34,8 +34,11 @@ future_run = RunConditions(temperature = 288.15, concentration = 20.0)
 future_predictions = predict(posterior, [future_run]; saveat = 0.0:600.0:21600.0)
 ```
 
-Failures retain their rows, IDs and diagnostics. Summaries fail unless exclusion
-is explicitly requested with `skip_failed=true`, then report counts. Bounds
+Failures retain their rows, IDs and diagnostics. Each `ensemble.diagnostics[i]`
+has the fields `success`, `ode_stats`, `initial_conditions`, `retcode` and
+`convergence` (steady runs), and `reason`, a message when a solve produced no
+physical result. Summaries fail unless exclusion is explicitly requested with
+`skip_failed=true`, then report counts. Bounds
 reduce invalid candidates but cannot guarantee every numerical solve succeeds.
 
 `posterior.samples` holds the NUTS/ABC draws;

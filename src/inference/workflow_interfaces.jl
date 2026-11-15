@@ -20,8 +20,9 @@ end
 
 Named sample predictions for one prepared run at the saved times `t`.
 `predictions` holds matrices with samples in rows and saved times in columns;
-read one with `observable_values(ensemble, name)`. The `success` mask and
-`diagnostics` (with each sample's `retcode`) retain every candidate, including
+read one with `observable_values(ensemble, name)`. `success` and `diagnostics`
+(one `EnsembleSampleDiagnostics` per sample, with its `retcode`) retain every
+candidate, including
 unsuccessful simulations.
 """
 struct PredictionEnsemble{TP <: NamedTuple, TD <: AbstractVector}
@@ -62,13 +63,30 @@ function prediction_summary(prediction_ensemble::PredictionEnsemble,
         failed_count = count(!, successful_samples))
 end
 
-"""Solver diagnostics kept per ensemble sample; solution types without them report `nothing`."""
-_sample_diagnostics(sample_solution::AbstractSolution) =
-    (; retcode = sample_solution.retcode, convergence = nothing, reason = nothing)
-_sample_diagnostics(failed_solution::FailedPreparedSimulation) =
-    (; retcode = failed_solution.retcode, convergence = nothing, reason = failed_solution.reason)
-_sample_diagnostics(steady_result::CrystallisationSteadyStateSolution) =
-    (; retcode = steady_result.retcode, convergence = steady_result.diagnostics, reason = nothing)
+"""
+    EnsembleSampleDiagnostics
+
+Diagnostics of one ensemble sample: whether it `success`fully covered the saved
+times, its `retcode`, the ODE `ode_stats` and the run's `initial_conditions`.
+A steady sample adds its `convergence` checks; a solve that produced no
+physical result records its `reason` as text. Fields that do not apply are
+`nothing`.
+"""
+struct EnsembleSampleDiagnostics{TI <: NamedTuple, TC}
+    success::Bool
+    retcode::SciMLBase.ReturnCode.T
+    ode_stats::Union{Nothing, SciMLBase.DEStats}
+    initial_conditions::TI
+    convergence::TC
+    reason::Union{Nothing, String}
+end
+
+_sample_convergence(::AbstractSolution) = nothing
+_sample_convergence(steady_result::CrystallisationSteadyStateSolution) = steady_result.diagnostics
+_sample_reason(::AbstractSolution) = nothing
+_sample_reason(failed_solution::FailedPreparedSimulation) = _failure_reason_text(failed_solution.reason)
+_failure_reason_text(failure::Exception) = sprint(showerror, failure)
+_failure_reason_text(failure) = string(failure)
 
 # A transient sample must span the requested times; a steady value holds at any time.
 _covers_save_times(::SteadyMode, sample_solution, saved_times) = true
@@ -98,7 +116,8 @@ Predict each prepared run for the full kinetic parameter vectors in the columns
 of `parameter_samples`. Without `observables`, every built-in trajectory and
 configured solvent value is predicted. With `parallel = EnsembleThreads()` (the
 default) the (run, sample) pairs are solved on threads, each task on its own copy of the
-prepared templates; the output does not depend on `parallel`.
+prepared templates; the output does not depend on `parallel`. Each solution is
+written into its run's rows as soon as it is solved and then dropped.
 """
 function run_ensemble(parameter_samples::AbstractMatrix, prepared_solves::PreparedSolves;
                       observables = nothing, parallel::SciMLBase.BasicEnsembleAlgorithm = EnsembleThreads())
@@ -106,60 +125,107 @@ function run_ensemble(parameter_samples::AbstractMatrix, prepared_solves::Prepar
         throw(ArgumentError("Ensemble sample rows must match the kinetic parameter axis."))
     sample_count = size(parameter_samples, 2)
     sample_count > 0 || throw(ArgumentError("An ensemble requires at least one parameter sample."))
-    sample_solutions = Matrix{AbstractSolution}(undef, length(prepared_solves.runs), sample_count)
-    _solve_ensemble!(parallel, sample_solutions, parameter_samples, prepared_solves)
-    return map(enumerate(prepared_solves.runs)) do (run_index, prepared_run)
-        _prediction_ensemble(prepared_solves.mode, prepared_run, view(sample_solutions, run_index, :), observables)
+    run_count = length(prepared_solves.runs)
+    ensemble_solve_source = _ensemble_solve_source(parallel, prepared_solves, run_count * sample_count)
+    prediction_ensembles = Vector{PredictionEnsemble}(undef, run_count)
+    reference_indices = zeros(Int, run_count)
+    _ensemble_foreach(parallel, 1:run_count) do run_index
+        reference_indices[run_index], prediction_ensembles[run_index] = _reference_prediction_ensemble(
+            ensemble_solve_source, prepared_solves, run_index, parameter_samples, observables)
     end
+    # Every other sample is solved, written to its own row and slot, and dropped.
+    pair_indices = CartesianIndices((run_count, sample_count))
+    _ensemble_foreach(parallel, eachindex(pair_indices)) do flat_index
+        run_index, sample_index = Tuple(pair_indices[flat_index])
+        sample_index == reference_indices[run_index] && return nothing
+        prediction_ensemble = prediction_ensembles[run_index]
+        _write_ensemble_sample!(prediction_ensemble, prepared_solves.mode,
+            _solve_ensemble_sample(ensemble_solve_source, run_index, parameter_samples, sample_index), sample_index,
+            prediction_ensemble.diagnostics[reference_indices[run_index]].initial_conditions)
+        return nothing
+    end
+    # Narrow to the concrete ensemble type when every run shares one.
+    return map(identity, prediction_ensembles)
 end
 
-function _solve_ensemble!(::EnsembleSerial, sample_solutions, parameter_samples, prepared_solves)
-    for sample_index in axes(sample_solutions, 2), run_index in axes(sample_solutions, 1)
-        sample_solutions[run_index, sample_index] = _solve_prepared(prepared_solves,
-            prepared_solves.runs[run_index], collect(view(parameter_samples, :, sample_index)))
+# Serial samples solve on the prepared templates; threaded samples borrow a private copy per task.
+_ensemble_solve_source(::EnsembleSerial, prepared_solves::PreparedSolves, pair_count) = prepared_solves
+_ensemble_solve_source(::EnsembleThreads, prepared_solves::PreparedSolves, pair_count) =
+    _private_copy_pool(prepared_solves, min(Threads.nthreads(), pair_count))
+_ensemble_solve_source(unsupported::SciMLBase.BasicEnsembleAlgorithm, args...) = _unsupported_parallel(unsupported)
+
+_with_ensemble_solves(evaluate, prepared_solves::PreparedSolves) = evaluate(prepared_solves)
+_with_ensemble_solves(evaluate, private_solves::Channel) = _with_private_copy(evaluate, private_solves)
+
+_solve_ensemble_sample(ensemble_solve_source, run_index::Int, parameter_samples::AbstractMatrix, sample_index::Int) =
+    _with_ensemble_solves(ensemble_solve_source) do task_solves
+        _solve_prepared(task_solves, task_solves.runs[run_index], collect(view(parameter_samples, :, sample_index)))
     end
-    return sample_solutions
+
+_ensemble_foreach(ensemble_body, ::EnsembleSerial, ensemble_indices) = foreach(ensemble_body, ensemble_indices)
+function _ensemble_foreach(ensemble_body, ::EnsembleThreads, ensemble_indices)
+    Threads.@threads for ensemble_index in ensemble_indices
+        ensemble_body(ensemble_index)
+    end
+    return nothing
 end
 
-function _solve_ensemble!(::EnsembleThreads, sample_solutions, parameter_samples, prepared_solves)
-    private_solves = _private_copy_pool(prepared_solves, min(Threads.nthreads(), length(sample_solutions)))
-    solution_indices = CartesianIndices(sample_solutions)
-    Threads.@threads for flat_index in eachindex(sample_solutions)
-        run_index, sample_index = Tuple(solution_indices[flat_index])
-        sample_solutions[run_index, sample_index] = _with_private_copy(private_solves) do task_solves
-            _solve_prepared(task_solves, task_solves.runs[run_index],
-                collect(view(parameter_samples, :, sample_index)))
-        end
-    end
-    return sample_solutions
-end
+_ensemble_sample_succeeded(simulation_mode::AbstractSimulationMode, sample_solution, saved_times) =
+    SciMLBase.successful_retcode(sample_solution) && _covers_save_times(simulation_mode, sample_solution, saved_times)
 
-_solve_ensemble!(unsupported::SciMLBase.BasicEnsembleAlgorithm, args...) = _unsupported_parallel(unsupported)
+_ensemble_prediction_names(::Nothing, prepared_run::PreparedRun, reference_solution) =
+    _default_prediction_names(prepared_run, reference_solution)
+_ensemble_prediction_names(observables, prepared_run::PreparedRun, reference_solution) = Tuple(Symbol.(observables))
 
-function _prediction_ensemble(simulation_mode::AbstractSimulationMode, prepared_run::PreparedRun,
-                              run_solutions::AbstractVector, observables)
+"""
+Solve one run's samples in order up to the first success, or through all of
+them when none succeeds (the first sample is then the reference). Return the
+reference index and the run's preallocated ensemble with the reference written.
+The reference names the default observables; the convergence types met while
+scanning fix the diagnostics type. Scanned failures are solved again later.
+"""
+function _reference_prediction_ensemble(ensemble_solve_source, prepared_solves::PreparedSolves, run_index::Int,
+                                        parameter_samples::AbstractMatrix, observables)
+    prepared_run = prepared_solves.runs[run_index]
+    simulation_mode = prepared_solves.mode
     saved_times = prepared_run.saveat
-    sample_success = [SciMLBase.successful_retcode(sample_solution) &&
-                      _covers_save_times(simulation_mode, sample_solution, saved_times)
-                      for sample_solution in run_solutions]
-    successful_reference_index = findfirst(sample_success)
-    reference_solution = run_solutions[something(successful_reference_index, firstindex(run_solutions))]
-    prediction_names = observables === nothing ? _default_prediction_names(prepared_run, reference_solution) :
-        Tuple(Symbol.(observables))
-    prediction_matrices = map(prediction_names) do observable_name
-        prediction_matrix = fill(NaN, length(run_solutions), length(saved_times))
-        for (sample_index, sample_solution) in enumerate(run_solutions)
-            sample_success[sample_index] || continue
-            prediction_matrix[sample_index, :] .= _predicted_series(simulation_mode, (;),
-                sample_solution, observable_name, saved_times)
+    sample_count = size(parameter_samples, 2)
+    reference_solution = _solve_ensemble_sample(ensemble_solve_source, run_index, parameter_samples, 1)
+    convergence_type = Union{Nothing, typeof(_sample_convergence(reference_solution))}
+    reference_index = scanned_count = 1
+    while !_ensemble_sample_succeeded(simulation_mode, reference_solution, saved_times) && scanned_count < sample_count
+        scanned_count += 1
+        scanned_solution = _solve_ensemble_sample(ensemble_solve_source, run_index, parameter_samples, scanned_count)
+        convergence_type = Union{convergence_type, typeof(_sample_convergence(scanned_solution))}
+        if _ensemble_sample_succeeded(simulation_mode, scanned_solution, saved_times)
+            reference_index, reference_solution = scanned_count, scanned_solution
         end
-        prediction_matrix
     end
+    prediction_names = _ensemble_prediction_names(observables, prepared_run, reference_solution)
     initial_conditions = solvent_state(prepared_run.problem, _get_initial_state(prepared_run.problem))
-    sample_diagnostics = [merge((; success = sample_success[sample_index],
-            ode_stats = run_solutions[sample_index].ode_stats, initial_conditions),
-            _sample_diagnostics(run_solutions[sample_index]))
-        for sample_index in eachindex(run_solutions)]
-    return PredictionEnsemble(copy(saved_times), NamedTuple{prediction_names}(Tuple(prediction_matrices)),
-        sample_success, sample_diagnostics)
+    prediction_ensemble = PredictionEnsemble(copy(saved_times),
+        NamedTuple{prediction_names}(map(observable_name -> fill(NaN, sample_count, length(saved_times)),
+            prediction_names)),
+        zeros(Bool, sample_count),
+        Vector{EnsembleSampleDiagnostics{typeof(initial_conditions), convergence_type}}(undef, sample_count))
+    _write_ensemble_sample!(prediction_ensemble, simulation_mode, reference_solution, reference_index,
+        initial_conditions)
+    return reference_index, prediction_ensemble
+end
+
+"""Write one solved sample's success flag, projected rows and diagnostics into its own slots."""
+function _write_ensemble_sample!(prediction_ensemble::PredictionEnsemble, simulation_mode::AbstractSimulationMode,
+                                 sample_solution, sample_index::Int, initial_conditions)
+    sample_succeeded = _ensemble_sample_succeeded(simulation_mode, sample_solution, prediction_ensemble.t)
+    prediction_ensemble.success[sample_index] = sample_succeeded
+    if sample_succeeded
+        for (observable_name, prediction_matrix) in pairs(prediction_ensemble.predictions)
+            prediction_matrix[sample_index, :] .= _predicted_series(simulation_mode, (;),
+                sample_solution, observable_name, prediction_ensemble.t)
+        end
+    end
+    prediction_ensemble.diagnostics[sample_index] = eltype(prediction_ensemble.diagnostics)(sample_succeeded,
+        sample_solution.retcode, sample_solution.ode_stats, initial_conditions,
+        _sample_convergence(sample_solution), _sample_reason(sample_solution))
+    return prediction_ensemble
 end

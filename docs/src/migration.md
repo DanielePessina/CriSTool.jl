@@ -287,3 +287,4 @@ deprecation shims.
 | `merge(conditions; concentration = 20.0)` | `remake(conditions; concentration = 20.0)` |
 | no dense output; `sol(t)` undefined | `solve(problem, solver; dense = true)`, then `sol(t)` (one-point solution) or `sol(t, :d43)`; without `dense = true`, `sol(t)` is an `ArgumentError` |
 | a DQMOM node dissolving to `minimum_size` throws a `DomainError` | the solve stops at the crossing with `ReturnCode.Failure` and a one-time warning, keeping the trajectory up to it |
+| `ensemble.diagnostics[i]` as a `NamedTuple` | an `EnsembleSampleDiagnostics` with the same fields (`success`, `retcode`, `ode_stats`, `initial_conditions`, `convergence`, `reason`); `reason` is now the failure message as text |
