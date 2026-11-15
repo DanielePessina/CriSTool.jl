@@ -11,16 +11,16 @@
     end)
 end
 
-function _solvent_derivatives(problem::CrystallisationProblem, state, time, growth)
+function _solvent_derivatives(problem::DiscretisedProblem, state, time, growth)
     return _solvent_derivatives(problem, state, time, growth,
                                 problem.solvent_dynamics)
 end
 
-_solvent_derivatives(problem::CrystallisationProblem, state, time, growth, solvent_dynamics) =
+_solvent_derivatives(problem::DiscretisedProblem, state, time, growth, solvent_dynamics) =
     _ordered_solvent_rates(solvent_dynamics(problem, state, time, growth), problem, growth)
 
 """Solvent rates in `initial_solvent_state` order; a name a NamedTuple omits has zero rate."""
-function _ordered_solvent_rates(rates::NamedTuple, problem::CrystallisationProblem, growth)
+function _ordered_solvent_rates(rates::NamedTuple, problem::DiscretisedProblem, growth)
     names = propertynames(problem.initial_solvent_state)
     return ntuple(index -> begin
         name = names[index]
@@ -28,13 +28,13 @@ function _ordered_solvent_rates(rates::NamedTuple, problem::CrystallisationProbl
     end, Val(length(names)))
 end
 
-function _ordered_solvent_rates(rates, problem::CrystallisationProblem, growth)
+function _ordered_solvent_rates(rates, problem::DiscretisedProblem, growth)
     length(rates) == length(propertynames(problem.initial_solvent_state)) ||
         throw(ArgumentError("solvent_dynamics must return one rate per initial solvent variable."))
     return rates
 end
 
-function _write_solvent_derivatives!(dst, problem::CrystallisationProblem, rates)
+function _write_solvent_derivatives!(dst, problem::DiscretisedProblem, rates)
     n_solvent = length(propertynames(problem.initial_solvent_state))
     first_solvent = first(_solvent_state_range(problem))
     @inbounds for index in 1:n_solvent
@@ -43,7 +43,7 @@ function _write_solvent_derivatives!(dst, problem::CrystallisationProblem, rates
     return nothing
 end
 
-function _solvent_solution_state(problem::CrystallisationProblem, solution)
+function _solvent_solution_state(problem::DiscretisedProblem, solution)
     names = propertynames(problem.initial_solvent_state)
     n_solvent = length(names)
     first_solvent = first(_solvent_state_range(problem))
@@ -54,13 +54,13 @@ end
 """
     _validate_solver_kinetics(solver, problem)
 
-Solver-specific kinetic contract, checked once by `_validate_crystallisation_problem`
+Solver-specific kinetic contract, checked once by `_validate_discretised_problem`
 and again when the solver's ODE problem is built. Only `MoM` restricts the
 kinetic families here; the quadrature solvers validate their closures when
 the ODE problem is built.
 """
-_validate_solver_kinetics(solver::AbstractSolver, problem::CrystallisationProblem) = nothing
-function _validate_solver_kinetics(solver::MoM, problem::CrystallisationProblem)
+_validate_solver_kinetics(solver::AbstractSolver, problem::DiscretisedProblem) = nothing
+function _validate_solver_kinetics(solver::MoM, problem::DiscretisedProblem)
     solver.nmoments >= 2 ||
         throw(ArgumentError("MoM requires nmoments >= 2 (the concentration closure uses µ2)."))
     _uses_length_rates(problem) &&
@@ -72,7 +72,7 @@ function _validate_solver_kinetics(solver::MoM, problem::CrystallisationProblem)
     return nothing
 end
 
-function crystallisation_odeproblem(solver::MoM, CryProblem::CrystallisationProblem, saveat, kinetic_values)
+function crystallisation_odeproblem(solver::MoM, CryProblem::DiscretisedProblem, tspan, kinetic_values)
     _validate_solver_kinetics(solver, CryProblem)
     feed_population = _operation_feed_population(CryProblem)
     function MoM_model(u, p, t)
@@ -96,15 +96,15 @@ function crystallisation_odeproblem(solver::MoM, CryProblem::CrystallisationProb
     u0_typed = SVector(ntuple(k -> u0_vec[k], Val(n_states)))
     ODEprob = ODEProblem{false}(MoM_model,
                                 u0_typed,
-                                (saveat[1], saveat[end]),
+                                tspan,
                                 kinetic_values)
     return (ODEprob, _timestepping_algorithm(solver, Tsit5()))
 end
 
-_solver_callbacks(solver::MoM, problem::CrystallisationProblem, odeproblem) =
+_solver_callbacks(solver::MoM, problem::DiscretisedProblem, odeproblem) =
     _solid_mass_extinction_callback(problem)
 
-function _wrap_solution(solver::MoM, problem::CrystallisationProblem, ode_solution,
+function _wrap_solution(solver::MoM, problem::DiscretisedProblem, ode_solution,
                         boundary_flow_state::NamedTuple)
     # State k holds µ_{k-1}; untracked ratios (nmoments < 4) are NaN.
     moment_matrix = Array(ode_solution[1:moment_count(solver), :])

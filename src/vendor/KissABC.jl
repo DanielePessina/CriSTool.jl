@@ -232,22 +232,21 @@ function sample_from_logweights(rng::AbstractRNG, logws::AbstractVector)
     return idx === nothing ? length(logws) : idx
 end
 
+# Kernel ψ(ρ|δ) weighting a particle by its cost excess ρ = cost - best_cost;
+# CriSTool documents the public types where it re-exports them.
+abstract type AbstractABCKernel end
+struct GaussianABCKernel <: AbstractABCKernel end
+struct LaplaceABCKernel <: AbstractABCKernel end
+struct FlatABCKernel <: AbstractABCKernel end
+
 """
-    log_kernel_weight(cost, best_cost, δ; kernel=:gaussian)
+    log_kernel_weight(kernel, cost, best_cost, δ)
 
 Compute log ψ(ρ|δ) where ρ = cost - best_cost.
-Supported kernels: :gaussian, :laplace, :none.
 """
-function log_kernel_weight(cost::Real, best_cost::Real, δ::Real; kernel::Symbol = :gaussian)
-    d = cost - best_cost
-    if kernel == :gaussian
-        return -0.5 * (d / δ)^2
-    elseif kernel == :laplace
-        return -abs(d) / δ
-    else  # :none
-        return 0.0
-    end
-end
+log_kernel_weight(::GaussianABCKernel, cost::Real, best_cost::Real, δ::Real) = -0.5 * ((cost - best_cost) / δ)^2
+log_kernel_weight(::LaplaceABCKernel, cost::Real, best_cost::Real, δ::Real) = -abs(cost - best_cost) / δ
+log_kernel_weight(::FlatABCKernel, cost::Real, best_cost::Real, δ::Real) = 0.0
 
 """
     group_range(k::Int, G::Int)
@@ -277,7 +276,7 @@ mutation, and migration steps.
 - `γ1_range::Tuple=(0.5, 1.0)`: Range for γ1 sampling
 - `γ2_burnin::Float64=0.5`: γ2 value during burn-in (0 in sampling mode)
 - `b_eps::Float64=1e-3`: Additive noise magnitude
-- `kernel::Symbol=:gaussian`: Kernel type (:gaussian, :laplace, :none)
+- `kernel::AbstractABCKernel=GaussianABCKernel()`: `GaussianABCKernel()`, `LaplaceABCKernel()` or `FlatABCKernel()`
 - `δ::Union{Nothing,Float64}=nothing`: Kernel scale (derived from ϵ_target if nothing)
 - `best_cost::Union{Nothing,Float64}=nothing`: Reference cost for kernel
 - `burnin_frac::Float64=0.3`: Fraction of generations for burn-in mode
@@ -296,7 +295,7 @@ function ABCDE_Turner(prior, cost, ϵ_target;
                       γ1_range::Tuple{Float64, Float64} = (0.5, 1.0),
                       γ2_burnin::Float64 = 0.5,
                       b_eps::Float64 = 1e-3,
-                      kernel::Symbol = :gaussian,
+                      kernel::AbstractABCKernel = GaussianABCKernel(),
                       δ::Union{Nothing, Float64} = nothing,
                       best_cost::Union{Nothing, Float64} = nothing,
                       burnin_frac::Float64 = 0.3,
@@ -338,7 +337,7 @@ function ABCDE_Turner(prior, cost, ϵ_target;
                 costs[i] = cost(θs[i].x)
             end
         end
-        logψ[i] = log_kernel_weight(costs[i], best_cost_used, δ_used; kernel = kernel)
+        logψ[i] = log_kernel_weight(kernel, costs[i], best_cost_used, δ_used)
     end
 
     # Combined log-weights
@@ -373,8 +372,7 @@ function ABCDE_Turner(prior, cost, ϵ_target;
             δ_used = max(minimum(costs) - best_cost_used, eps())
             # Recompute logψ and logw with new δ
             for i in 1:nparticles
-                logψ[i] = log_kernel_weight(costs[i], best_cost_used, δ_used;
-                                            kernel = kernel)
+                logψ[i] = log_kernel_weight(kernel, costs[i], best_cost_used, δ_used)
             end
             logw .= logπ .+ logψ
         end
@@ -484,8 +482,7 @@ function ABCDE_Turner(prior, cost, ϵ_target;
                     continue
                 end
 
-                lψ_new = log_kernel_weight(cost_new, best_cost_used, δ_used;
-                                           kernel = kernel)
+                lψ_new = log_kernel_weight(kernel, cost_new, best_cost_used, δ_used)
                 logpost_new = lπ_new + lψ_new
                 logpost_old = logw[t]
 
@@ -536,6 +533,7 @@ function ABCDE_Turner(prior, cost, ϵ_target;
 end
 
 export ABCDE_Turner, log_kernel_weight, logsumexp_stable
+export AbstractABCKernel, GaussianABCKernel, LaplaceABCKernel, FlatABCKernel
 
 
 #### transition.jl

@@ -1,58 +1,31 @@
 """
-    runsimulation(problem::CrystallisationProblem; save_idx, algorithm=nothing,
-                  solve_options=(;), callback_factory=nothing)
+    crystallisation_solution(problem, solver, ode_solution)
 
-Simulate a configured physical problem with its model's bound kinetic values.
-Returns `(problem, solution)`. `initial_concentration(problem)` exposes the
-configured initial input separately from the evolving solution concentration.
+Convert a SciML solution of the ODE that `crystallisation_odeproblem(problem, solver)`
+generates into its physical result representation. The state layout must
+match `solver`; a DQMOM ODE state is scaled weighted-node data, not the public
+physical weights and nodes.
 """
-runsimulation(problem::CrystallisationProblem; kwargs...) =
-    runsimulation(kinetic_parameter_vector(problem), problem; kwargs...)
-
-"""
-    runsimulation(parameters, problem::CrystallisationProblem; save_idx, algorithm=nothing,
-                  solve_options=(;), callback_factory=nothing)
-
-Simulate a configured problem with the kinetic values `parameters` in place
-of the model's bound values. Parameter order is the composite
-`paramaxis(problem)` order; the element type may be a dual number, so this is
-the low-level differentiable interface. Returns `(problem, solution)`.
-"""
-function runsimulation(parameters::AbstractVector, problem::CrystallisationProblem;
-                       save_idx = 0:300.0:28_800.0, algorithm = nothing,
-                       solve_options = (;), callback_factory = nothing)
-    _validate_crystallisation_problem(problem)
-    kinetic_values = _validate_kinetic_values(problem, _params_to_p(problem, parameters))
-    save_times = _validate_save_times(save_idx)
-    return problem, _simulatecrystallisation(problem, save_times, kinetic_values;
-        algorithm, solve_options, callback_factory)
-end
-
-"""
-    crystallisation_solution(problem, ode_solution)
-
-Convert a SciML solution of the package-generated ODE into its physical result
-representation. The state layout must match `problem`; a DQMOM ODE state is
-scaled weighted-node data, not the public physical weights and nodes.
-"""
-function crystallisation_solution(problem::CrystallisationProblem, ode_solution)
+function crystallisation_solution(problem::CrystallisationProblem, solver::AbstractSolver, ode_solution)
     isempty(ode_solution.u) && throw(ArgumentError("ODE solution has no saved states."))
-    expected_count = length(_get_initial_state(problem))
+    discretised_problem = DiscretisedProblem(problem, solver)
+    expected_count = length(_get_initial_state(discretised_problem))
     all(length(saved_state) == expected_count for saved_state in ode_solution.u) ||
         throw(ArgumentError("ODE solution state layout does not match the configured problem."))
-    return _wrap_solution(problem, ode_solution)
+    return _wrap_solution(discretised_problem, ode_solution)
 end
 
 """
     PredictionEnsemble
 
-Named sample predictions for one prepared run. `predictions` holds matrices
-with samples in rows and saved times in columns; read one with
-`observable_values(ensemble, name)`. `success` and `diagnostics` retain every
-candidate, including unsuccessful simulations.
+Named sample predictions for one prepared run at the saved times `t`.
+`predictions` holds matrices with samples in rows and saved times in columns;
+read one with `observable_values(ensemble, name)`. The `success` mask and
+`diagnostics` (with each sample's `retcode`) retain every candidate, including
+unsuccessful simulations.
 """
 struct PredictionEnsemble{TP <: NamedTuple, TD <: AbstractVector}
-    time::Vector{Float64}
+    t::Vector{Float64}
     predictions::TP
     success::Vector{Bool}
     diagnostics::TD
@@ -90,16 +63,17 @@ function prediction_summary(prediction_ensemble::PredictionEnsemble,
 end
 
 """Solver diagnostics kept per ensemble sample; solution types without them report `nothing`."""
-_sample_diagnostics(::AbstractSolution) = (; retcode = nothing, convergence = nothing, reason = nothing)
+_sample_diagnostics(sample_solution::AbstractSolution) =
+    (; retcode = sample_solution.retcode, convergence = nothing, reason = nothing)
 _sample_diagnostics(failed_solution::FailedPreparedSimulation) =
-    (; retcode = nothing, convergence = nothing, reason = failed_solution.reason)
+    (; retcode = failed_solution.retcode, convergence = nothing, reason = failed_solution.reason)
 _sample_diagnostics(steady_result::CrystallisationSteadyStateSolution) =
     (; retcode = steady_result.retcode, convergence = steady_result.diagnostics, reason = nothing)
 
 # A transient sample must span the requested times; a steady value holds at any time.
 _covers_save_times(::SteadyMode, sample_solution, saved_times) = true
 _covers_save_times(::TransientMode, sample_solution, saved_times) =
-    first(sample_solution.time) <= first(saved_times) && last(sample_solution.time) >= last(saved_times)
+    first(sample_solution.t) <= first(saved_times) && last(sample_solution.t) >= last(saved_times)
 
 # Every built-in trajectory, configured solvent value and, for a flowing reactor, the volume.
 function _default_prediction_names(prepared_run::PreparedRun, reference_result)
@@ -109,7 +83,7 @@ function _default_prediction_names(prepared_run::PreparedRun, reference_result)
         size_metrics(reference_solution))
     builtin_names = Tuple(observable_name for observable_name in propertynames(named_physical_values)
         if getproperty(named_physical_values, observable_name) isa AbstractVector &&
-           length(getproperty(named_physical_values, observable_name)) == length(reference_solution.time))
+           length(getproperty(named_physical_values, observable_name)) == length(reference_solution.t))
     return Tuple(unique((builtin_names..., propertynames(prepared_run.problem.initial_solvent_state)...,
         _operation_prediction_names(prepared_run.problem.operation)...)))
 end
@@ -165,7 +139,8 @@ _solve_ensemble!(unsupported::SciMLBase.BasicEnsembleAlgorithm, args...) = _unsu
 function _prediction_ensemble(simulation_mode::AbstractSimulationMode, prepared_run::PreparedRun,
                               run_solutions::AbstractVector, observables)
     saved_times = prepared_run.saveat
-    sample_success = [sample_solution.success && _covers_save_times(simulation_mode, sample_solution, saved_times)
+    sample_success = [SciMLBase.successful_retcode(sample_solution) &&
+                      _covers_save_times(simulation_mode, sample_solution, saved_times)
                       for sample_solution in run_solutions]
     successful_reference_index = findfirst(sample_success)
     reference_solution = run_solutions[something(successful_reference_index, firstindex(run_solutions))]

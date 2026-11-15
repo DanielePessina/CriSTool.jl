@@ -55,19 +55,19 @@ end
 static_rhs_measure(inplace, rhs, derivative, state, parameters, time) =
     @allocated static_rhs_call(inplace, rhs, derivative, state, parameters, time)
 
-static_problem(model, conditions, solver) = CrystallisationProblem(model, conditions; solver)
-static_odeproblem(problem, kinetic_values) =
-    first(crystallisation_odeproblem(problem, [0.0, 3600.0], kinetic_values))
+static_problem(model, conditions) = CrystallisationProblem(model, conditions, (0.0, 3600.0))
+static_odeproblem(problem, solver, kinetic_values) =
+    first(crystallisation_odeproblem(remake(problem; p = kinetic_values), solver))
 
 # Paths that genuinely allocate per call; kept visible as broken rather than hidden.
 const STATIC_KNOWN_ALLOCATING = Set{Tuple{String, String}}()
 
 @testset "RHS allocation: zero per call" begin
     for (label, model, conditions, solver) in STATIC_CASES
-        problem = static_problem(model, conditions, solver)
+        problem = static_problem(model, conditions)
         kinetic_values = kinetic_parameter_vector(problem)
-        float_problem = static_odeproblem(problem, kinetic_values)
-        dual_problem = static_odeproblem(problem, static_dual_parameters(kinetic_values))
+        float_problem = static_odeproblem(problem, solver, kinetic_values)
+        dual_problem = static_odeproblem(problem, solver, static_dual_parameters(kinetic_values))
         @testset "$label Float64" begin
             if (label, "Float64") in STATIC_KNOWN_ALLOCATING
                 @test_broken static_rhs_allocated(float_problem) == 0
@@ -87,8 +87,8 @@ end
 
 @testset "RHS JET: no optimisation or error reports" begin
     for (label, model, conditions, solver) in STATIC_CASES
-        problem = static_problem(model, conditions, solver)
-        odeproblem = static_odeproblem(problem, kinetic_parameter_vector(problem))
+        problem = static_problem(model, conditions)
+        odeproblem = static_odeproblem(problem, solver, kinetic_parameter_vector(problem))
         inplace = Val(isinplace(odeproblem))
         derivative = similar(odeproblem.u0)
         @testset "$label" begin

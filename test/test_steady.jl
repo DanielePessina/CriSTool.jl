@@ -27,64 +27,79 @@ steady_ideal_concentration(; birth_rate = steady_birth_rate, speed = steady_grow
     steady_feed_concentration - 1000.0 * steady_ideal_moment(3; birth_rate, speed)
 
 const steady_autonomous_options = SteadyStateOptions(autonomous = true)
+# Steady solves relax over their own horizon; the transient span is not used.
+steady_transient_problem(model, conditions) = CrystallisationProblem(model, conditions, (0.0, 1000.0))
 
 @testset "Steady washout contract and failure modes" begin
     # No kinetics: the tank washes out to the feed. C* = 2 and the outlet carries Q Cf.
     washout_model = fixture_translation_model(speed = 0.0)
-    washout_problem = CrystallisationProblem(washout_model,
+    washout_problem = steady_transient_problem(washout_model,
         RunConditions(temperature = 298.15, concentration = 8.0, operation = fixture_msmpr()))
-    washout = solve_steadystate(washout_problem;
-        options = SteadyStateOptions(minimum_relaxation = 250.0, autonomous = true))
-    @test washout.success
+    washout = solve(CrystallisationSteadyStateProblem(washout_problem;
+        options = SteadyStateOptions(minimum_relaxation = 250.0, autonomous = true)), MoM())
+    @test washout.retcode == ReturnCode.Success
     @test washout.equilibrium.concentration ≈ 2.0 rtol = 1e-8
     @test observable_values(washout, :concentration) ≈ [2.0] rtol = 1e-8
-    @test washout.equilibrium.time >= 250.0
+    @test washout[:concentration] == observable_values(washout, :concentration)
+    @test washout.equilibrium.t >= 250.0
     @test washout.hydraulics == (; volume = 2.0, inflow = 0.2, outflow = 0.2, residence_time = 10.0)
+    @test operation_flows(washout_problem, 0.0) == (; inflow = 0.2, outflow = 0.2)
     @test washout.product.dissolved_solute_flow ≈ 0.4 rtol = 1e-8
     @test washout.product.solid_mass_flow == 0.0
 
     # Callable laws are opaque: the caller must declare them time invariant.
-    @test_throws ArgumentError solve_steadystate(washout_problem)
+    @test_throws ArgumentError solve(CrystallisationSteadyStateProblem(washout_problem), MoM())
     # Only a fixed-volume MSMPR has a steady state.
     for transient_operation in (BatchOperation(), fixture_fed_batch())
-        @test_throws ArgumentError solve_steadystate(CrystallisationProblem(washout_model,
+        @test_throws ArgumentError solve(CrystallisationSteadyStateProblem(steady_transient_problem(washout_model,
             RunConditions(temperature = 298.15, concentration = 8.0, operation = transient_operation));
-            options = steady_autonomous_options)
+            options = steady_autonomous_options), MoM())
     end
     @test_throws ArgumentError SteadyStateOptions(relaxation_horizon = 10.0, minimum_relaxation = 10.1)
     @test_throws ArgumentError SteadyStateOptions(residual_reltol = 0.0, residual_abstol = 0.0)
     @test_throws ArgumentError SteadyStateOptions(balance_reltol = -1.0)
     @test_throws ArgumentError SteadyStateOptions(residual_scales = [1.0, 0.0])
     # The default horizon is 100 residence times (1000 s here).
-    @test_throws ArgumentError solve_steadystate(washout_problem;
-        options = SteadyStateOptions(minimum_relaxation = 1_000.1, autonomous = true))
+    @test_throws ArgumentError solve(CrystallisationSteadyStateProblem(washout_problem;
+        options = SteadyStateOptions(minimum_relaxation = 1_000.1, autonomous = true)), MoM())
+    # An initial guess is a complete state in the solver's layout.
+    @test_throws ArgumentError solve(CrystallisationSteadyStateProblem(washout_problem; u0 = [8.0],
+        options = steady_autonomous_options), MoM())
+    # Starting from the closed-form equilibrium, the relaxation stops at the first check.
+    guessed_washout = solve(CrystallisationSteadyStateProblem(washout_problem; u0 = [zeros(5); 2.0],
+        options = steady_autonomous_options), MoM())
+    @test guessed_washout.equilibrium.concentration == 2.0
+    @test guessed_washout.retcode == ReturnCode.Success
 
     # Starting at the feed concentration with an empty tank, positive nucleation
     # still leaves a population residual: a concentration-only stop rule would
     # accept this state. An exhausted horizon must report non-convergence.
-    ideal_problem = CrystallisationProblem(steady_msmpr_model(), steady_msmpr_conditions())
+    ideal_problem = steady_transient_problem(steady_msmpr_model(), steady_msmpr_conditions())
     exhausted_error = try
-        solve_steadystate(ideal_problem; options = SteadyStateOptions(relaxation_horizon = 0.1,
-            residual_reltol = 1e-12, residual_abstol = 1e-14, autonomous = true))
+        solve(CrystallisationSteadyStateProblem(ideal_problem; options = SteadyStateOptions(relaxation_horizon = 0.1,
+            residual_reltol = 1e-12, residual_abstol = 1e-14, autonomous = true)), MoM())
         nothing
     catch caught_error
         caught_error
     end
     @test exhausted_error isa SteadyStateConvergenceError
-    @test !exhausted_error.solution.success
+    # The integration itself succeeded; the residual did not converge within the horizon.
+    @test exhausted_error.solution.retcode == ReturnCode.MaxIters
+    @test successful_retcode(exhausted_error.solution.diagnostics.ode_retcode)
+    @test !successful_retcode(exhausted_error.solution)
     @test !exhausted_error.solution.diagnostics.converged
 
     # Saved user-callback events must not leak extra samples into the equilibrium.
     saving_callback_factory = ode_problem -> CriSTool.DiscreteCallback(
         (numerical_state, simulation_time, integrator) -> 0.5 <= simulation_time < 0.7,
         integrator -> nothing; save_positions = (true, true))
-    equilibrium_start = CrystallisationProblem(washout_model,
+    equilibrium_start = steady_transient_problem(washout_model,
         RunConditions(temperature = 298.15, concentration = 2.0, operation = fixture_msmpr()))
-    event_equilibrium = solve_steadystate(equilibrium_start;
-        options = SteadyStateOptions(minimum_relaxation = 2.0, relaxation_horizon = 5.0, autonomous = true),
+    event_equilibrium = solve(CrystallisationSteadyStateProblem(equilibrium_start;
+            options = SteadyStateOptions(minimum_relaxation = 2.0, relaxation_horizon = 5.0, autonomous = true)), MoM();
         callback_factory = saving_callback_factory, solve_options = (; dt = 0.1, adaptive = false))
-    @test length(event_equilibrium.solution.time) == 1
-    @test event_equilibrium.equilibrium.time >= 2.0
+    @test length(event_equilibrium.solution.t) == 1
+    @test event_equilibrium.equilibrium.t >= 2.0
     @test event_equilibrium.equilibrium.concentration == 2.0
 end
 
@@ -103,10 +118,11 @@ end
             (MoM(reltol = 1e-10, abstol = 1e-24), 2e-6), (QMOM(), 2e-6),
             (FiniteVol(meshsize = 40, lmax = 40e-6), 0.05), (WENO(meshsize = 40, lmax = 40e-6), 0.05))
         @testset "$(nameof(typeof(steady_solver)))" begin
-            steady_result = solve_steadystate(
-                CrystallisationProblem(steady_msmpr_model(), steady_msmpr_conditions(); solver = steady_solver);
-                options = SteadyStateOptions(autonomous = true, residual_reltol = 1e-8, residual_abstol = 1e-10))
-            @test steady_result.success
+            steady_result = solve(CrystallisationSteadyStateProblem(
+                steady_transient_problem(steady_msmpr_model(), steady_msmpr_conditions());
+                options = SteadyStateOptions(autonomous = true, residual_reltol = 1e-8, residual_abstol = 1e-10)),
+                steady_solver)
+            @test steady_result.retcode == ReturnCode.Success
             @test steady_result.equilibrium.d43 ≈ steady_ideal_d43() rtol = solver_rtol
             @test steady_result.equilibrium.concentration ≈ expected_concentration rtol = solver_rtol
             @test steady_result.product.solid_mass_flow ≈ 0.2 * 1000.0 * expected_moments[4] rtol = solver_rtol
@@ -135,18 +151,17 @@ end
                            variance = [concentration_variance]),
                          d43 = Observable(time = [300.0], mean = [measured_d43], variance = [d43_variance])))
     growth_bounds = (growth = (speed = (0.1, 0.3),),)
-    steady_spec = OptimisationSpec(bounds = growth_bounds, algorithm = OptimizationOptimJL.LBFGS())
-    steady_prepared = prepare_fit(steady_msmpr_model(speed = 0.15), [steady_experiment], steady_spec;
-        mode = SteadyMode(steady_autonomous_options))
+    steady_estimation = EstimationProblem(steady_msmpr_model(speed = 0.15), [steady_experiment];
+        bounds = growth_bounds, mode = SteadyMode(steady_autonomous_options))
 
     # Gaussian NLL sum_i [log(2 pi var_i) + r_i^2 / var_i] / 2 at closed-form equilibria.
     gaussian_nll(speed) = 0.5 * (log(2pi * concentration_variance) +
         (steady_ideal_concentration(; speed) - measured_concentration)^2 / concentration_variance) +
         0.5 * (log(2pi * d43_variance) + (steady_ideal_d43(; speed) - measured_d43)^2 / d43_variance)
-    @test loss(steady_prepared, [0.2]) ≈ gaussian_nll(0.2) atol = 1e-5
-    @test loss(steady_prepared, [0.25]) ≈ gaussian_nll(0.25) rtol = 1e-5
+    @test loss(steady_estimation, [0.2]) ≈ gaussian_nll(0.2) atol = 1e-5
+    @test loss(steady_estimation, [0.25]) ≈ gaussian_nll(0.25) rtol = 1e-5
 
-    steady_fit = fit(steady_prepared)
+    steady_fit = solve(steady_estimation, OptimizationOptimJL.LBFGS())
     @test steady_fit.parameters.growth.speed ≈ 0.2 rtol = 1e-4
     fitted_predictions = predict(steady_fit)
     @test fitted_predictions.ensembles[1].success == [true]
@@ -162,19 +177,21 @@ end
           [steady_ideal_concentration(; speed) for speed in draw_speeds] rtol = 2e-6
 
     # Steady fits need numeric conditions, an MSMPR, and declared autonomy.
-    @test_throws ArgumentError prepare_fit(steady_msmpr_model(), [CrystallisationExperiment(;
+    @test_throws ArgumentError EstimationProblem(steady_msmpr_model(), [CrystallisationExperiment(;
         exp_id = 802, observables = steady_experiment.observables,
-        conditions = RunConditions(temperature = 298.15, operation = fixture_msmpr()))], steady_spec;
-        mode = SteadyMode(steady_autonomous_options))
-    @test_throws ArgumentError prepare_fit(steady_msmpr_model(), [CrystallisationExperiment(;
+        conditions = RunConditions(temperature = 298.15, operation = fixture_msmpr()))];
+        bounds = growth_bounds, mode = SteadyMode(steady_autonomous_options))
+    @test_throws ArgumentError EstimationProblem(steady_msmpr_model(), [CrystallisationExperiment(;
         exp_id = 803, observables = steady_experiment.observables,
-        conditions = RunConditions(temperature = 298.15, concentration = 1.0))], steady_spec;
-        mode = SteadyMode(steady_autonomous_options))
-    @test_throws ArgumentError prepare_fit(steady_msmpr_model(), [steady_experiment], steady_spec; mode = SteadyMode())
+        conditions = RunConditions(temperature = 298.15, concentration = 1.0))];
+        bounds = growth_bounds, mode = SteadyMode(steady_autonomous_options))
+    @test_throws ArgumentError EstimationProblem(steady_msmpr_model(), [steady_experiment];
+        bounds = growth_bounds, mode = SteadyMode())
 
     # A candidate that cannot relax within the horizon is a failed prediction, not an error.
     exhausted_predictions = predict(steady_msmpr_model(), [steady_experiment],
         ParameterSamples(growth = (speed = [0.2],)); solver = MoM(), mode = SteadyMode(SteadyStateOptions(relaxation_horizon = 0.01, autonomous = true)))
     @test exhausted_predictions.ensembles[1].success == [false]
+    @test only(exhausted_predictions.ensembles[1].diagnostics).retcode == ReturnCode.MaxIters
     @test_throws ArgumentError prediction_summary(exhausted_predictions, :d43)
 end

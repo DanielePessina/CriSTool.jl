@@ -42,7 +42,7 @@ function plot_predictions(predictions::PredictionResult, experiments = nothing;
         panel_title = failed_count == 0 ? "Experiment $experiment_id" :
             "Experiment $experiment_id ($failed_count failed draws excluded)"
         measured_run = get(measured_runs, experiment_id, nothing)
-        time_minutes = _plot_time_minutes(ensemble.time)
+        time_minutes = _plot_time_minutes(ensemble.t)
         for (column_index, observable_name) in enumerate(plotted_observables)
             hasproperty(ensemble.predictions, observable_name) ||
                 throw(ArgumentError("Experiment $experiment_id has no predicted :$observable_name."))
@@ -83,10 +83,10 @@ Makie.plottype(::CrystallisationSolution) = Makie.Lines
 
 function _solution_time_series_points(solution::CrystallisationSolution, observable_name::Symbol)
     observable_series = observable_values(solution, observable_name)
-    observable_series isa AbstractVector && length(observable_series) == length(solution.time) ||
+    observable_series isa AbstractVector && length(observable_series) == length(solution.t) ||
         throw(ArgumentError("Observable :$observable_name is not a per-time scalar series and " *
                             "cannot be plotted against time."))
-    return Makie.Point2d.(solution.time, observable_series)
+    return Makie.Point2d.(solution.t, observable_series)
 end
 
 Makie.convert_arguments(::Makie.PointBased, solution::CrystallisationSolution) =
@@ -101,7 +101,7 @@ function Makie.convert_arguments(::Makie.PointBased, solution::CrystallisationSo
         throw(DimensionMismatch("solver has $(length(solver.cell_centre)) cells but the solution " *
                                 "has $(size(number_density, 1))."))
     time_index in axes(number_density, 2) ||
-        throw(BoundsError(solution.time, time_index))
+        throw(BoundsError(solution.t, time_index))
     return (Makie.Point2d.(solver.cell_centre, view(number_density, :, time_index)),)
 end
 

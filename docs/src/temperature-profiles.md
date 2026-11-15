@@ -32,7 +32,8 @@ crystal_model = CrystallisationModel(LysozymeSystem();
     nucleation = CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 0.0007),
     growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
 cooling_run = RunConditions(temperature = linear_T, concentration = 18.0)
-solution = simulate(crystal_model, cooling_run; solver = MoM(), saveat = 0.0:3600.0:28800.0)
+cooling_problem = CrystallisationProblem(crystal_model, cooling_run, (0.0, 28_800.0))
+solution = solve(cooling_problem, MoM(); saveat = 3600.0)
 ```
 
 ## Custom profile
@@ -51,5 +52,5 @@ CriSTool.temperature(p::StepTemperature, t) = t < p.t_switch ? p.T1 : p.T2
 profile = StepTemperature(293.15, 288.15, 7200.0) # seconds
 
 step_run = RunConditions(temperature = profile, concentration = 18.0)
-solution = simulate(crystal_model, step_run; solver = MoM(), saveat = 0.0:3600.0:28800.0)
+solution = solve(remake(cooling_problem; conditions = step_run), MoM(); saveat = 3600.0)
 ```

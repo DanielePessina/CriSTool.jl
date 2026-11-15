@@ -28,7 +28,7 @@ function _dqmom_minimum_node_gap(nodes::AbstractVector{T}) where {T}
     return minimum_gap
 end
 
-function _validate_dqmom_public_state(problem::CrystallisationProblem)
+function _validate_dqmom_public_state(problem::DiscretisedProblem)
     solver = problem.solver
     _validate_dqmom_solver(solver)
     problem.initial_population === nothing &&
@@ -59,7 +59,7 @@ function _validate_dqmom_public_state(problem::CrystallisationProblem)
     return problem
 end
 
-function _validate_dqmom_problem(problem::CrystallisationProblem)
+function _validate_dqmom_problem(problem::DiscretisedProblem)
     _validate_dqmom_public_state(problem)
 
     _is_length_law(problem.model.dissolution.law) &&
@@ -98,7 +98,7 @@ end
     return opnorm(projection_matrix, 1) * opnorm(inv(projection_matrix), 1)
 end
 
-function _dqmom_direct_state(problem::CrystallisationProblem)
+function _dqmom_direct_state(problem::DiscretisedProblem)
     solver = problem.solver
     public_state = _get_initial_state(problem)
     nquadrature = solver.nquadrature
@@ -131,7 +131,7 @@ end
 end
 
 """Scaled moment sources `S₀:S₂N₋₁` of crystallisation kinetics on the DQMOM nodes."""
-function _dqmom_moment_source(problem::CrystallisationProblem,
+function _dqmom_moment_source(problem::DiscretisedProblem,
                               parameters,
                               physical_nodes::SVector{N},
                               scaled_weights::SVector{N},
@@ -179,10 +179,10 @@ Growth argument handed to custom solvent dynamics: length-dependent growth
 hands them the node rates, scalar growth the scalar net rate.  The built-in
 dynamics need none, so nothing is computed for them.
 """
-_dqmom_growth_context(::DefaultSolventDynamics, problem::CrystallisationProblem,
+_dqmom_growth_context(::DefaultSolventDynamics, problem::DiscretisedProblem,
                       state, parameters, time, growth_rates) = nothing
 
-function _dqmom_growth_context(solvent_dynamics, problem::CrystallisationProblem,
+function _dqmom_growth_context(solvent_dynamics, problem::DiscretisedProblem,
                                state, parameters, time, growth_rates)
     return _is_length_law(problem.model.growth.law) ? growth_rates :
            net_growth_rate(problem.model.growth.law,
@@ -195,7 +195,7 @@ function _dqmom_growth_context(solvent_dynamics, problem::CrystallisationProblem
 end
 
 """DQMOM RHS on the static normalized weighted-node state; `Val(N)` is the node count."""
-function _dqmom_rhs(problem::CrystallisationProblem, state::SVector{S}, parameters, time,
+function _dqmom_rhs(problem::DiscretisedProblem, state::SVector{S}, parameters, time,
                     feed_population, quadrature_count_value::Val{N}) where {S, N}
     solver = problem.solver
     scaled_weights, scaled_nodes, physical_nodes =
@@ -253,7 +253,7 @@ integrating past the boundary into negative crystal sizes, the solve throws at
 the crossing and points to the solvers that model complete dissolution.
 Partial dissolution that stays above the boundary is unaffected.
 """
-function _dqmom_boundary_callback(problem::CrystallisationProblem)
+function _dqmom_boundary_callback(problem::DiscretisedProblem)
     _dissolution_enabled(problem) || return nothing
     solver = problem.solver
     nquadrature = solver.nquadrature
@@ -269,11 +269,8 @@ function _dqmom_boundary_callback(problem::CrystallisationProblem)
 end
 
 """Construct the DQMOM ODE problem and selected time-stepping algorithm."""
-function crystallisation_odeproblem(solver::DQMOM, problem::CrystallisationProblem, saveat, kinetic_values)
+function crystallisation_odeproblem(solver::DQMOM, problem::DiscretisedProblem, tspan, kinetic_values)
     _validate_dqmom_problem(problem)
-    length(saveat) >= 2 ||
-        throw(ArgumentError("saveat must contain at least two time points."))
-
     parameters = kinetic_values
     internal_values = _dqmom_direct_state(problem)
     element_type = promote_type(eltype(internal_values), eltype(kinetic_values), Float64)
@@ -289,15 +286,15 @@ function crystallisation_odeproblem(solver::DQMOM, problem::CrystallisationProbl
     initial_state = SVector(ntuple(index -> initial_values[index], Val(length(initial_values))))
     ode_problem = ODEProblem{false}(DQMOM_model,
                                     initial_state,
-                                    (saveat[1], saveat[end]),
+                                    tspan,
                                     parameters)
     return ode_problem, _timestepping_algorithm(solver, Tsit5())
 end
 
-_solver_callbacks(solver::DQMOM, problem::CrystallisationProblem, odeproblem) =
+_solver_callbacks(solver::DQMOM, problem::DiscretisedProblem, odeproblem) =
     _dqmom_boundary_callback(problem)
 
-function _wrap_solution(solver::DQMOM, problem::CrystallisationProblem, solution,
+function _wrap_solution(solver::DQMOM, problem::DiscretisedProblem, solution,
                         boundary_flow_state::NamedTuple)
     nquadrature = solver.nquadrature
     internal_matrix = Array(solution)
@@ -414,5 +411,5 @@ function _dqmom_physical_moment(solver::DQMOM, direct_population, order::Integer
 end
 
 """Third physical length moment for secondary nucleation closures."""
-_secondary_third_moment(solver::DQMOM, problem::CrystallisationProblem, direct_population) =
+_secondary_third_moment(solver::DQMOM, problem::DiscretisedProblem, direct_population) =
     _dqmom_physical_moment(solver, direct_population, 3)

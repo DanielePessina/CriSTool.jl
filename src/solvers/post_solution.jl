@@ -290,19 +290,18 @@ _raw_moment_size_metrics(moment_matrix::AbstractMatrix) =
 Assemble a `CrystallisationSolution` from an ODE solution and its population;
 size metrics that failed reconstruction return their `ReconstructionFailure`.
 """
-_crystallisation_solution(problem::CrystallisationProblem, ode_solution, population,
+_crystallisation_solution(problem::DiscretisedProblem, ode_solution, population,
                           size_failure::ReconstructionFailure, final_state,
                           reactor_state::NamedTuple) = size_failure
 
-function _crystallisation_solution(problem::CrystallisationProblem, ode_solution, population,
+function _crystallisation_solution(problem::DiscretisedProblem, ode_solution, population,
                                    size_moments::NamedTuple, final_state, reactor_state::NamedTuple)
     solvent_trajectories = _solvent_solution_state(problem, ode_solution)
     return CrystallisationSolution(collect(ode_solution.t), solvent_trajectories.concentration,
                                    population, size_moments.d10, size_moments.d32,
                                    size_moments.d43, size_moments.moment2,
                                    solvent_trajectories, reactor_state, final_state,
-                                   ode_solution.stats,
-                                   SciMLBase.successful_retcode(ode_solution.retcode))
+                                   ode_solution.stats, ode_solution.retcode)
 end
 
 """
@@ -349,3 +348,20 @@ function observable_values(sol::AbstractSolution, name::Symbol)
         throw(ArgumentError("No simulated observable named :$name for $(typeof(sol))."))
     return getproperty(named_values, name)
 end
+
+"""
+    sol[name::Symbol]
+
+Named trajectory of a solution, the same as `observable_values(sol, name)`:
+`sol[:concentration]`, `sol[:d43]`, `sol[:d50q]`, `sol[:moments]` or a
+configured solvent-state name.
+"""
+Base.getindex(sol::AbstractSolution, name::Symbol) = observable_values(sol, name)
+
+"""
+    successful_retcode(sol::AbstractSolution) -> Bool
+
+Whether the solve behind `sol` succeeded, judged from `sol.retcode` as for any
+SciML solution.
+"""
+SciMLBase.successful_retcode(sol::AbstractSolution) = SciMLBase.successful_retcode(sol.retcode)

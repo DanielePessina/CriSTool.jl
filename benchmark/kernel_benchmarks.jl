@@ -22,8 +22,9 @@ function benchmark_problem(meshsize)
     solver = FiniteVol(meshsize = meshsize, lmax = 50e-6)
     kernel_model = CrystallisationModel(LysozymeSystem();
         growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 1.0))
-    problem = CrystallisationProblem(kernel_model, RunConditions(temperature = 293.15, concentration = 1.0);
-                                     solver = solver)
+    # Kernels receive the solve-time problem, whose state layout is the solver's mesh.
+    problem = CriSTool.DiscretisedProblem(CrystallisationProblem(kernel_model,
+        RunConditions(temperature = 293.15, concentration = 1.0), (0.0, 1.0)), solver)
     state = [abs(sin(index)) for index in 1:meshsize]
     return problem, solver, [state; 1.0]
 end

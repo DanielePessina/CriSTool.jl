@@ -10,10 +10,11 @@ optional slots use no-op laws.
 
 `RunConditions` describe one run: temperature, initial concentration, extra
 solvent values, an optional seed and the reactor operation.
-`simulate(model, conditions; solver, saveat)` returns a physical solution.
-`CrystallisationProblem(model, conditions; solver)` builds the configured
-problem explicitly. Advanced callers can still obtain a generated SciML ODE,
-control callbacks and convert its solution using the solver interfaces.
+`CrystallisationProblem(model, conditions, tspan)` is one configured run, and
+`solve(problem, solver; saveat)` returns its physical solution, as for an
+`ODEProblem`: the solver is chosen at solve time and `remake(problem; conditions,
+tspan, p)` changes the run. Advanced callers can still obtain a generated SciML
+ODE, control callbacks and convert its solution using the solver interfaces.
 
 A `CrystallisationExperiment` stores measured observables and the
 `RunConditions` it was run under. A `FromObservation(:name)` placeholder in
@@ -23,19 +24,21 @@ so a direct simulation must supply a number. Placeholders may stand for the conc
 another solvent value or any numeric seed field. Initialising measurements are
 excluded from scoring. Every other observable retains its own time grid.
 
-`OptimisationSpec`, `BayesianSpec` and `ABCSpec` separately describe studies.
-Their nested names select kinetic parameters; unlisted values remain fixed.
-No initial condition, material property or noise parameter can be selected.
-`prepare_fit(model, experiments, spec; solver, mode, problem_options)` resolves
-names and constructs solve templates once (`mode` is `TransientMode()` or
-`SteadyMode(SteadyStateOptions(...))`); `loss(prepared, values)` exposes the
-selected-vector objective for advanced users and autodiff. `fit(prepared;
-parallel=EnsembleSerial())` runs the study; `parallel = EnsembleThreads()` (also
-accepted by `prepare_fit`) threads either the candidates (Metaheuristics
-population, ABC particles, several NUTS chains) or the experiments of each loss
-evaluation (Optimization.jl solvers, one NUTS chain), never both.
+`EstimationProblem(model, experiments; bounds, priors, loss, solver, mode,
+problem_options)` describes a study. The nested names of its `bounds` (for
+optimisers) or `priors` (for samplers) select kinetic parameters; unlisted
+values remain fixed. No initial condition, material property or noise parameter
+can be selected. Construction resolves names and builds solve templates once
+(`mode` is `TransientMode()` or `SteadyMode(SteadyStateOptions(...))`);
+`loss(problem, values)` exposes the selected-vector objective for advanced users
+and autodiff. `solve(problem, alg; parallel=EnsembleSerial())` runs the study
+with a Metaheuristics algorithm, an Optimization.jl optimiser, a Turing sampler
+such as `NUTS()` or `ABCDE()`; `parallel = EnsembleThreads()` threads either the
+candidates (Metaheuristics population, ABC particles, several MCMC chains) or
+the experiments of each loss evaluation (Optimization.jl optimisers, one MCMC
+chain), never both.
 
-`fit` returns a `FitResult` for optimisation or `InferenceResult` for sampling.
+`solve` returns a `FitResult` for optimisation or `InferenceResult` for sampling.
 An optimisation result contains a new fitted model, named estimates, observable
 objectives and the native backend result. Input models are not mutated.
 

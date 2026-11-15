@@ -161,43 +161,82 @@ function _validate_material_model(crystal_model::CrystallisationModel)
 end
 
 """
-    CrystallisationProblem(model, conditions; solver=MoM(),
+    CrystallisationProblem(model, conditions, tspan, p = <model values>;
                            solvent_dynamics=default_solvent_dynamics,
                            solid_mass_concentration_threshold=1e-12)
 
-Configure a model under numeric `RunConditions` for simulation or steady
-solving. A missing seed means an empty population. The keywords are the only
-numerical settings; material, kinetic and run conditions come from `model` and
-`conditions`.
+Configure a model under numeric `RunConditions` over `tspan = (t0, tf)`
+seconds, with kinetic values `p` (any vector in `paramaxis(model)` order,
+defaulting to the model's bound values). A missing seed means an empty
+population. The keywords are the only other settings; the numerical solver is
+chosen in `solve(problem, solver)`.
 """
-function CrystallisationProblem(crystal_model::CrystallisationModel, run_conditions::RunConditions;
-        solver::AbstractSolver = MoM(), solvent_dynamics = default_solvent_dynamics,
+function CrystallisationProblem(crystal_model::CrystallisationModel, run_conditions::RunConditions, tspan,
+        kinetic_values::AbstractVector = _bound_kinetic_values(crystal_model);
+        solvent_dynamics = default_solvent_dynamics,
         solid_mass_concentration_threshold::Real = 1e-12, unsupported_settings...)
     isempty(unsupported_settings) || throw(ArgumentError(
         "Unsupported problem settings $(Tuple(keys(unsupported_settings))); material, kinetic and run " *
-        "conditions are set by the model and conditions."))
+        "conditions are set by the model and conditions, the solver by solve(problem, solver)."))
     unresolved_sources = observation_sources(run_conditions)
     isempty(unresolved_sources) || throw(ArgumentError(
         "Conditions read $(Tuple(unresolved_sources)) from observations; supply numbers or use an experiment."))
-    configured_run = CrystallisationProblem(crystal_model, run_conditions.temperature, run_conditions.solvent,
-        nothing, run_conditions.operation, solver, solvent_dynamics, Float64(solid_mass_concentration_threshold))
-    _validate_crystallisation_problem(configured_run)
-    run_conditions.crystals === nothing && return configured_run
-    return _problem_with_initial_values(configured_run,
-        _initial_population(configured_run, run_conditions.crystals), configured_run.initial_solvent_state)
+    parameter_axis = paramaxis(crystal_model.nucleation.law, crystal_model.growth.law,
+        crystal_model.dissolution.law, crystal_model.aggregation.law, crystal_model.breakage.law)
+    configured_run = CrystallisationProblem(crystal_model, run_conditions, _checked_tspan(tspan),
+        _kinetic_values_on_axis(parameter_axis, kinetic_values), solvent_dynamics,
+        Float64(solid_mass_concentration_threshold))
+    return _validate_crystallisation_problem(configured_run)
 end
 
-"""
-    simulate(model, conditions; solver=MoM(), saveat, kwargs...)
-    simulate(problem; saveat, kwargs...)
+"""The model's bound kinetic values as a `Float64` vector in `paramaxis` order."""
+_bound_kinetic_values(crystal_model::CrystallisationModel) =
+    Vector{Float64}(ComponentArray(; _model_named_values(crystal_model)...))
 
-Return the physical trajectory at the requested times in seconds.
 """
-simulate(crystal_model::CrystallisationModel, run_conditions::RunConditions;
-        solver::AbstractSolver = MoM(), saveat, kwargs...) =
-    simulate(CrystallisationProblem(crystal_model, run_conditions; solver); saveat, kwargs...)
-simulate(configured_run::CrystallisationProblem; saveat, kwargs...) =
-    last(runsimulation(configured_run; save_idx = saveat, kwargs...))
+    remake(problem::CrystallisationProblem; model, conditions, tspan, p,
+           solvent_dynamics, solid_mass_concentration_threshold)
+
+Copy `problem` with the given fields replaced and validated again. Without `p`,
+a replaced `model` brings its own bound kinetic values; `remake(problem; p)`
+is the differentiable way to solve one run for other kinetic values.
+"""
+function SciMLBase.remake(configured_run::CrystallisationProblem; model = missing, conditions = missing,
+        tspan = missing, p = missing, solvent_dynamics = missing,
+        solid_mass_concentration_threshold = missing)
+    remade_model = coalesce(model, configured_run.model)
+    return CrystallisationProblem(remade_model, coalesce(conditions, configured_run.conditions),
+        coalesce(tspan, configured_run.tspan), _remade_kinetic_values(p, model, configured_run);
+        solvent_dynamics = coalesce(solvent_dynamics, configured_run.solvent_dynamics),
+        solid_mass_concentration_threshold = coalesce(solid_mass_concentration_threshold,
+            configured_run.solid_mass_concentration_threshold))
+end
+
+# Explicit values win; a new model without values brings its bound values.
+_remade_kinetic_values(kinetic_values, model, configured_run) = kinetic_values
+_remade_kinetic_values(::Missing, ::Missing, configured_run) = configured_run.p
+_remade_kinetic_values(::Missing, crystal_model::CrystallisationModel, configured_run) =
+    _bound_kinetic_values(crystal_model)
+
+"""
+    DiscretisedProblem(problem::CrystallisationProblem, solver::AbstractSolver)
+
+Resolve `problem` into the state layout of `solver`, validating the
+solver-specific contract and turning the seed into the initial population block.
+"""
+function DiscretisedProblem(configured_run::CrystallisationProblem, solver::AbstractSolver)
+    run_conditions = configured_run.conditions
+    discretised_run = DiscretisedProblem(configured_run.model, run_conditions.temperature,
+        run_conditions.solvent, nothing, run_conditions.operation, solver,
+        configured_run.solvent_dynamics, configured_run.solid_mass_concentration_threshold)
+    _validate_discretised_problem(discretised_run)
+    return _with_initial_crystals(discretised_run, run_conditions.crystals)
+end
+
+_with_initial_crystals(discretised_run::DiscretisedProblem, ::Nothing) = discretised_run
+_with_initial_crystals(discretised_run::DiscretisedProblem, initial_crystals::AbstractInitialCrystals) =
+    _problem_with_initial_values(discretised_run, _initial_population(discretised_run, initial_crystals),
+        discretised_run.initial_solvent_state)
 
 """Context for callable kinetics, with physical values and advanced problem/state access."""
 struct KineticContext{Problem, State, Time}
@@ -250,14 +289,14 @@ required_properties(callable_law::_CallableKinetic) = callable_law.required
 KineticModel(callable_law::_CallableKinetic) = KineticModel(callable_law; parameters = callable_law.schema)
 _bound_kinetic(callable_law::_CallableKinetic) = KineticModel(callable_law)
 
-growthrate(callable_law::CallableGrowth, candidate_values, configured_run::CrystallisationProblem, numerical_state, clock_time) =
+growthrate(callable_law::CallableGrowth, candidate_values, configured_run::DiscretisedProblem, numerical_state, clock_time) =
     callable_law.callable(_named_params(callable_law, candidate_values), KineticContext(configured_run, numerical_state, clock_time))
-nucleationrate(callable_law::CallableNucleation, candidate_values, configured_run::CrystallisationProblem, numerical_state, clock_time) =
+nucleationrate(callable_law::CallableNucleation, candidate_values, configured_run::DiscretisedProblem, numerical_state, clock_time) =
     callable_law.callable(_named_params(callable_law, candidate_values), KineticContext(configured_run, numerical_state, clock_time))
-growthrate_at_length(callable_law::CallableLengthGrowth, candidate_values, configured_run::CrystallisationProblem, numerical_state, clock_time, crystal_length) =
+growthrate_at_length(callable_law::CallableLengthGrowth, candidate_values, configured_run::DiscretisedProblem, numerical_state, clock_time, crystal_length) =
     callable_law.callable(_named_params(callable_law, candidate_values), KineticContext(configured_run, numerical_state, clock_time), crystal_length)
 function growthrate!(destination::AbstractVector, callable_law::CallableLengthGrowth, candidate_values,
-        configured_run::CrystallisationProblem, numerical_state, clock_time, length_mesh::AbstractVector)
+        configured_run::DiscretisedProblem, numerical_state, clock_time, length_mesh::AbstractVector)
     length(destination) == length(length_mesh) || throw(DimensionMismatch("Rate buffer must match mesh."))
     named_values = _named_params(callable_law, candidate_values)
     rate_context = KineticContext(configured_run, numerical_state, clock_time)

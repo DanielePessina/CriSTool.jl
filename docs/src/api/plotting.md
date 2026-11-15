@@ -27,8 +27,9 @@ ensembles.
 
 ```julia
 using CairoMakie
-solution = simulate(model, conditions; solver = FiniteVol(meshsize = 80, lmax = 50e-6),
-    saveat = 0:600:7200)
+solver = FiniteVol(meshsize = 80, lmax = 50e-6)
+solution = solve(CrystallisationProblem(model, conditions, (0.0, 7200.0)), solver;
+    saveat = 0.0:600.0:7200.0)
 lines(solution, :d43; axis = (xlabel = "Time [s]", ylabel = "d43 [m]"))
 lines(solution, solver, 5)   # size distribution at the fifth saved time
 ```

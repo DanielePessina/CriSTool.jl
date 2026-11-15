@@ -12,17 +12,19 @@ crystal_model = CrystallisationModel(LysozymeSystem();
     growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
 
 batch_run = RunConditions(temperature = 293.15, concentration = 18.0)
-trajectory = simulate(crystal_model, batch_run; solver = MoM(), saveat = 0.0:3600.0:28800.0)
-trajectory.success
-trajectory.concentration[end]
-trajectory.d43[end]
+problem = CrystallisationProblem(crystal_model, batch_run, (0.0, 28_800.0))
+trajectory = solve(problem, MoM(); saveat = 3600.0)
+successful_retcode(trajectory)
+trajectory[:concentration][end]
+trajectory[:d43][end]
 ```
 
 Calling a law with all of its parameter names binds the values; `CNTNucleation()`
 alone is the unbound law. `RunConditions` hold everything else about a run:
 temperature, initial concentration, an optional seed and the reactor operation.
-`runsimulation` remains the low-level interface for automatic differentiation
-and sensitivity work.
+The problem holds no solver; pass one to `solve`, as with an `ODEProblem`.
+`solve(remake(problem; p = values), solver)` is the differentiable interface for
+automatic differentiation and sensitivity work.
 
 Start with [Model workflow](model-workflow.md) and [Running simulations](simulation.md).
 Then follow [Measurements](measurements.md), [Parameter estimation](parameter-estimation.md)

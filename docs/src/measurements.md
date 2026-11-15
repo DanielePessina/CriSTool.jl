@@ -120,15 +120,13 @@ series for the standard workflow.
 
 Losses consume every observable in the experiment: each named observable
 contributes an objective term over all of its time points. Evaluate a loss
-through a prepared fit, which selects the kinetic parameters by name:
+through an `EstimationProblem`, which selects the kinetic parameters by name:
 
 ```julia
-using Metaheuristics
-fit_specification = OptimisationSpec(
+estimation_problem = EstimationProblem(crystal_model, experiments;
     bounds = (growth = (growth_coefficient = (1e-12, 1e-9), growth_order = (1.0, 4.0)),),
-    algorithm = DE(N = 16), loss = MeanAbsoluteError())
-prepared_fit = prepare_fit(crystal_model, experiments, fit_specification; solver = MoM())
-objective_value = loss(prepared_fit, [1e-9 / 60, 3.0])
+    loss = MeanAbsoluteError(), solver = MoM())
+objective_value = loss(estimation_problem, [1e-9 / 60, 3.0])
 ```
 
 The vector follows the order of the selected names. `loss_terms` reports the
@@ -139,8 +137,8 @@ per-observable objectives.
 Every experiment carries `RunConditions`. A `FromObservation(:name)` value is
 read from the experiment's own time-zero observation of `:name`. The initial
 concentration defaults to `FromObservation(:concentration)`, so transient
-fitting requires an exact sample at time zero; a late first measurement fails
-preparation. Seeds use the same placeholder in any numeric field:
+fitting requires an exact sample at time zero; a late first measurement makes
+`EstimationProblem` throw. Seeds use the same placeholder in any numeric field:
 
 ```julia
 seeded_experiment = CrystallisationExperiment(

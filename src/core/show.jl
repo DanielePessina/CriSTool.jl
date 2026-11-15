@@ -182,13 +182,55 @@ function Base.show(display_io::IO, crystal_model::CrystallisationModel)
         for slot_name in active_slots), ", "), ")")
 end
 
+# --- problems ---------------------------------------------------------------
+
+_tspan_text(tspan::Tuple{Float64, Float64}) =
+    string(_number_text(first(tspan)), " … ", _number_text(last(tspan)), " s")
+
+function Base.show(display_io::IO, ::MIME"text/plain", problem::CrystallisationProblem)
+    problem_rows = ["model" => sprint(show, problem.model), "conditions" => sprint(show, problem.conditions),
+        "tspan" => _tspan_text(problem.tspan), "p" => string(length(problem.p), "-entry kinetic vector")]
+    print(display_io, _labelled_summary("CrystallisationProblem", problem_rows))
+end
+Base.show(display_io::IO, problem::CrystallisationProblem) =
+    print(display_io, "CrystallisationProblem(", problem.conditions, ", ", _tspan_text(problem.tspan), ")")
+
+Base.show(display_io::IO, steady_problem::CrystallisationSteadyStateProblem) =
+    print(display_io, "CrystallisationSteadyStateProblem(", steady_problem.problem.conditions,
+        isnothing(steady_problem.u0) ? "" : ", initial guess", ")")
+Base.show(display_io::IO, ::MIME"text/plain", steady_problem::CrystallisationSteadyStateProblem) =
+    show(display_io, steady_problem)
+
+# Which selection an estimation problem carries.
+_selection_kind_text(::NamedTuple, ::Nothing) = "bounds"
+_selection_kind_text(::Nothing, ::NamedTuple) = "priors"
+_selection_kind_text(::NamedTuple, ::NamedTuple) = "bounds and priors"
+
+function Base.show(display_io::IO, ::MIME"text/plain", estimation_problem::EstimationProblem)
+    prepared_setup = estimation_problem.setup
+    estimation_rows = ["model" => sprint(show, estimation_problem.model),
+        "experiments" => string(length(prepared_setup.experiments), " (observables ",
+            join(prepared_setup.observable_names, ", "), ")"),
+        "selects" => string(join(estimation_problem.selection.names, ", "), " by ",
+            _selection_kind_text(estimation_problem.bounds, estimation_problem.priors)),
+        "loss" => string(nameof(typeof(estimation_problem.loss))),
+        "solver" => sprint(show, estimation_problem.solver),
+        "mode" => string(nameof(typeof(prepared_setup.solves.mode)))]
+    print(display_io, _labelled_summary("EstimationProblem", estimation_rows))
+end
+Base.show(display_io::IO, estimation_problem::EstimationProblem) =
+    print(display_io, "EstimationProblem(", length(estimation_problem.setup.experiments), " experiments, ",
+        length(estimation_problem.selection.names), " parameters by ",
+        _selection_kind_text(estimation_problem.bounds, estimation_problem.priors), ", ",
+        nameof(typeof(estimation_problem.loss)), ", ", estimation_problem.solver, ")")
+
 # --- solutions --------------------------------------------------------------
 
 _population_description(population::MeshPopulation) = string(size(population.numberdensity, 1), "-cell mesh")
 _population_description(population::MomentPopulation) = string("moments µ0 … µ", size(population.moments, 1) - 1)
 _population_description(population::QuadraturePopulation) = string(size(population.nodes, 1), "-node quadrature")
 
-_success_text(success::Bool) = success ? "success" : "failed"
+_retcode_text(retcode::SciMLBase.ReturnCode.T) = string("retcode = ", retcode)
 
 _ode_stats_text(stats::SciMLBase.DEStats) = string(stats.nf, " RHS evaluations, ", stats.naccept,
     " accepted / ", stats.nreject, " rejected steps")
@@ -204,25 +246,25 @@ _size_trajectory_text(size_series::AbstractVector) = any(isnan, size_series) ? "
     _first_last_text(size_series, size_value -> _number_text(_display_real(size_value) * _METRES_TO_MICROMETRES)) * " µm"
 
 function Base.show(display_io::IO, ::MIME"text/plain", solution::CrystallisationSolution)
-    solution_rows = ["time" => _time_range_text(solution.time),
+    solution_rows = ["t" => _time_range_text(solution.t),
         "concentration" => _first_last_text(solution.concentration, _number_text) * " kg/m³",
         "d43" => _size_trajectory_text(solution.d43),
         "ODE" => _ode_stats_text(solution.ode_stats)]
     heading = string("CrystallisationSolution{", nameof(typeof(solution.population)), "} — ",
-        _population_description(solution.population), ", ", _success_text(solution.success))
+        _population_description(solution.population), ", ", _retcode_text(solution.retcode))
     print(display_io, _labelled_summary(heading, solution_rows))
 end
 
 function Base.show(display_io::IO, solution::CrystallisationSolution)
-    saved_times = solution.time
+    saved_times = solution.t
     time_text = isempty(saved_times) ? "no saves" :
         string(_number_text(first(saved_times)), "–", _number_text(last(saved_times)), " s")
     print(display_io, "CrystallisationSolution(", nameof(typeof(solution.population)), ", ",
-        length(saved_times), " saves, ", time_text, ", ", _success_text(solution.success), ")")
+        length(saved_times), " saves, ", time_text, ", ", _retcode_text(solution.retcode), ")")
 end
 
 _steady_status_text(steady::CrystallisationSteadyStateSolution) =
-    steady.success ? "converged" : "not converged"
+    SciMLBase.successful_retcode(steady) ? "converged" : "not converged"
 _steady_scalar_text(scalar_value::Real, to_text) = to_text(scalar_value)
 _steady_scalar_text(other_value, to_text) = "not a scalar"
 
@@ -246,14 +288,6 @@ _algorithm_label(algorithm) = string(nameof(typeof(algorithm)))
 _algorithm_label(::Nothing) = "default"
 _algorithm_label(algorithm::Metaheuristics.Algorithm) = string(nameof(typeof(algorithm.parameters)))
 
-_specification_label(specification::OptimisationSpec) =
-    string("OptimisationSpec(", _algorithm_label(specification.algorithm), ")")
-_specification_label(specification::BayesianSpec) = string("BayesianSpec(", _bayesian_sampler_label(specification.sampler), ")")
-# `sampler = nothing` is resolved to `Turing.NUTS()` by the Turing extension.
-_bayesian_sampler_label(::Nothing) = "NUTS"
-_bayesian_sampler_label(sampler) = _algorithm_label(sampler)
-_specification_label(specification::ABCSpec) = string("ABCSpec(", _algorithm_label(specification.sampler), ")")
-
 # Only Optimization.jl results report a convergence status.
 _fit_status_suffix(backend_result) = ""
 _fit_status_suffix(backend_result::SciMLBase.AbstractOptimizationSolution) =
@@ -263,7 +297,7 @@ _fit_status_suffix(backend_result::SciMLBase.AbstractOptimizationSolution) =
 _total_loss(fit_result::FitResult) = sum(values(fit_result.objectives))
 
 function Base.show(display_io::IO, ::MIME"text/plain", fit_result::FitResult)
-    print(display_io, "FitResult — ", _specification_label(fit_result.preparation.specification),
+    print(display_io, "FitResult — ", _algorithm_label(fit_result.alg),
         ", loss = ", _number_text(_total_loss(fit_result)), _fit_status_suffix(fit_result.backend_result))
     parameter_leaves = _named_parameter_leaves(fit_result.parameters)
     isempty(parameter_leaves) && return nothing
@@ -273,7 +307,7 @@ function Base.show(display_io::IO, ::MIME"text/plain", fit_result::FitResult)
     end
 end
 Base.show(display_io::IO, fit_result::FitResult) =
-    print(display_io, "FitResult(", _specification_label(fit_result.preparation.specification),
+    print(display_io, "FitResult(", _algorithm_label(fit_result.alg),
         ", loss = ", _number_text(_total_loss(fit_result)), ", ", length(_named_parameter_leaves(fit_result.parameters)),
         " parameters)")
 
@@ -286,7 +320,7 @@ Base.show(display_io::IO, ::MIME"text/plain", samples::ParameterSamples) = show(
 
 function Base.show(display_io::IO, ::MIME"text/plain", inference_result::InferenceResult)
     posterior_samples = inference_result.samples
-    print(display_io, "InferenceResult — ", _specification_label(inference_result.preparation.specification),
+    print(display_io, "InferenceResult — ", _algorithm_label(inference_result.alg),
         ", ", _draw_count(posterior_samples), " draws")
     name_width = maximum(length, posterior_samples.names)
     for (row_index, parameter_path) in enumerate(posterior_samples.names)
@@ -296,14 +330,14 @@ function Base.show(display_io::IO, ::MIME"text/plain", inference_result::Inferen
     end
 end
 Base.show(display_io::IO, inference_result::InferenceResult) =
-    print(display_io, "InferenceResult(", _specification_label(inference_result.preparation.specification),
+    print(display_io, "InferenceResult(", _algorithm_label(inference_result.alg),
         ", ", length(inference_result.samples.names), " parameters, ", _draw_count(inference_result.samples), " draws)")
 
 function Base.show(display_io::IO, ::MIME"text/plain", predictions::PredictionResult)
     print(display_io, "PredictionResult — ", length(predictions.experiments), " runs, ",
         _draw_count(predictions.samples), " draws")
     for (run_id, ensemble) in zip(predictions.experiments, predictions.ensembles)
-        print(display_io, "\n  run ", run_id, ": ", length(ensemble.time), " saves, observables (",
+        print(display_io, "\n  run ", run_id, ": ", length(ensemble.t), " saves, observables (",
             join(keys(ensemble.predictions), ", "), "), ", count(ensemble.success), "/", length(ensemble.success),
             " draws succeeded")
     end

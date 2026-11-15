@@ -2,13 +2,13 @@
 # known quadratures, convergence orders and conservation identities that the
 # end-to-end simulations in test_simulate.jl cannot localise.
 
-# Minimal problem carrying only what the kernels read: solubility (C_sat = 10),
-# solver mesh, and (for CNT) the lysozyme molecular volume at 293.15 K.
+# Minimal solve-time problem carrying only what the kernels read: solubility
+# (C_sat = 10), solver mesh, and (for CNT) the lysozyme molecular volume at 293.15 K.
 const numerics_system = LysozymeSystem(saturation_model = ConstantSolubility(10.0))
 numerics_problem(; solver = FiniteVol(meshsize = 3, lmax = 3e-6), concentration = 20.0) =
-    CrystallisationProblem(CrystallisationModel(numerics_system;
+    CriSTool.DiscretisedProblem(CrystallisationProblem(CrystallisationModel(numerics_system;
             growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 1.0)),
-        RunConditions(temperature = 293.15, concentration = concentration); solver)
+        RunConditions(temperature = 293.15, concentration = concentration), (0.0, 1.0)), solver)
 # Population block of `population_count` zeros followed by concentration C;
 # with C_sat = 10 the supersaturation is C / 10.
 numerics_state(population_count, concentration) = [zeros(population_count); concentration]
@@ -252,7 +252,7 @@ end
     combined_problem = CrystallisationProblem(CrystallisationModel(LysozymeSystem();
             nucleation = bound_combination,
             growth = EmpiricalGrowth(growth_coefficient = 2e-11, growth_order = 3.0)),
-        RunConditions(temperature = 293.15, concentration = 18.0))
+        RunConditions(temperature = 293.15, concentration = 18.0), (0.0, 1.0))
     combined_values = kinetic_parameter_vector(combined_problem)
     @test collect(combined_values) == [38.0, 6e-4, 9.0, 1.0, 2e-11, 3.0]
     @test combined_values.nucl.secondary.nucleation_order == 1.0
@@ -276,7 +276,7 @@ end
         evaluations::Base.RefValue{Int}
     end
     function CriSTool.dissolutionrate_at_length(counting_law::NumericsCountingLengthDissolution, parameters,
-            problem::CriSTool.CrystallisationProblem, state, time, crystal_length::Real)
+            problem::CriSTool.DiscretisedProblem, state, time, crystal_length::Real)
         counting_law.evaluations[] += 1
         return -parameters[1] * crystal_length
     end
@@ -352,9 +352,13 @@ function numerics_boundary_problem(growth_law, growth_parameters::NamedTuple;
     boundary_model = CrystallisationModel(numerics_boundary_system;
         nucleation = KineticModel(NumericsBoundaryNucleation(); parameters = (; boundary_birth = 8.0)),
         growth = KineticModel(growth_law; parameters = growth_parameters))
-    return CrystallisationProblem(boundary_model, RunConditions(; temperature = 293.15, concentration = 5.0, operation); solver)
+    return CriSTool.DiscretisedProblem(CrystallisationProblem(boundary_model,
+        RunConditions(; temperature = 293.15, concentration = 5.0, operation), (0.0, 2.0)), solver)
 end
-numerics_saved_solution(problem, saved_times, saved_states; parameters = CriSTool.kinetic_parameter_vector(problem)) =
+# The model's bound kinetic values on the problem's composite axis.
+numerics_bound_values(problem) =
+    CriSTool.ComponentArray(CriSTool._bound_kinetic_values(problem.model), paramaxis(problem))
+numerics_saved_solution(problem, saved_times, saved_states; parameters = numerics_bound_values(problem)) =
     (; t = saved_times, u = saved_states, prob = (; p = parameters))
 numerics_boundary_flows(problem, saved_times, saved_states; kwargs...) = CriSTool._mesh_boundary_flow_state(
     problem.solver, problem, numerics_saved_solution(problem, saved_times, saved_states; kwargs...))

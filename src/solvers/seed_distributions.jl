@@ -138,10 +138,9 @@ _number_weighted_distribution(length_distribution, seed_description) =
 
 _validate_initial_crystals(seed_description::DistributionInitialCrystals) = seed_description
 
-"""`seed_domain_diagnostics(problem, seed)` reports omitted number and mass fractions."""
-seed_domain_diagnostics(configured_run::CrystallisationProblem,
-                        seed_description::DistributionInitialCrystals) =
-    _seed_domain_diagnostics(configured_run.solver, seed_description)
+"""`seed_domain_diagnostics(solver, seed)` reports the seed's number and mass fractions outside the solver's mesh."""
+seed_domain_diagnostics(solver::AbstractSolver, seed_description::DistributionInitialCrystals) =
+    _seed_domain_diagnostics(solver, seed_description)
 
 _seed_domain_diagnostics(solver::AbstractMomentSolver, seed_description) =
     (; omitted_number_fraction = 0.0, omitted_mass_fraction = 0.0)
@@ -156,7 +155,7 @@ function _seed_domain_diagnostics(solver::AbstractDiscretisedSolver, seed_descri
         omitted_mass_fraction = max(0.0, 1 - mass_fraction))
 end
 
-function _seed_population(solver::AbstractDiscretisedSolver, configured_run::CrystallisationProblem,
+function _seed_population(solver::AbstractDiscretisedSolver, configured_run::DiscretisedProblem,
         seed_description::DistributionInitialCrystals)
     domain_report = _seed_domain_diagnostics(solver, seed_description)
     domain_report.omitted_mass_fraction <= seed_description.mass_loss_tolerance ||

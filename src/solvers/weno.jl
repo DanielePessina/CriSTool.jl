@@ -334,7 +334,7 @@ returned values. This solve-local callback instead caps the next step from the
 accepted-state transport rate, including initialization. For varying rates
 this is a local CFL estimate, not a guarantee about every intermediate stage.
 """
-function _weno_cfl_callback(CryProblem::CrystallisationProblem, time_scalar_type::Type)
+function _weno_cfl_callback(CryProblem::DiscretisedProblem, time_scalar_type::Type)
     growth_layout = _mesh_growth_layout(CryProblem)
     growth_rate_cache_dc = _weno_cfl_growth_cache(growth_layout, CryProblem)
     weno_cfl_bound(numerical_state, kinetic_parameters, simulation_time) =
@@ -363,7 +363,7 @@ end
                          nucleation_rate) =
     _fill_weno_flux!(face_flux, numberdensity, net_growth, nucleation_rate, padding)
 
-function crystallisation_odeproblem(solver::WENO, CryProblem::CrystallisationProblem, saveat, kinetic_values)
+function crystallisation_odeproblem(solver::WENO, CryProblem::DiscretisedProblem, tspan, kinetic_values)
     flux_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize + 1))
     growth_rate_cache_dc = DiffCache(zeros(CryProblem.solver.meshsize))
     weno_rhs! = _mesh_population_rhs(CryProblem, flux_cache_dc, growth_rate_cache_dc,
@@ -371,9 +371,9 @@ function crystallisation_odeproblem(solver::WENO, CryProblem::CrystallisationPro
 
     utyped = eltype(kinetic_values).(_get_initial_state(CryProblem))
     signed_growth_transport = _dissolution_enabled(CryProblem)
-    ODEprob = ODEProblem(weno_rhs!, utyped, (saveat[1], saveat[end]), kinetic_values)
+    ODEprob = ODEProblem(weno_rhs!, utyped, tspan, kinetic_values)
     return (ODEprob, _timestepping_algorithm(solver, signed_growth_transport ? SSPRK43() : Tsit5()))
 end
 
-_solver_callbacks(solver::WENO, problem::CrystallisationProblem, odeproblem) =
+_solver_callbacks(solver::WENO, problem::DiscretisedProblem, odeproblem) =
     _weno_cfl_callback(problem, typeof(float(first(odeproblem.tspan))))

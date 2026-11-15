@@ -61,8 +61,9 @@ needed for a paper or release note.
 
 ## Named model interface
 
-`model_interface.jl` compares built-in/callable growth rates, configured/model
-simulation entry points, and full/selected prepared losses. It verifies matched
+`model_interface.jl` compares built-in/callable growth rates, a plain
+`solve(problem, MoM())` against `solve(remake(problem; p), MoM())`, and
+full/selected prepared losses. It verifies matched
 physical trajectories and objectives before timing, using BenchmarkTools medians
 and warmed inputs. BenchmarkTools is a benchmark-only dependency.
 
@@ -75,7 +76,8 @@ julia --project=. -e 'push!(LOAD_PATH, joinpath(pwd(), "benchmark")); include("b
 ```
 
 Observed on Julia 1.12.4, one thread, Apple M1, using the root resolved environment
-and the second command (2026-10-07):
+and the second command (2026-10-07, before the `solve(problem, solver)` interface;
+the two solve rows then measured `runsimulation(problem)` and `simulate(problem)`):
 
 | Workload | Median | Bytes | Allocations |
 | --- | ---: | ---: | ---: |

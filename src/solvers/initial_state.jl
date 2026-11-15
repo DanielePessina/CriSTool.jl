@@ -150,7 +150,7 @@ _require_fourth_raw_moment(solver::AbstractMomentSolver) =
                             "that tracks through the fourth raw moment."))
 
 """Raw moments `µ0..µ_{count-1}` (SI) of a seed scaled to its solid mass concentration."""
-function _seed_raw_moments(problem::CrystallisationProblem, seed_description::DistributionInitialCrystals,
+function _seed_raw_moments(problem::DiscretisedProblem, seed_description::DistributionInitialCrystals,
                            moment_total::Integer)
     target_mu3 = seed_description.mass_concentration / _solid_mass_factor(problem)
     number_scale = target_mu3 / _seed_raw_moment(seed_description, 3)
@@ -165,11 +165,11 @@ Initial population block for `solver`: raw moments (MoM, QMOM), positive
 weights and distinct physical nodes (DQMOM), or cell-averaged number density
 (mesh solvers, exact cell integrals of the seed density).
 """
-_seed_population(solver::Union{MoM, QMOM}, problem::CrystallisationProblem,
+_seed_population(solver::Union{MoM, QMOM}, problem::DiscretisedProblem,
                  seed_description::DistributionInitialCrystals) =
     _seed_raw_moments(problem, seed_description, moment_count(solver))
 
-function _seed_population(solver::DQMOM, problem::CrystallisationProblem,
+function _seed_population(solver::DQMOM, problem::DiscretisedProblem,
                           seed_description::DistributionInitialCrystals)
     nquadrature = solver.nquadrature
     raw_moments = _seed_raw_moments(problem, seed_description, moment_count(solver))
@@ -196,35 +196,38 @@ Inlet population in the coordinates of the solver's transport terms: the
 initial-state population block, except DQMOM, whose feed exchange is applied
 to physical raw moments.
 """
-_feed_population(solver::AbstractSolver, problem::CrystallisationProblem, seed_description::Nothing) =
+_feed_population(solver::AbstractSolver, problem::DiscretisedProblem, seed_description::Nothing) =
     zeros(_population_state_count(solver))
-function _feed_population(solver::AbstractSolver, problem::CrystallisationProblem,
+function _feed_population(solver::AbstractSolver, problem::DiscretisedProblem,
                           seed_description::DistributionInitialCrystals)
     _validate_seed_for_solver(solver, seed_description.d43)
     return _seed_population(solver, problem, seed_description)
 end
-function _feed_population(solver::DQMOM, problem::CrystallisationProblem,
+function _feed_population(solver::DQMOM, problem::DiscretisedProblem,
                           seed_description::DistributionInitialCrystals)
     _validate_seed_for_solver(solver, seed_description.d43)
     return _seed_raw_moments(problem, seed_description, moment_count(solver))
 end
 
 """
-    initial_state_from_characteristics(problem, initial_crystals) -> Vector
+    initial_state_from_characteristics(problem, solver, initial_crystals) -> Vector
 
-Construct the complete solver state from an initial crystal population
-specification. `mass_concentration` is crystal solid mass per batch volume in
-kg/m³, and `d43` is in metres. Use `LogNormalInitialCrystals` with a
+Construct the complete `solver` state of `problem` from an initial crystal
+population specification. `mass_concentration` is crystal solid mass per batch
+volume in kg/m³, and `d43` is in metres. Use `LogNormalInitialCrystals` with a
 dimensionless `geometric_std`, `GaussianInitialCrystals` with a metre-valued
 `standard_deviation`, or a `DistributionInitialCrystals`.
 
 The returned vector contains population variables followed by the operation
-and `problem.initial_solvent_state` values. Every description is first
-resolved into a `DistributionInitialCrystals`; mesh solvers receive exact cell
-integrals of its density. A zero d43 represents an empty population and must
-be paired with zero mass concentration.
+and initial solvent values. Every description is first resolved into a
+`DistributionInitialCrystals`; mesh solvers receive exact cell integrals of its
+density. A zero d43 represents an empty population and must be paired with
+zero mass concentration.
 """
-initial_state_from_characteristics(problem::CrystallisationProblem,
+initial_state_from_characteristics(problem::CrystallisationProblem, solver::AbstractSolver,
+                                   initial_crystals::AbstractInitialCrystals) =
+    initial_state_from_characteristics(DiscretisedProblem(problem, solver), initial_crystals)
+initial_state_from_characteristics(problem::DiscretisedProblem,
                                    initial_crystals::AbstractInitialCrystals) =
     vcat(_initial_population(problem, initial_crystals),
          _operation_initial_state(problem.operation),
@@ -236,11 +239,11 @@ initial_state_from_characteristics(problem::CrystallisationProblem,
 Population block of the initial state for `initial_crystals`, after the
 solver-specific seed check. An empty seed gives zeros.
 """
-_initial_population(problem::CrystallisationProblem, initial_crystals::AbstractInitialCrystals) =
+_initial_population(problem::DiscretisedProblem, initial_crystals::AbstractInitialCrystals) =
     _initial_population(problem, _checked_seed_description(initial_crystals))
-_initial_population(problem::CrystallisationProblem, seed_description::Nothing) =
+_initial_population(problem::DiscretisedProblem, seed_description::Nothing) =
     zeros(Float64, _population_state_count(problem.solver))
-function _initial_population(problem::CrystallisationProblem, seed_description::DistributionInitialCrystals)
+function _initial_population(problem::DiscretisedProblem, seed_description::DistributionInitialCrystals)
     _validate_seed_for_solver(problem.solver, seed_description.d43)
     return Vector{Float64}(_seed_population(problem.solver, problem, seed_description))
 end

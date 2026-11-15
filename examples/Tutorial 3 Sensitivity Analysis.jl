@@ -5,7 +5,7 @@ Two complementary global sensitivity workflows on the terminal concentration:
   1. Sobol indices (variance-decomposition) via `gsa(...; Sobol2007 estimator)`.
   2. DGSM (derivative-based) via `gsa(...; DGSM())`.
 
-Both wrap the same `runsimulation(parameters, problem)` forward map. Bounds are 0.5×–1.5× around
+Both wrap the same `solve(remake(problem; p = parameters), MoM())` forward map. Bounds are 0.5×–1.5× around
 a baseline parameter set.
 =#
 
@@ -23,13 +23,13 @@ function main()
         nucleation = CNTNucleation(ln_nucleation_prefactor = base_p[1], surface_energy = base_p[2]),
         growth = EmpiricalGrowth(growth_coefficient = base_p[3], growth_order = base_p[4]))
     problem    = CrystallisationProblem(baseline_model,
-        RunConditions(temperature = 293.15, concentration = 18.0); solver = MoM())
+        RunConditions(temperature = 293.15, concentration = 18.0), (0.0, 21600.0))
     save_grid  = 0.0:360.0:21600.0    # seconds
 
     # Forward map: parameters → terminal concentration. GSA samples pass in
-    # flat parameter vectors, which replace the kinetic blocks of `problem`.
+    # flat parameter vectors, which replace the kinetic values of `problem`.
     sim_end = function (p)
-        _, sol = runsimulation(p, problem; save_idx = save_grid)
+        sol = solve(remake(problem; p), MoM(); saveat = save_grid)
         return sol.concentration[end]
     end
 
