@@ -51,85 +51,48 @@ function _validate_required_material_property(kinetic_law, required_name, requir
 end
 
 """
-    KineticModel(law; parameters=(;))
-
-Bind a law to named values. Names and nesting must match `paramaxis(law)`;
-the same schema serves simulation, selection of fit parameters, and predictions.
-Built-in laws bind more briefly through their keyword call, e.g.
-`EmpiricalGrowth(growth_coefficient = 1e-8, growth_order = 2.0)`.
-"""
-struct KineticModel{Law, Parameters <: NamedTuple}
-    law::Law
-    parameters::Parameters
-    function KineticModel(kinetic_law; parameters::NamedTuple = (;))
-        declared_values = ComponentArray(zeros(_parameter_count(kinetic_law)), paramaxis(kinetic_law))
-        canonical_parameters = _canonical_kinetic_parameters(declared_values, parameters)
-        supplied_values = ComponentArray(; canonical_parameters...)
-        all(parameter_value -> parameter_value isa Real && isfinite(parameter_value), supplied_values) ||
-            throw(ArgumentError("Kinetic parameter values must be finite real numbers."))
-        new{typeof(kinetic_law), typeof(canonical_parameters)}(kinetic_law, canonical_parameters)
-    end
-end
-
-function _canonical_kinetic_parameters(declared_values, supplied_tree::NamedTuple)
-    declared_names = propertynames(declared_values)
-    missing_names = setdiff(declared_names, keys(supplied_tree))
-    unknown_names = setdiff(keys(supplied_tree), declared_names)
-    isempty(missing_names) && isempty(unknown_names) || throw(ArgumentError(
-        "Kinetic parameters must match the law's paramaxis $declared_names" *
-        (isempty(missing_names) ? "" : "; missing $(Tuple(missing_names))") *
-        (isempty(unknown_names) ? "" : "; unknown $(Tuple(unknown_names))") * "."))
-    return NamedTuple{Tuple(declared_names)}(map(Tuple(declared_names)) do declared_name
-        declared_value = getproperty(declared_values, declared_name)
-        supplied_value = getproperty(supplied_tree, declared_name)
-        if declared_value isa ComponentArray
-            supplied_value isa NamedTuple || throw(ArgumentError("Nested kinetic parameters require a NamedTuple."))
-            return _canonical_kinetic_parameters(declared_value, supplied_value)
-        elseif declared_value isa AbstractVector
-            supplied_value isa AbstractVector{<:Real} && length(supplied_value) == length(declared_value) ||
-                throw(ArgumentError("Kinetic parameter $declared_name requires a real vector of length $(length(declared_value))."))
-            return supplied_value
-        end
-        supplied_value isa Real || throw(ArgumentError("Kinetic values must be real scalars."))
-        supplied_value
-    end)
-end
-
-paramaxis(bound_kinetic::KineticModel) = paramaxis(bound_kinetic.law)
-
-CombinedNucleation(primary::KineticModel, secondary::KineticModel) =
-    KineticModel(CombinedNucleation(primary.law, secondary.law);
-        parameters = (primary = primary.parameters, secondary = secondary.parameters))
-
-"""
     CrystallisationModel(system; growth, nucleation=NoNucleation(), dissolution=NoDissolution(),
                          aggregation=NoAggregation(), breakage=NoBreakage())
 
-A material system and five bound kinetic slots, independent of run conditions
-and solver. Each slot takes a bound `KineticModel`, for example
-`CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4)`; laws without
-parameters and callable laws are bound automatically.
+A material system and five kinetic laws, independent of run conditions and
+solver. Each law holds its parameter values, for example
+`CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4)`; the
+values seed the problem's kinetic vector `p`.
 """
-struct CrystallisationModel{System, Nucleation, Growth, Dissolution, Aggregation, Breakage}
+struct CrystallisationModel{System, Nucleation <: AbstractNucleationFunction, Growth <: AbstractGrowthFunction,
+                            Dissolution <: AbstractDissolutionFunction, Aggregation <: AbstractAggregationFunction,
+                            Breakage <: AbstractBreakageFunction}
     system::System
     nucleation::Nucleation
     growth::Growth
     dissolution::Dissolution
     aggregation::Aggregation
     breakage::Breakage
+    function CrystallisationModel(material_system, nucleation::AbstractNucleationFunction,
+            growth::AbstractGrowthFunction, dissolution::AbstractDissolutionFunction,
+            aggregation::AbstractAggregationFunction, breakage::AbstractBreakageFunction)
+        for kinetic_law in (nucleation, growth, dissolution, aggregation, breakage)
+            _validate_law_values(kinetic_law, _law_values(kinetic_law))
+        end
+        return new{typeof(material_system), typeof(nucleation), typeof(growth), typeof(dissolution),
+            typeof(aggregation), typeof(breakage)}(material_system, nucleation, growth, dissolution,
+            aggregation, breakage)
+    end
 end
 
 CrystallisationModel(material_system; growth, nucleation = NoNucleation(), dissolution = NoDissolution(),
         aggregation = NoAggregation(), breakage = NoBreakage()) =
-    CrystallisationModel(material_system, _bound_kinetic(nucleation), _bound_kinetic(growth),
-        _bound_kinetic(dissolution), _bound_kinetic(aggregation), _bound_kinetic(breakage))
+    CrystallisationModel(material_system, nucleation, growth, dissolution, aggregation, breakage)
 
-_bound_kinetic(bound_kinetic::KineticModel) = bound_kinetic
-function _bound_kinetic(kinetic_law)
-    _parameter_count(kinetic_law) == 0 || throw(ArgumentError("$(nameof(typeof(kinetic_law))) needs parameter values; " *
-        "bind them with its keyword call, e.g. $(nameof(typeof(kinetic_law)))(name = value, ...)."))
-    return KineticModel(kinetic_law)
-end
+# Every value a law holds must be a finite real scalar or real vector, at any nesting depth.
+_validate_law_values(kinetic_law, law_values::NamedTuple) =
+    foreach(law_value -> _validate_law_values(kinetic_law, law_value), values(law_values))
+_validate_law_values(kinetic_law, law_value::Real) = isfinite(law_value) ||
+    throw(ArgumentError("$(nameof(typeof(kinetic_law))) parameter values must be finite; got $law_value."))
+_validate_law_values(kinetic_law, law_values::AbstractVector{<:Real}) =
+    foreach(law_value -> _validate_law_values(kinetic_law, law_value), law_values)
+_validate_law_values(kinetic_law, law_value) = throw(ArgumentError(
+    "$(nameof(typeof(kinetic_law))) parameter values must be real numbers; got $(typeof(law_value))."))
 
 const _MODEL_KINETIC_SLOTS = (:nucleation, :growth, :dissolution, :aggregation, :breakage)
 
@@ -149,11 +112,11 @@ function _validate_material_model(crystal_model::CrystallisationModel)
     for (slot_name, expected_family) in zip(_MODEL_KINETIC_SLOTS,
             (AbstractNucleationFunction, AbstractGrowthFunction, AbstractDissolutionFunction,
                 AbstractAggregationFunction, AbstractBreakageFunction))
-        bound_kinetic = getproperty(crystal_model, slot_name)
-        bound_kinetic isa KineticModel && bound_kinetic.law isa expected_family ||
-            throw(ArgumentError("$slot_name requires a KineticModel of $expected_family."))
-        for required_name in required_properties(bound_kinetic.law)
-            _validate_required_material_property(bound_kinetic.law, required_name,
+        kinetic_law = getproperty(crystal_model, slot_name)
+        kinetic_law isa expected_family ||
+            throw(ArgumentError("$slot_name requires a law of $expected_family."))
+        for required_name in required_properties(kinetic_law)
+            _validate_required_material_property(kinetic_law, required_name,
                 _material_property(material_system, required_name))
         end
     end
@@ -167,12 +130,12 @@ end
 
 Configure a model under numeric `RunConditions` over `tspan = (t0, tf)`
 seconds, with kinetic values `p` (any vector in `paramaxis(model)` order,
-defaulting to the model's bound values). A missing seed means an empty
+defaulting to the values the model's laws hold). A missing seed means an empty
 population. The keywords are the only other settings; the numerical solver is
 chosen in `solve(problem, solver)`.
 """
 function CrystallisationProblem(crystal_model::CrystallisationModel, run_conditions::RunConditions, tspan,
-        kinetic_values::AbstractVector = _bound_kinetic_values(crystal_model);
+        kinetic_values::AbstractVector = _model_kinetic_values(crystal_model);
         solvent_dynamics = default_solvent_dynamics,
         solid_mass_concentration_threshold::Real = 1e-12, unsupported_settings...)
     isempty(unsupported_settings) || throw(ArgumentError(
@@ -181,16 +144,16 @@ function CrystallisationProblem(crystal_model::CrystallisationModel, run_conditi
     unresolved_sources = observation_sources(run_conditions)
     isempty(unresolved_sources) || throw(ArgumentError(
         "Conditions read $(Tuple(unresolved_sources)) from observations; supply numbers or use an experiment."))
-    parameter_axis = paramaxis(crystal_model.nucleation.law, crystal_model.growth.law,
-        crystal_model.dissolution.law, crystal_model.aggregation.law, crystal_model.breakage.law)
+    parameter_axis = paramaxis(crystal_model.nucleation, crystal_model.growth,
+        crystal_model.dissolution, crystal_model.aggregation, crystal_model.breakage)
     configured_run = CrystallisationProblem(crystal_model, run_conditions, _checked_tspan(tspan),
         _kinetic_values_on_axis(parameter_axis, kinetic_values), solvent_dynamics,
         Float64(solid_mass_concentration_threshold))
     return _validate_crystallisation_problem(configured_run)
 end
 
-"""The model's bound kinetic values as a `Float64` vector in `paramaxis` order."""
-_bound_kinetic_values(crystal_model::CrystallisationModel) =
+"""The values the model's laws hold, as a `Float64` vector in `paramaxis` order."""
+_model_kinetic_values(crystal_model::CrystallisationModel) =
     Vector{Float64}(ComponentArray(; _model_named_values(crystal_model)...))
 
 """
@@ -198,7 +161,7 @@ _bound_kinetic_values(crystal_model::CrystallisationModel) =
            solvent_dynamics, solid_mass_concentration_threshold)
 
 Copy `problem` with the given fields replaced and validated again. Without `p`,
-a replaced `model` brings its own bound kinetic values; `remake(problem; p)`
+a replaced `model` brings the kinetic values its laws hold; `remake(problem; p)`
 is the differentiable way to solve one run for other kinetic values.
 """
 function SciMLBase.remake(configured_run::CrystallisationProblem; model = missing, conditions = missing,
@@ -212,11 +175,11 @@ function SciMLBase.remake(configured_run::CrystallisationProblem; model = missin
             configured_run.solid_mass_concentration_threshold))
 end
 
-# Explicit values win; a new model without values brings its bound values.
+# Explicit values win; a new model without values brings the values its laws hold.
 _remade_kinetic_values(kinetic_values, model, configured_run) = kinetic_values
 _remade_kinetic_values(::Missing, ::Missing, configured_run) = configured_run.p
 _remade_kinetic_values(::Missing, crystal_model::CrystallisationModel, configured_run) =
-    _bound_kinetic_values(crystal_model)
+    _model_kinetic_values(crystal_model)
 
 """
     DiscretisedProblem(problem::CrystallisationProblem, solver::AbstractSolver)
@@ -257,37 +220,38 @@ temperature(rate_context::KineticContext) = temperature(rate_context.problem.tem
 solvent_state(rate_context::KineticContext) = solvent_state(rate_context.problem, rate_context.state)
 
 """`CallableGrowth(callable; parameters, required=())`: scalar law `(named_parameters, context) -> rate`."""
-struct CallableGrowth{Callable, Schema, Requirements} <: AbstractScalarGrowthFunction
+struct CallableGrowth{Callable, Parameters <: NamedTuple, Requirements} <: AbstractScalarGrowthFunction
     callable::Callable
-    schema::Schema
+    parameters::Parameters
     required::Requirements
 end
 CallableGrowth(kinetic_callable; parameters::NamedTuple, required::Tuple = ()) =
     CallableGrowth(kinetic_callable, parameters, required)
 
 """`CallableNucleation(callable; parameters, required=())`: law `(named_parameters, context) -> rate`."""
-struct CallableNucleation{Callable, Schema, Requirements} <: AbstractNucleationFunction
+struct CallableNucleation{Callable, Parameters <: NamedTuple, Requirements} <: AbstractNucleationFunction
     callable::Callable
-    schema::Schema
+    parameters::Parameters
     required::Requirements
 end
 CallableNucleation(kinetic_callable; parameters::NamedTuple, required::Tuple = ()) =
     CallableNucleation(kinetic_callable, parameters, required)
 
 """Length law `(named_parameters, context, length_metres) -> rate`, including DQMOM node evaluation."""
-struct CallableLengthGrowth{Callable, Schema, Requirements} <: AbstractLengthGrowthFunction
+struct CallableLengthGrowth{Callable, Parameters <: NamedTuple, Requirements} <: AbstractLengthGrowthFunction
     callable::Callable
-    schema::Schema
+    parameters::Parameters
     required::Requirements
 end
 CallableLengthGrowth(kinetic_callable; parameters::NamedTuple, required::Tuple = ()) =
     CallableLengthGrowth(kinetic_callable, parameters, required)
 
 const _CallableKinetic = Union{CallableGrowth, CallableNucleation, CallableLengthGrowth}
-paramaxis(callable_law::_CallableKinetic) = first(getaxes(ComponentArray(; callable_law.schema...)))
+paramaxis(callable_law::_CallableKinetic) = first(getaxes(ComponentArray(; callable_law.parameters...)))
 required_properties(callable_law::_CallableKinetic) = callable_law.required
-KineticModel(callable_law::_CallableKinetic) = KineticModel(callable_law; parameters = callable_law.schema)
-_bound_kinetic(callable_law::_CallableKinetic) = KineticModel(callable_law)
+_law_values(callable_law::_CallableKinetic) = callable_law.parameters
+_law_with_values(callable_law::_CallableKinetic, law_values::NamedTuple) =
+    ConstructionBase.constructorof(typeof(callable_law))(callable_law.callable, law_values, callable_law.required)
 
 growthrate(callable_law::CallableGrowth, candidate_values, configured_run::DiscretisedProblem, numerical_state, clock_time) =
     callable_law.callable(_named_params(callable_law, candidate_values), KineticContext(configured_run, numerical_state, clock_time))

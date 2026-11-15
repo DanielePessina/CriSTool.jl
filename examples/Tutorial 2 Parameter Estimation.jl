@@ -7,7 +7,7 @@ function main()
         growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
     # Each experiment starts from its own time-zero concentration observation.
     measured_runs = load_measurements(joinpath(@__DIR__, "fake-experimental-dataset.csv"))
-    # Bounds select the fitted parameters; unlisted values stay as bound in the model.
+    # Bounds select the fitted parameters; unlisted values stay as the model's laws hold them.
     estimation_problem = EstimationProblem(crystal_model, measured_runs;
         bounds = (nucleation = (ln_nucleation_prefactor = (20.0, 50.0), surface_energy = (0.0001, 0.002)),
                   growth = (growth_coefficient = (1e-12, 1e-9), growth_order = (1.0, 4.0))))

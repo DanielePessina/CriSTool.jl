@@ -23,12 +23,12 @@ cooling_run = merge(batch_run; temperature = LinearTemperature(298.15, -1e-4))
 quadrature_trajectory = solve(remake(problem; conditions = cooling_run), QMOM(nquadrature = 3))
 ```
 
-A model contains the material system and the bound kinetic laws. A law called
-with all of its parameter names returns a bound `KineticModel`; `CNTNucleation()`
-alone is the unbound law, and a partial set of names is an error. Keywords that
-name a law's configuration fields (for example `Lref` on
-`EmpiricalLengthGrowth`) configure the law instead of binding a parameter. Read named
-values through `crystal_model.growth.parameters`.
+A model contains the material system and five kinetic laws. A law holds its
+parameter values as fields, like a `Distributions.jl` distribution:
+`CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4)` needs
+every parameter keyword, and `crystal_model.nucleation.surface_energy` reads one
+back. Configuration fields with defaults (for example `Lref` on
+`EmpiricalLengthGrowth`) are not kinetic parameters.
 
 `RunConditions(; temperature, concentration, solvent=(;), crystals=nothing,
 operation=BatchOperation())` holds everything else about one run. A numeric
@@ -127,14 +127,14 @@ SciML problem and physical reconstruction. Internal DQMOM coordinates differ
 from public weights and nodes; preserve that contract when solving directly.
 
 The kinetic values are the problem's `p`, a `ComponentArray` on
-`paramaxis(problem)` that defaults to the model's bound values
+`paramaxis(problem)` that defaults to the values the model's laws hold
 (`kinetic_parameter_vector(problem)`). `solve(remake(problem; p = values), solver; saveat)`
 solves for other values, given as a flat or `ComponentArray` vector; their
 element type may be a ForwardDiff dual, so this is the interface for automatic
 differentiation and sensitivity work.
 
 A configured problem stores each value once: `problem.model` (material system
-and bound kinetic laws), `problem.conditions` (temperature, initial solvent
+and kinetic laws), `problem.conditions` (temperature, initial solvent
 values — read the concentration with `initial_concentration(problem)` — seed
 and operation), `problem.tspan`, `problem.p`, `problem.solvent_dynamics` and
 `problem.solid_mass_concentration_threshold`. The seed becomes a solver

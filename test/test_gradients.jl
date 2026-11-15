@@ -204,7 +204,7 @@ end
     kernel_state = [zeros(length(kernel_mesh)); 15.0]
     function length_growth_objective(growth_values)
         growth_destination = similar(kernel_mesh, eltype(growth_values))
-        CriSTool.growthrate!(growth_destination, EmpiricalLengthGrowth(Lref = 1e-6), growth_values,
+        CriSTool.growthrate!(growth_destination, EmpiricalLengthGrowth(3e-8, 1.4, 0.45, 1.3, 1e-6), growth_values,
             kernel_problem, kernel_state, 0.0, kernel_mesh)
         return sum([1.0, 2.0, 4.0] .* growth_destination) * 1e8
     end
@@ -213,8 +213,8 @@ end
           DI.gradient(length_growth_objective, gradient_difference_backend, length_growth_point) rtol = 2e-4 atol = 2e-5
 
     kernel_rule = QMOMQuadrature([0.5e-6, 1.5e-6], [2.0, 3.0])
-    aggregation_objective(kernel_values) = aggregation_moment_source(ConstantAggregation(), kernel_values, kernel_rule, 3)[1]
-    breakage_objective(kernel_values) = breakage_moment_source(EmpiricalBreakage(), kernel_values, kernel_rule, 3)[1]
+    aggregation_objective(kernel_values) = aggregation_moment_source(ConstantAggregation(0.0), kernel_values, kernel_rule, 3)[1]
+    breakage_objective(kernel_values) = breakage_moment_source(EmpiricalBreakage(1.0, 0.0), kernel_values, kernel_rule, 3)[1]
     @test DI.gradient(aggregation_objective, gradient_forward_backend, [0.0]) ≈
           DI.gradient(aggregation_objective, gradient_difference_backend, [0.0]) rtol = 1e-4
     @test DI.gradient(breakage_objective, gradient_forward_backend, [0.0, 1.0]) ≈

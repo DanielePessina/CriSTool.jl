@@ -19,8 +19,8 @@ trajectory[:concentration][end]
 trajectory[:d43][end]
 ```
 
-Calling a law with all of its parameter names binds the values; `CNTNucleation()`
-alone is the unbound law. `RunConditions` hold everything else about a run:
+Each law holds its parameter values as fields, e.g.
+`CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4)`. `RunConditions` hold everything else about a run:
 temperature, initial concentration, an optional seed and the reactor operation.
 The problem holds no solver; pass one to `solve`, as with an `ODEProblem`.
 `solve(remake(problem; p = values), solver)` is the differentiable interface for

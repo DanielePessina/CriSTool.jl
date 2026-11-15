@@ -26,8 +26,9 @@ trajectory[:concentration][end]
 trajectory[:d43][end]
 ```
 
-A model is a material system plus kinetic laws bound to named values. Calling a
-law with its parameter names binds them; `CNTNucleation()` alone is the unbound law.
+A model is a material system plus kinetic laws. Each law holds its parameter
+values as fields, like a `Distributions.jl` distribution, e.g.
+`CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4)`.
 `RunConditions` hold everything else about a run: temperature, initial
 concentration, an optional seed and the reactor operation. As with an
 `ODEProblem`, the problem holds no numerical method: the solver (`MoM()`,
@@ -52,8 +53,8 @@ predictions = predict(posterior)         # same runs, solver and settings as the
 bands = prediction_summary(predictions, :concentration)
 ```
 
-The problem's bounds or priors select which kinetic parameters vary; everything else stays
-as bound in the model. Material properties, run conditions and supplied
+The problem's bounds or priors select which kinetic parameters vary; everything else keeps
+the value the model's laws hold. Material properties, run conditions and supplied
 measurement noise are never fitted. Likelihood fitting requires supplied
 positive variances for scored measurements; MAE does not. Predictions describe
 physical trajectories; adding measurement noise is a separate, explicit step

@@ -7,7 +7,7 @@ function main()
             driving_force = max(supersaturation(rate_context) - 1, 0)
             rate_values.coefficient * driving_force / (rate_values.half_saturation + driving_force)
         end; parameters = (coefficient = 2e-11, half_saturation = 0.3))
-    # Callable laws carry their values and are bound automatically.
+    # Callable laws hold their values in `parameters`, like built-in laws hold fields.
     crystal_model = CrystallisationModel(LysozymeSystem();
         nucleation = CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 0.0006),
         growth = saturation_growth)
@@ -22,7 +22,7 @@ function main()
         bounds = (growth = (coefficient = (1e-12, 1e-10),),))
     println("Fitted coefficient: ", solve(coefficient_problem,
         DE(N = 8, options = Options(iterations = 2, seed = 1))).parameters.growth.coefficient)
-    # Advanced users can still define custom law types, paramaxis and rate methods.
+    # Advanced users can define a law struct with one field per parameter and a rate method.
     trajectory
 end
 main()

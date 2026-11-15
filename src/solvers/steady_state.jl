@@ -173,11 +173,11 @@ function _steady_state_autonomy_issues(problem::DiscretisedProblem)
         push!(issues, :solvent_dynamics)
     isnothing(operation.feed.transport) || push!(issues, :feed_transport)
 
-    for (name, kinetic_model) in ((:nucleation_kinetics, problem.model.nucleation.law),
-                                  (:growth_kinetics, problem.model.growth.law),
-                                  (:dissolution_kinetics, problem.model.dissolution.law),
-                                  (:aggregation_kinetics, problem.model.aggregation.law),
-                                  (:breakage_kinetics, problem.model.breakage.law))
+    for (name, kinetic_model) in ((:nucleation_kinetics, problem.model.nucleation),
+                                  (:growth_kinetics, problem.model.growth),
+                                  (:dissolution_kinetics, problem.model.dissolution),
+                                  (:aggregation_kinetics, problem.model.aggregation),
+                                  (:breakage_kinetics, problem.model.breakage))
         _is_time_invariant(kinetic_model) || push!(issues, name)
     end
     return unique(issues)

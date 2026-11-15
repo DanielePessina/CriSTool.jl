@@ -4,7 +4,7 @@ This redesign intentionally changes the recommended interface:
 
 | Earlier workflow | Model workflow |
 | --- | --- |
-| Kinetic law plus an ordered flat vector | `law(name = value, ...)` binds a `KineticModel` |
+| Kinetic law plus an ordered flat vector | `law(name = value, ...)` holds the values as fields |
 | Rebuild physical keyword settings in each routine | Reuse `CrystallisationModel` |
 | `runsimulation` returns problem and solution | `solve(CrystallisationProblem(model, conditions, tspan), solver; saveat)` returns solution |
 | Separate fixed and free variants | Select a subset in a study specification |
@@ -54,7 +54,7 @@ estimation API (see *SciML-shaped estimation* below).
 | Before | After |
 | --- | --- |
 | `CrystallisationModel(system = s, nucleation = ..., growth = ...)` | `CrystallisationModel(s; nucleation = ..., growth = ...)` |
-| `KineticModel(nucl_CNT(); parameters = (ln_nucleation_prefactor = 38.0, surface_energy = 6e-4))` | `CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4)` (the long form still works) |
+| `KineticModel(nucl_CNT(); parameters = (ln_nucleation_prefactor = 38.0, surface_energy = 6e-4))` | `CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4)` |
 | `CrystallisationProblem(model; initial_conditions = (concentration = 18.0,), temperature = ConstantTemperature(293.15), initial_crystals = seed, operation = op, solver)` | `CrystallisationProblem(model, RunConditions(temperature = 293.15, concentration = 18.0, crystals = seed, operation = op), tspan)`; the solver goes to `solve` |
 | `simulate(problem; saveat)` | `solve(problem, solver; saveat)` |
 | `CrystallisationExperiment(...; temperature, initial_from = (concentration = :concentration,), seed_shape, operation, relaxation_initial)` | `CrystallisationExperiment(; observables, exp_id, conditions = RunConditions(...), metadata)` |
@@ -163,9 +163,9 @@ Other changes to kinetic laws:
 | Before | After |
 | --- | --- |
 | A dissolution law in the `growth` slot | Dissolution laws form their own family and go in the `dissolution` slot; `AbstractDissolutionFunction` is no longer a subtype of `AbstractGrowthFunction` |
-| `nucl_CNT_fixed`, `nucl_empirical_fixed`, `growth_empirical_fixed` | bind the ordinary law and leave its parameters out of the fit selection; switch nucleation off with `NoNucleation()` (the `CrystallisationModel` default) |
+| `nucl_CNT_fixed`, `nucl_empirical_fixed`, `growth_empirical_fixed` | give the ordinary law its values and leave its parameters out of the fit selection; switch nucleation off with `NoNucleation()` (the `CrystallisationModel` default) |
 | `law.nparams`, `law.string`, `law.symbols` | `paramaxis(law)` is the only parameter declaration |
-| custom laws without `paramaxis` (generic `θ1, θ2, ...` axis) | every law must declare `paramaxis` |
+| custom laws without `paramaxis` (generic `θ1, θ2, ...` axis) | the default `paramaxis` names the law's fields |
 | `paramaxis(nucl, gr, agg, br)` | `paramaxis(nucl, gr, diss, agg, br)` |
 | `ConstantSaturation`, `PolynomialSaturation`, `CallableSaturation`, `AbstractSaturationModel`, `lysozyme_saturation` | the `*Solubility` names |
 | `net_growthrate` | `net_growth_rate` |
@@ -181,9 +181,9 @@ latest changes.
 
 | Before | After |
 | --- | --- |
-| `CrystallisationProblem(; kinetics_nucleationfunction, parameterset_nucleation, crystal_density, initial_concentration, ...)` | `CrystallisationProblem(model, RunConditions(...), tspan)`; bind kinetics in the `CrystallisationModel` |
-| `problem.kinetics_growthfunction` (and the other four slots) | `problem.model.growth.law` |
-| `problem.parameterset_growth` (and the other four slots) | `kinetic_parameter_vector(problem).gr`, or `problem.model.growth.parameters` for the named values |
+| `CrystallisationProblem(; kinetics_nucleationfunction, parameterset_nucleation, crystal_density, initial_concentration, ...)` | `CrystallisationProblem(model, RunConditions(...), tspan)`; give kinetic values in the `CrystallisationModel` laws |
+| `problem.kinetics_growthfunction` (and the other four slots) | `problem.model.growth` |
+| `problem.parameterset_growth` (and the other four slots) | `kinetic_parameter_vector(problem).gr`, or the fields of `problem.model.growth` |
 | `problem.crystal_density`, `.volume_shape_factor`, `.molecular_volume`, `.saturation_model`, `.material_system` | `problem.model.system.crystal_density` (etc.); `problem.model.system` |
 | `problem.initial_concentration` | `initial_concentration(problem)` (stored once in `problem.conditions`) |
 | `problem.initial_state` (full state vector) | `initial_state_from_characteristics(problem, solver, seed)`; the seed in `problem.conditions` becomes a solver population at `solve` time |
@@ -256,3 +256,18 @@ sampled; give both, with the same names in the same order, to do both with one
 problem. Validation that belonged to a sampler specification (a likelihood loss
 for posterior sampling, positive counts, a finite ABC target) now happens when
 `solve` is called, before any sampling.
+
+## Version 1 API
+
+Version 1 makes the remaining interfaces follow Julia and SciML conventions.
+The numerical methods and their results are unchanged. There are no
+deprecation shims.
+
+| Before | After |
+| --- | --- |
+| `KineticModel(law; parameters = (...))`, a law bound to a `NamedTuple` | the law holds its values as fields: `EmpiricalGrowth(growth_coefficient = 1e-9, growth_order = 2.0)`, like a `Distributions.jl` distribution; `KineticModel` is removed |
+| `CNTNucleation()`, the unbound law | every parameter keyword is required (`UndefKeywordError` otherwise); a positional call `CNTNucleation(38.0, 6e-4)` takes the fields in order |
+| `model.growth.law` | `model.growth` |
+| `model.growth.parameters.growth_order` | `model.growth.growth_order`; a callable law keeps `model.growth.parameters` |
+| `EmpiricalLengthGrowth(Lref = 2e-6)`, configuration without values | `EmpiricalLengthGrowth(growth_coefficient = ..., ..., Lref = 2e-6)`; configuration fields keep their defaults and stay out of `paramaxis` |
+| a custom law `struct MyGrowth <: AbstractScalarGrowthFunction end` plus `paramaxis(::MyGrowth)` and `KineticModel(MyGrowth(); parameters)` | `Base.@kwdef struct MyGrowth{T <: Real} <: AbstractScalarGrowthFunction` with one field per parameter; the default `paramaxis` names the fields |

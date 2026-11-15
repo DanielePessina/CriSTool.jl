@@ -62,10 +62,10 @@ end
 function _validate_dqmom_problem(problem::DiscretisedProblem)
     _validate_dqmom_public_state(problem)
 
-    _is_length_law(problem.model.dissolution.law) &&
+    _is_length_law(problem.model.dissolution) &&
         throw(ArgumentError("Length-dependent dissolution is not supported by DQMOM; " *
                             "use FiniteVol or WENO."))
-    for binary_law in (problem.model.aggregation.law, problem.model.breakage.law)
+    for binary_law in (problem.model.aggregation, problem.model.breakage)
         _has_moment_closure(binary_law) ||
             throw(ArgumentError("$(typeof(binary_law)) has no validated DQMOM moment closure."))
     end
@@ -146,7 +146,7 @@ function _dqmom_moment_source(problem::DiscretisedProblem,
                                 eltype(parameters), typeof(coordinate_scale))
 
     aggregation_source = _aggregation_moment_source(
-        problem.model.aggregation.law,
+        problem.model.aggregation,
         parameters.agg,
         physical_nodes,
         scaled_weights,
@@ -154,7 +154,7 @@ function _dqmom_moment_source(problem::DiscretisedProblem,
         shape_factor = problem.model.system.volume_shape_factor,
         pair_weight_scale = weight_scale)
     breakage_source = _breakage_moment_source(
-        problem.model.breakage.law,
+        problem.model.breakage,
         parameters.br,
         physical_nodes,
         scaled_weights,
@@ -184,10 +184,10 @@ _dqmom_growth_context(::DefaultSolventDynamics, problem::DiscretisedProblem,
 
 function _dqmom_growth_context(solvent_dynamics, problem::DiscretisedProblem,
                                state, parameters, time, growth_rates)
-    return _is_length_law(problem.model.growth.law) ? growth_rates :
-           net_growth_rate(problem.model.growth.law,
+    return _is_length_law(problem.model.growth) ? growth_rates :
+           net_growth_rate(problem.model.growth,
                            parameters.gr,
-                           problem.model.dissolution.law,
+                           problem.model.dissolution,
                            parameters.diss,
                            problem,
                            state,
@@ -200,16 +200,16 @@ function _dqmom_rhs(problem::DiscretisedProblem, state::SVector{S}, parameters, 
     solver = problem.solver
     scaled_weights, scaled_nodes, physical_nodes =
         _dqmom_static_nodes(state, solver, quadrature_count_value)
-    growth_rates = map(crystal_length -> net_growth_rate_at_length(problem.model.growth.law,
+    growth_rates = map(crystal_length -> net_growth_rate_at_length(problem.model.growth,
                                                                    parameters.gr,
-                                                                   problem.model.dissolution.law,
+                                                                   problem.model.dissolution,
                                                                    parameters.diss,
                                                                    problem,
                                                                    state,
                                                                    time,
                                                                    crystal_length),
                        physical_nodes)
-    nucleation_rate_value = nucleationrate(problem.model.nucleation.law,
+    nucleation_rate_value = nucleationrate(problem.model.nucleation,
                                            parameters.nucl,
                                            problem,
                                            state,

@@ -1,9 +1,9 @@
 # Kinetics: nucleation, growth, aggregation, and breakage
 
-CriSTool uses small structs to represent kinetic models. Each struct
-implements a rate function by multiple dispatch in the corresponding
-`src/physics/*_rates.jl` file, and
-declares a `paramaxis` so its parameters can be accessed by name.
+CriSTool represents each kinetic law as a small struct that holds its
+parameter values as fields, like a `Distributions.jl` distribution. Each
+struct implements a rate function by multiple dispatch in the corresponding
+`src/physics/*_rates.jl` file, and its `paramaxis` names its parameters.
 
 For the shortest working example, see
 [Tutorial 1](https://github.com/DanielePessina/CriSTool.jl/blob/main/examples/Tutorial%201%20Running%20Simulations.jl). To add a model
@@ -11,35 +11,42 @@ from a user script, follow [Tutorial 4](https://github.com/DanielePessina/CriSTo
 and the custom-family section below.
 
 Key ideas:
-- Each kinetic struct declares a `paramaxis(::T)` method returning a
-  ComponentArrays `Axis`. It is the single declaration of the law's
-  parameters: their names, order and count. It powers named fields such as
-  `p.ln_nucleation_prefactor` and `p.surface_energy` in rate functions.
-- Model users bind values by name and never assemble vectors. The low-level
+- A law is a value: `CNTNucleation(ln_nucleation_prefactor = 38.0,
+  surface_energy = 6e-4)` holds both numbers, read back as
+  `law.surface_energy`.
+- `paramaxis(law)` returns a ComponentArrays `Axis`, the single declaration of
+  the law's parameters: their names, order and count. By default it names
+  every field. It powers named fields such as `p.ln_nucleation_prefactor` and
+  `p.surface_energy` in rate functions.
+- The values a law holds only seed the problem's kinetic vector `p`. Rate
+  functions always read `p`, so fits and samplers swap `p` without rebuilding
+  laws.
+- Model users give values by name and never assemble vectors. The low-level
   `remake(problem; p = values)` interface (for automatic differentiation and
   sensitivity work) builds a `ComponentArray` view over a flat parameter vector
   in the order `[nucl; gr; diss; agg; br]`.
-- To add a new model: subtype the right `Abstract*Function`, declare
-  `paramaxis`, and implement the corresponding rate method.
+- To add a new model: subtype the right `Abstract*Function` with one field
+  per parameter, and implement the corresponding rate method.
 
-## Bind a law to named values
+## Give a law its values
 
 ```julia
-bound_growth = EmpiricalGrowth(growth_coefficient = 1e-9, growth_order = 2.0)
-same_growth  = KineticModel(EmpiricalGrowth(); parameters = (
-    growth_coefficient = 1e-9, growth_order = 2.0))
+growth_law   = EmpiricalGrowth(growth_coefficient = 1e-9, growth_order = 2.0)
+same_growth  = EmpiricalGrowth(1e-9, 2.0)        # positional, in field order
+growth_law.growth_order                          # 2.0
 energy_growth = ArrheniusGrowth(log10_growth_coefficient = -8.0,
     activation_energy = 60e3, growth_order = 2.0)
 ```
 
-A built-in law called with no keywords, such as `EmpiricalGrowth()`, is the
-unbound law. Called with all of its parameter names it returns a bound
-`KineticModel`; a partial set of names is an error. Keywords naming a struct
-field, such as `Lref` on `EmpiricalLengthGrowth`, configure the law rather
-than bind a parameter. Laws without parameters (`NoNucleation()`,
-`NoDissolution()`, `NoAggregation()`, `NoBreakage()`) are bound automatically
-when placed in a `CrystallisationModel`, and are its defaults: only `growth`
-is required, so a growth-only model omits `nucleation`.
+Every parameter keyword is required: a missing one raises Julia's
+`UndefKeywordError`, and a misspelled one a `MethodError`. Mixed integer and
+float values promote to one element type. Values must be finite, which
+`CrystallisationModel` checks. Some laws also have configuration fields with
+defaults, such as `Lref` on `EmpiricalLengthGrowth`; these are not kinetic
+parameters, so `paramaxis` and `p` leave them out. Laws without parameters
+(`NoNucleation()`, `NoDissolution()`, `NoAggregation()`, `NoBreakage()`) are
+the `CrystallisationModel` defaults: only `growth` is required, so a
+growth-only model omits `nucleation`.
 
 Unlisted parameters in a fitting specification remain fixed, so no separate
 fixed kinetic variants exist. For a simple custom
@@ -52,35 +59,34 @@ The dispatch-based interface below remains available for advanced extensions.
 ```julia
 using CriSTool
 
-nucl     = CNTNucleation()        # Axis(ln_nucleation_prefactor=1, surface_energy=2)
-nucl_emp = EmpiricalNucleation()  # Axis(log10_nucleation_prefactor=1, nucleation_order=2)
-growth   = EmpiricalGrowth()# Axis(growth_coefficient=1, growth_order=2)
-growth_L = EmpiricalLengthGrowth() # adds a length multiplier; four parameters
-growth_E = ArrheniusGrowth()   # log10_growth_coefficient, activation_energy, growth_order
+nucl = CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4)
+paramaxis(nucl)          # Axis(ln_nucleation_prefactor = 1, surface_energy = 2)
+growth_L = EmpiricalLengthGrowth(growth_coefficient = 3e-8, growth_order = 2.0,
+    size_dependence_coefficient = 0.5, size_dependence_exponent = 1.0)
+paramaxis(growth_L)      # four parameters; Lref is configuration
 ```
 
 Common parameter blocks are:
 
 | Family | Model | Parameter order |
 | --- | --- | --- |
-| Nucleation | `CNTNucleation()` | `ln_nucleation_prefactor`, `surface_energy` |
-| Nucleation | `EmpiricalNucleation()` | `log10_nucleation_prefactor`, `nucleation_order` |
-| Nucleation | `ArrheniusNucleation()` | `ln_nucleation_prefactor`, `activation_energy`, `nucleation_order` |
-| Growth | `EmpiricalGrowth()` | `growth_coefficient` (m/s), `growth_order` |
-| Growth | `EmpiricalLengthGrowth()` | `growth_coefficient` (m/s), `growth_order`, `size_dependence_coefficient`, `size_dependence_exponent` |
-| Nucleation | `SecondaryNucleation()` | `ln_nucleation_prefactor`, `activation_energy`, `nucleation_order` |
+| Nucleation | `CNTNucleation` | `ln_nucleation_prefactor`, `surface_energy` |
+| Nucleation | `EmpiricalNucleation` | `log10_nucleation_prefactor`, `nucleation_order` |
+| Nucleation | `ArrheniusNucleation` | `ln_nucleation_prefactor`, `activation_energy`, `nucleation_order` |
+| Growth | `EmpiricalGrowth` | `growth_coefficient` (m/s), `growth_order` |
+| Growth | `EmpiricalLengthGrowth` | `growth_coefficient` (m/s), `growth_order`, `size_dependence_coefficient`, `size_dependence_exponent` |
+| Nucleation | `SecondaryNucleation` | `ln_nucleation_prefactor`, `activation_energy`, `nucleation_order` |
 | Nucleation | `CombinedNucleation(primary, secondary)` | the two component axes nested under `primary` and `secondary` |
-| Growth | `ArrheniusGrowth()` | `log10_growth_coefficient`, `activation_energy`, `growth_order` |
-| Growth | `BCFGrowth()` | `growth_coefficient`, `activation_temperature` |
-| Growth | `BirthSpreadGrowth()` | `growth_coefficient`, `energy_barrier_temperature_squared` |
+| Growth | `ArrheniusGrowth` | `log10_growth_coefficient`, `activation_energy`, `growth_order` |
+| Growth | `BCFGrowth` | `growth_coefficient`, `activation_temperature` |
+| Growth | `BirthSpreadGrowth` | `growth_coefficient`, `energy_barrier_temperature_squared` |
 
 Use `paramaxis(model)` rather than hard-coding a block length when building a
 general fitting or sampling workflow. To fix a parameter, such as the
-activation energy of `ArrheniusGrowth`, bind its value and leave it out of the
-fitted parameter selection.
+activation energy of `ArrheniusGrowth`, give the law its value and leave it out
+of the fitted parameter selection.
 
-`CombinedNucleation` sums any two nucleation laws. Called with two bound laws
-it returns the bound combination:
+`CombinedNucleation` sums any two nucleation laws:
 
 ```julia
 primary_plus_secondary = CombinedNucleation(
@@ -103,22 +109,24 @@ dissolving_model = CrystallisationModel(LysozymeSystem();
     growth = ArrheniusGrowth(log10_growth_coefficient = -8.0, activation_energy = 53e3, growth_order = 2.0),
     dissolution = ArrheniusDissolution(dissolution_coefficient = 1e-8, activation_energy = 40e3,
         dissolution_order = 1.0))
-length_dissolution = ArrheniusLengthDissolution() # adds size-dependence terms
-length_growth = EmpiricalLengthGrowth()        # empirical growth with size factor
+# Length-dependent dissolution adds size-dependence terms (FiniteVol and WENO only).
+length_dissolution = ArrheniusLengthDissolution(dissolution_coefficient = 1e-8,
+    activation_energy = 40e3, dissolution_order = 1.0,
+    size_dependence_coefficient = 0.5, size_dependence_exponent = 1.0)
 ```
 
 `ArrheniusDissolution` uses the dimensionless undersaturation driving force
 `(1 - S)^d` and returns a scalar rate. The
 length-dependent dissolution model evaluates `(1 + κ * L / Lref)^p` at each
 mesh length, with `Lref = 1e-6` m by default; it is supported by `FiniteVol`
-and `WENO`. The analogous `EmpiricalLengthGrowth()` model uses
+and `WENO`. The analogous `EmpiricalLengthGrowth` model uses
 
 ```math
 G(L,S) = k_g(S-1)^{g}\left[1+\kappa_g\frac{L}{L_{ref}}\right]^{p_g},
 \qquad S > 1.001,
 ```
 
-and returns zero in the equilibrium deadband. Its `Lref` is a fixed model
+and returns zero in the equilibrium deadband. Its `Lref` is a configuration
 field (1 µm by default), not a fifth fit parameter. It is available to
 discretised solvers and to seeded DQMOM, which evaluates the rate at each
 quadrature node. QMOM and MoM retain scalar-rate restrictions.
@@ -135,7 +143,7 @@ method allocates a vector for standalone inspection.
 ```julia
 using CriSTool, ComponentArrays
 
-paramaxis(model)                    # single-law axis, e.g. Axis(ln_nucleation_prefactor=1, surface_energy=2)
+paramaxis(law)                      # single-law axis, e.g. Axis(ln_nucleation_prefactor=1, surface_energy=2)
 paramaxis(nucl, gr, diss, agg, br)  # composite axis with one block per slot
 paramaxis(prob)                     # composite axis of a CrystallisationProblem (the layout of prob.p)
 ```
@@ -144,23 +152,29 @@ Use the composite form to wrap a flat parameter vector with named slices:
 
 ```julia
 flat = [38.0, 0.0007, 1e-9 / 60, 3.0]
-p    = ComponentArray(flat, paramaxis(CNTNucleation(), EmpiricalGrowth(), NoDissolution(),
-                                       NoAggregation(), NoBreakage()))
+nucl = CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 0.0007)
+growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 3.0)
+p    = ComponentArray(flat, paramaxis(nucl, growth, NoDissolution(), NoAggregation(), NoBreakage()))
 p.nucl.ln_nucleation_prefactor    # 38.0
 p.gr.growth_order                 # 3.0
 ```
 
-Every law, including a custom one, must declare `paramaxis`; there is no
-generic fallback.
+The default `paramaxis(law)` names every field of the law, in field order, as
+one scalar parameter. A law with configuration fields (such as `Lref`) or a
+vector-valued parameter defines its own `paramaxis` method.
 
 ## Add a new kinetic family (three pieces)
 
 Three pieces, all in your own user script:
 
-1. A struct subtyping the right `Abstract*Function`.
-2. A `paramaxis` method returning a ComponentArrays `Axis`.
+1. A struct subtyping the right `Abstract*Function`, with one field per
+   parameter. The default `paramaxis` names the fields.
+2. A keyword constructor, so the law reads like a built-in one
+   (`Base.@kwdef` writes it).
 3. The rate function, which reads named parameters via
-   `named_parameters(model, parameters)`.
+   `named_parameters(law, parameters)`. It reads the `parameters` argument,
+   not the struct fields: the fields only seed the problem's `p`, and fits
+   pass other values through `parameters`.
 
 Worked example in
 [Tutorial 4](https://github.com/DanielePessina/CriSTool.jl/blob/main/examples/Tutorial%204%20Defining%20a%20Custom%20Kinetic.jl). Sketched
@@ -170,13 +184,13 @@ here for nucleation and growth:
 using CriSTool
 using CriSTool: AbstractNucleationFunction, AbstractScalarGrowthFunction,
                 named_parameters
-import CriSTool: paramaxis, nucleationrate, growthrate
-using ComponentArrays
+import CriSTool: nucleationrate, growthrate
 
 # --- Custom nucleation ---
-struct CustomNucleation <: AbstractNucleationFunction end
-
-paramaxis(::CustomNucleation) = ComponentArrays.Axis(ln_prefactor = 1, nucleation_order = 2)
+Base.@kwdef struct CustomNucleation{T <: Real} <: AbstractNucleationFunction
+    ln_prefactor::T
+    nucleation_order::T
+end
 
 function nucleationrate(nf::CustomNucleation, parameters, prob, state, t)
     p = named_parameters(nf, parameters)
@@ -185,9 +199,10 @@ function nucleationrate(nf::CustomNucleation, parameters, prob, state, t)
 end
 
 # --- Custom growth ---
-struct CustomGrowth <: AbstractScalarGrowthFunction end
-
-paramaxis(::CustomGrowth) = ComponentArrays.Axis(growth_coefficient = 1, growth_order = 2)
+Base.@kwdef struct CustomGrowth{T <: Real} <: AbstractScalarGrowthFunction
+    growth_coefficient::T
+    growth_order::T
+end
 
 function growthrate(gf::CustomGrowth, parameters, prob, state, t)
     p = named_parameters(gf, parameters)
@@ -196,14 +211,12 @@ function growthrate(gf::CustomGrowth, parameters, prob, state, t)
 end
 ```
 
-Then bind them by name like any built-in law:
+Then give them values by name like any built-in law:
 
 ```julia
 custom_model = CrystallisationModel(LysozymeSystem();
-    nucleation = KineticModel(CustomNucleation(); parameters = (
-        ln_prefactor = 38.0, nucleation_order = 2.0)),
-    growth = KineticModel(CustomGrowth(); parameters = (
-        growth_coefficient = 1e-9 / 60, growth_order = 3.0)))
+    nucleation = CustomNucleation(ln_prefactor = 38.0, nucleation_order = 2.0),
+    growth = CustomGrowth(growth_coefficient = 1e-9 / 60, growth_order = 3.0))
 custom_problem = CrystallisationProblem(custom_model,
     RunConditions(temperature = 293.15, concentration = 18.0), (0.0, 28_800.0))
 solution = solve(custom_problem, MoM(); saveat = 3600.0)
@@ -218,7 +231,7 @@ solver, so leave its argument untyped. Read it through
 
 Aggregation and breakage follow the same pattern using
 `AbstractAggregationFunction` and `AbstractBreakageFunction` with
-`aggregationrate` and `breakagerate` methods. Declare a `paramaxis` on
+`aggregationrate` and `breakagerate` methods, with one field per parameter on
 each new struct. For most runs you can use the provided no-op models:
 
 ```julia

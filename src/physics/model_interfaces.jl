@@ -61,8 +61,8 @@ Composite kinetic parameter axis of the problem's model. It does not depend on
 the solver, so `problem.p` is laid out on it before any solve.
 """
 paramaxis(prob::Union{CrystallisationProblem, DiscretisedProblem}) =
-    paramaxis(prob.model.nucleation.law, prob.model.growth.law, prob.model.dissolution.law,
-              prob.model.aggregation.law, prob.model.breakage.law)
+    paramaxis(prob.model.nucleation, prob.model.growth, prob.model.dissolution,
+              prob.model.aggregation, prob.model.breakage)
 
 
 """

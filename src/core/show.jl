@@ -159,9 +159,12 @@ _parameter_value_text(parameter_value::NamedTuple) = string("(", _parameters_tex
 _parameter_value_text(parameter_value::Real) = _number_text(parameter_value)
 _parameter_value_text(parameter_values::AbstractVector) = string("[", join(_number_text.(parameter_values), ", "), "]")
 
-Base.show(display_io::IO, bound_kinetic::KineticModel) =
-    print(display_io, nameof(typeof(bound_kinetic.law)), "(", _parameters_text(bound_kinetic.parameters), ")")
-Base.show(display_io::IO, ::MIME"text/plain", bound_kinetic::KineticModel) = show(display_io, bound_kinetic)
+# A law prints as its keyword constructor call: parameter values, then configuration.
+function Base.show(display_io::IO, kinetic_law::_KineticLaw)
+    law_text = _parameters_text(merge(_law_values(kinetic_law), _law_configuration(kinetic_law)))
+    print(display_io, nameof(typeof(kinetic_law)), "(", law_text, ")")
+end
+Base.show(display_io::IO, ::MIME"text/plain", kinetic_law::_KineticLaw) = show(display_io, kinetic_law)
 
 # Slots left at their `No...` default are omitted from the compact model form.
 function Base.show(display_io::IO, ::MIME"text/plain", crystal_model::CrystallisationModel)
@@ -177,7 +180,7 @@ end
 
 function Base.show(display_io::IO, crystal_model::CrystallisationModel)
     active_slots = [slot_name for slot_name in _MODEL_KINETIC_SLOTS
-        if !_is_null_kinetic(getproperty(crystal_model, slot_name).law)]
+        if !_is_null_kinetic(getproperty(crystal_model, slot_name))]
     print(display_io, "CrystallisationModel(", join((string(slot_name, " = ", getproperty(crystal_model, slot_name))
         for slot_name in active_slots), ", "), ")")
 end

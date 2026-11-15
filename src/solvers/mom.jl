@@ -76,14 +76,14 @@ function crystallisation_odeproblem(solver::MoM, CryProblem::DiscretisedProblem,
     _validate_solver_kinetics(solver, CryProblem)
     feed_population = _operation_feed_population(CryProblem)
     function MoM_model(u, p, t)
-        scalar_growth_rate = net_growth_rate(CryProblem.model.growth.law,
+        scalar_growth_rate = net_growth_rate(CryProblem.model.growth,
                                              p.gr,
-                                             CryProblem.model.dissolution.law,
+                                             CryProblem.model.dissolution,
                                              p.diss,
                                              CryProblem,
                                              u,
                                              t)
-        B = nucleationrate(CryProblem.model.nucleation.law, p.nucl,
+        B = nucleationrate(CryProblem.model.nucleation, p.nucl,
                            CryProblem, u, t)
         solvent_rates = _solvent_derivatives(CryProblem, u, t, scalar_growth_rate)
         internal_rates = _mom_rhs(CryProblem, scalar_growth_rate, B, solvent_rates, u)

@@ -40,7 +40,7 @@ One configured run resolved for the prepared solver (a `DiscretisedProblem`)
 with its `ODEProblem` template, resolved ODE algorithm, save times and
 composite kinetic `paramaxis`. The template and axis are built once and reused
 across parameter vectors with `remake`, so the estimation loop never
-reconstructs them (a callable law rebuilds its axis from its schema on every
+reconstructs them (a callable law rebuilds its axis from its parameter values on every
 `paramaxis` call).
 """
 struct PreparedRun{Problem <: DiscretisedProblem, Template, Algorithm, ParameterAxis}

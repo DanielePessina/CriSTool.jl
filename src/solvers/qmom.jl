@@ -878,8 +878,8 @@ function _qmom_vanishing_node_callback(problem::DiscretisedProblem,
         state = integrator.u
         # Only a dissolving rate carries crystals out through the boundary; a
         # down-crossing while G ≥ 0 (e.g. fresh nuclei at L = 0) is roundoff.
-        boundary_rate = net_growth_rate(problem.model.growth.law, integrator.p.gr,
-                                        problem.model.dissolution.law, integrator.p.diss,
+        boundary_rate = net_growth_rate(problem.model.growth, integrator.p.gr,
+                                        problem.model.dissolution, integrator.p.diss,
                                         problem, state, integrator.t)
         _qmom_primal(boundary_rate) < 0 || return nothing
         rule = _qmom_real_line_rule(_qmom_primal_moments(state, moment_count_value), solver,
@@ -909,12 +909,12 @@ end
 
 function _validate_qmom_problem(problem::DiscretisedProblem)
     _validate_qmom_solver(problem.solver)
-    for rate_law in (problem.model.growth.law, problem.model.dissolution.law)
+    for rate_law in (problem.model.growth, problem.model.dissolution)
         _is_length_law(rate_law) &&
             throw(ArgumentError("$(typeof(rate_law)) is length-dependent and is not supported by QMOM; " *
                                 "use FiniteVol or WENO."))
     end
-    for binary_law in (problem.model.aggregation.law, problem.model.breakage.law)
+    for binary_law in (problem.model.aggregation, problem.model.breakage)
         _has_moment_closure(binary_law) ||
             throw(ArgumentError("$(typeof(binary_law)) has no validated QMOM moment closure."))
     end
@@ -977,9 +977,9 @@ function _qmom_moment_rates(aggregationfunction::AbstractAggregationFunction,
                             scalar_growth_rate, nucleation_rate_value) where {M}
     reconstructed_rule = _qmom_stage_quadrature(moment_values, problem.solver)
     node_growth_rates = _qmom_node_growth_rates(reconstructed_rule,
-                                                problem.model.growth.law,
+                                                problem.model.growth,
                                                 parameters.gr,
-                                                problem.model.dissolution.law,
+                                                problem.model.dissolution,
                                                 parameters.diss,
                                                 problem,
                                                 state,
@@ -1001,20 +1001,20 @@ end
 function _qmom_rhs(problem::DiscretisedProblem, state::SVector{S}, parameters, time,
                    feed_population, moment_count_value::Val{M}) where {S, M}
     moment_values = SVector(ntuple(moment_index -> state[moment_index], moment_count_value))
-    scalar_growth_rate = net_growth_rate(problem.model.growth.law,
+    scalar_growth_rate = net_growth_rate(problem.model.growth,
                                          parameters.gr,
-                                         problem.model.dissolution.law,
+                                         problem.model.dissolution,
                                          parameters.diss,
                                          problem,
                                          state,
                                          time)
-    nucleation_rate_value = nucleationrate(problem.model.nucleation.law,
+    nucleation_rate_value = nucleationrate(problem.model.nucleation,
                                            parameters.nucl,
                                            problem,
                                            state,
                                            time)
-    moment_derivatives, volume_rate = _qmom_moment_rates(problem.model.aggregation.law,
-                                                         problem.model.breakage.law,
+    moment_derivatives, volume_rate = _qmom_moment_rates(problem.model.aggregation,
+                                                         problem.model.breakage,
                                                          problem, moment_values, state,
                                                          parameters, time,
                                                          scalar_growth_rate,

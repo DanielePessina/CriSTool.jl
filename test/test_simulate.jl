@@ -310,8 +310,9 @@ end
 CriSTool.saturation_concentration(solubility::SimulateLinearSolubility, temperature_profile, elapsed_time) =
     solubility.slope_per_kelvin * (CriSTool.temperature(temperature_profile, elapsed_time) - 273.15) + solubility.intercept
 
-struct SimulateLinearGrowth <: AbstractScalarGrowthFunction end
-CriSTool.paramaxis(::SimulateLinearGrowth) = CriSTool.ComponentArrays.Axis(linear_growth_coefficient = 1)
+struct SimulateLinearGrowth{T <: Real} <: AbstractScalarGrowthFunction
+    linear_growth_coefficient::T
+end
 CriSTool.growthrate(::SimulateLinearGrowth, kinetic_parameters, configured_run, ode_state, elapsed_time) =
     kinetic_parameters[1] * (supersaturation(configured_run, ode_state, elapsed_time) - 1)
 
@@ -321,7 +322,7 @@ CriSTool.growthrate(::SimulateLinearGrowth, kinetic_parameters, configured_run, 
     @test saturation_concentration(custom_solubility, ConstantTemperature(303.15), 0.0) == 9.5
     custom_system = CrystallisationSystem(saturation_model = custom_solubility, crystal_density = 1000.0, volume_shape_factor = 1.0)
     custom_model = CrystallisationModel(custom_system;
-        growth = KineticModel(SimulateLinearGrowth(); parameters = (linear_growth_coefficient = 1e-5,)))
+        growth = SimulateLinearGrowth(1e-5))
     # Extra species: d(tracer)/dt = -1e4·G, so tracer(t) = 1 - 1e4·∫G dt, and
     # ∫G dt is exactly the shift of the mean length d10 = µ1/µ0 (no nucleation).
     tracer_dynamics = (configured_run, ode_state, elapsed_time, growth_rate) -> begin
@@ -414,11 +415,12 @@ end
 end
 
 @testset "Input contracts that guard user mistakes" begin
-    # Keyword binding must name every parameter, and only real ones.
-    @test_throws ArgumentError EmpiricalGrowth(growth_order = 2.0)
-    @test_throws ArgumentError EmpiricalGrowth(wrong = 1.0, growth_order = 2.0)
-    # An unbound law with parameters cannot enter a model.
-    @test_throws ArgumentError CrystallisationModel(fixture_system; nucleation = CNTNucleation(), growth = fixture_constant_growth())
+    # A law needs every parameter value, and only real ones.
+    @test_throws UndefKeywordError EmpiricalGrowth(growth_order = 2.0)
+    @test_throws MethodError EmpiricalGrowth(growth_coefficient = 1.0, growth_order = 2.0, wrong = 1.0)
+    # A law of the wrong family cannot fill a slot.
+    @test_throws MethodError CrystallisationModel(fixture_system; nucleation = fixture_constant_growth(),
+        growth = fixture_constant_growth())
     # CNT needs a molecular volume the fixture system does not define.
     @test_throws ArgumentError CrystallisationProblem(CrystallisationModel(fixture_system;
         nucleation = CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4), growth = fixture_constant_growth()),

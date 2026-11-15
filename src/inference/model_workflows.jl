@@ -66,7 +66,7 @@ function _named_parameter_leaves(named_tree::NamedTuple, path_prefix::String = "
 end
 
 _model_named_values(crystal_model::CrystallisationModel) = NamedTuple{_MODEL_KINETIC_SLOTS}(
-    Tuple(getproperty(crystal_model, slot_name).parameters for slot_name in _MODEL_KINETIC_SLOTS))
+    map(slot_name -> _law_values(getproperty(crystal_model, slot_name)), _MODEL_KINETIC_SLOTS))
 
 """Names, indices and fixed values resolved once outside the solve loop."""
 struct KineticSelection{Axis, Baseline}
@@ -114,9 +114,9 @@ end
 function _selected_model(crystal_model::CrystallisationModel, kinetic_selection, selected_values)
     reconstructed_values = ComponentArray(_expanded_parameters(kinetic_selection, selected_values), kinetic_selection.axis)
     reconstructed_kinetics = NamedTuple{_MODEL_KINETIC_SLOTS}(map(_MODEL_KINETIC_SLOTS) do slot_name
-        original_kinetic = getproperty(crystal_model, slot_name)
-        KineticModel(original_kinetic.law; parameters = _reconstruct_parameter_tree(
-            original_kinetic.parameters, getproperty(reconstructed_values, slot_name)))
+        original_law = getproperty(crystal_model, slot_name)
+        _law_with_values(original_law, _reconstruct_parameter_tree(
+            _law_values(original_law), getproperty(reconstructed_values, slot_name)))
     end)
     return CrystallisationModel(crystal_model.system; reconstructed_kinetics...)
 end

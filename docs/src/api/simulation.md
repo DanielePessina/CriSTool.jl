@@ -13,7 +13,6 @@ remake(::CrystallisationProblem)
 CrystallisationSystem
 LysozymeSystem
 CrystallisationModel
-KineticModel
 RunConditions
 FromObservation
 CallableGrowth

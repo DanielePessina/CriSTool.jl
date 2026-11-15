@@ -39,6 +39,7 @@ using Metaheuristics
 
 # Utilities
 using ConcreteStructs
+import ConstructionBase
 using PrecompileTools: @setup_workload, @compile_workload
 using MonteCarloMeasurements
 using StaticArrays
@@ -112,7 +113,7 @@ export EnsembleSerial, EnsembleThreads
 export PredictionEnsemble, prediction_summary
 export plot_predictions, plot_posterior_pairplot, plot_chain_diagnostics
 export rename_chain
-export CrystallisationSystem, LysozymeSystem, KineticModel, CrystallisationModel,
+export CrystallisationSystem, LysozymeSystem, CrystallisationModel,
        CallableGrowth, CallableNucleation, CallableLengthGrowth, KineticContext, system_properties,
        required_properties, named_parameters, EstimationProblem, FitResult, InferenceResult,
        is_likelihood, loss_terms,
