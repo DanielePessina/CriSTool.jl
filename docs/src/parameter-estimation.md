@@ -52,8 +52,10 @@ The algorithm decides the call, what it returns and which keywords it takes:
 `sample` is the `StatsBase`/`AbstractMCMC` function that Turing also exports.
 `Metaheuristics` exports a different `sample`, so with both loaded import the
 Metaheuristics names you use (`using Metaheuristics: DE, Options`) or write
-`using CriSTool: sample`. A Metaheuristics fit succeeds when its best objective
-is finite; an Optimization.jl fit takes the optimiser's retcode.
+`using CriSTool: sample`. A fit whose optimum scores the failed-simulation
+penalty (every simulation at the optimum failed) has `ReturnCode.Failure`.
+Otherwise a Metaheuristics fit is `Success`, and an Optimization.jl fit takes the
+optimiser's retcode.
 
 A Metaheuristics algorithm runs on a private copy, so its options, status and
 RNG are not consumed and the same instance can be solved again. Results record

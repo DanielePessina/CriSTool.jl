@@ -31,13 +31,13 @@ replacements are:
 | --- | --- |
 | `PE_Routine`, `PE_Routine_Optimisation`, `MH_minimizer` | `solve(EstimationProblem(model, experiments; bounds), alg)`; the minimiser is `result.parameters` |
 | `batchLF_procSO`, `batchLF_procMO` | `loss(estimation_problem, values)` and `loss_terms(estimation_problem, values)` |
-| `MCMC_Routine`, positional `nuts_model(experiments, prior, nucl, ...)` | `solve(EstimationProblem(model, experiments; priors), NUTS(); n_samples, n_chains)` |
-| `run_abc`, `ABCDE_Routine`, `ABCDE_Turner_Routine` | `solve(EstimationProblem(model, experiments; priors, loss), ABCDE(); target)`, or `ABCDETurner()` |
+| `MCMC_Routine`, positional `nuts_model(experiments, prior, nucl, ...)` | `sample(EstimationProblem(model, experiments; priors), NUTS(), MCMCThreads(), n_samples, n_chains)` |
+| `run_abc`, `ABCDE_Routine`, `ABCDE_Turner_Routine` | `sample(EstimationProblem(model, experiments; priors, loss), ABCDE(), n_particles; target)`, or `ABCDETurner()` |
 | `kinetic_parameter_symbols` | named paths in `result.samples.names` |
 | positional `run_ensemble(distribution or matrix, measurements, nucl, ...)`, `run_ensemble_fixed` | `predict(result)`, `predict(result, runs)` or `predict(model, runs, samples; solver)` |
 | `EnsembleMoMSolution`, `EnsembleFVSolution` | `PredictionResult` holding `PredictionEnsemble`s; summarise with `prediction_summary` |
 | `distribution_to_matrix`, `prior_to_matrix`, `create_product_prior` | `parameter_samples(names, distribution)` with `product_distribution([...])` |
-| `chains_to_matrix` (export) | `result.samples`; the chain stays in `result.backend_result` |
+| `chains_to_matrix` (export) | `result.samples`; the chain stays in `result.original` |
 | `plot_measurements_vs_ensemble`, `plot_ps_measurements_vs_ensemble`, `plot_measurements_vs_simulation`, `plot_ps_measurements_vs_simulation`, `ChainMeasurementPlots`, `ABCplot` | `plot_predictions(predictions, experiments)` |
 | `ChainPairPlots`, DataFrame `plot_posterior_pairplot` methods | `plot_posterior_pairplot(result)` or `plot_posterior_pairplot(samples; prior, reference)` |
 | `CriSTool.forwardsensitivity(problem, saveat)` (SciMLSensitivity `ODEForwardSensitivityProblem`, MoM and FiniteVol batch only) | `ForwardDiff.jacobian(θ -> solve(remake(problem; p = θ), solver; saveat).concentration, θ)`, which covers every solver and operation; see [Sensitivity analysis](sensitivity.md) |
@@ -63,11 +63,11 @@ estimation API (see *SciML-shaped estimation* below).
 | `load_measurements(path; initial_from, seed_shape, operation, relaxation_initial)` | `load_measurements(path; conditions = (crystals = ..., operation = ...))` |
 | `expt.temperature`, `expt.initial_crystals` | `expt.conditions.temperature`, `expt.conditions.crystals` |
 | `fit(prepared; algorithm = DE(...), adtype, searchoptions)` | `solve(EstimationProblem(model, experiments; bounds), DE(...))`; an Optimization.jl optimiser takes `adtype` and its options at `solve` |
-| `fit(prepared; sampler = NUTS(), n_samples, n_chains)` | `solve(EstimationProblem(model, experiments; priors), NUTS(); n_samples, n_chains)`; requires `using Turing` (a weak dependency) |
-| `fit(prepared; sampler, nparticles, generations, earlystop)` | `solve(problem, ABCDE(); target, n_particles, n_generations, stopping)` |
-| `HPC = true` | `solve(problem, alg; parallel = EnsembleThreads())` |
+| `fit(prepared; sampler = NUTS(), n_samples, n_chains)` | `sample(EstimationProblem(model, experiments; priors), NUTS(), MCMCThreads(), n_samples, n_chains)`; requires `using Turing` (a weak dependency) |
+| `fit(prepared; sampler, nparticles, generations, earlystop)` | `sample(problem, ABCDE(), n_particles; target, n_generations, stopping)` |
+| `HPC = true` | `solve(problem, alg; parallel = EnsembleThreads())` or `sample(problem, sampler, n; parallel = EnsembleThreads())` |
 | `fit(prepared; threaded = true)` | `solve(problem, alg; parallel = EnsembleThreads())`; the algorithm picks candidate or experiment threading |
-| ABC target derived by a Wilks test from `confidenceinterval` | `solve(problem, ABCDE(); target = ...)` takes an explicit finite number |
+| ABC target derived by a Wilks test from `confidenceinterval` | `sample(problem, ABCDE(), n_particles; target = ...)` takes an explicit finite number |
 | `parameter_samples(posterior)` | `posterior.samples` |
 | `predict(model, runs, samples)` with a default solver | `predict(result)` or `predict(result, runs)` reuse the fit's solver, mode and options; `predict(model, runs, samples; solver)` requires `solver` |
 | `examples/model_helpers.jl` | removed; the tutorials use the package API directly |
@@ -80,7 +80,7 @@ their conditions must not contain placeholders.
 
 | Before | After |
 | --- | --- |
-| `prepare_fit(...; mode = :steady, steady_options = SteadyStateOptions(...))` | `EstimationProblem(...; mode = SteadyMode(SteadyStateOptions(...)))` |
+| `prepare_fit(...; mode = :steady, steady_options = SteadyStateOptions(...))` | `EstimationProblem(...; mode = SteadyMode(; relaxation_horizon, reltol, abstol, ...))` |
 | `predict(model, runs, samples; solver, mode = :steady, steady_options)` | `predict(model, runs, samples; solver, mode = SteadyMode(...))` |
 | `mode = :transient` | `mode = TransientMode()` (the default) |
 | `loss(lf, problem, params, experiments)` on a template problem | `loss(EstimationProblem(model, experiments; bounds), values)` |
@@ -212,7 +212,7 @@ the algorithm is for an `ODEProblem`. There are no deprecation shims.
 | `solution.time`, `ensemble.time` | `solution.t`, `ensemble.t` |
 | `solution.success` | `solution.retcode` (`ReturnCode.T`) or `successful_retcode(solution)` |
 | `observable_values(solution, :d43)` | also `solution[:d43]` (any named trajectory) |
-| `solve_steadystate(problem; options, initial_guess, algorithm)` | `solve(CrystallisationSteadyStateProblem(problem; options, u0), solver; alg)` |
+| `solve_steadystate(problem; options, initial_guess, algorithm)` | `solve(CrystallisationSteadyStateProblem(problem; u0), solver; alg, relaxation_horizon, reltol, abstol, ...)` |
 | `steady.success` | `steady.retcode` (`Success`, `MaxIters`, `Failure` or the ODE code) or `successful_retcode(steady)`; the ODE code is `steady.diagnostics.ode_retcode` |
 | `steady.equilibrium.time` | `steady.equilibrium.t` |
 | `crystallisation_odeproblem(problem, saveat, values)` | `crystallisation_odeproblem(remake(problem; p = values), solver)` |
@@ -235,9 +235,9 @@ dispatches on the algorithm. There are no deprecation shims.
 | --- | --- |
 | `prepare_fit(model, experiments, OptimisationSpec(; bounds, algorithm = DE(...)))` then `fit(prepared)` | `solve(EstimationProblem(model, experiments; bounds), DE(...))` |
 | `OptimisationSpec(; bounds, algorithm = LBFGS(), adtype, searchoptions = (maxiters = 50,))` | `solve(EstimationProblem(model, experiments; bounds), LBFGS(); adtype, maxiters = 50)` |
-| `BayesianSpec(; priors, sampler = NUTS(), n_samples, n_chains)` | `solve(EstimationProblem(model, experiments; priors), NUTS(); n_samples, n_chains)`; `fit(prepared; rng, progress)` keywords move to that `solve` |
-| `BayesianSpec(; sampler = nothing)` | pass the sampler explicitly: `solve(problem, NUTS())` |
-| `ABCSpec(; priors, target, sampler = ABCDESampler(), n_particles, n_generations, early_stop)` | `solve(EstimationProblem(model, experiments; priors, loss = MeanAbsoluteError()), ABCDE(); target, n_particles, n_generations, stopping)` |
+| `BayesianSpec(; priors, sampler = NUTS(), n_samples, n_chains)` | `sample(rng, EstimationProblem(model, experiments; priors), NUTS(), MCMCThreads(), n_samples, n_chains; progress)`; the `rng` of `fit(prepared; rng, progress)` is the first argument |
+| `BayesianSpec(; sampler = nothing)` | pass the sampler explicitly: `sample(problem, NUTS(), n_samples)` |
+| `ABCSpec(; priors, target, sampler = ABCDESampler(), n_particles, n_generations, early_stop)` | `sample(EstimationProblem(model, experiments; priors, loss = MeanAbsoluteError()), ABCDE(), n_particles; target, n_generations, stopping)` |
 | `early_stop = true` / `false` | `stopping = StopAtTarget()` / `AllGenerations()` |
 | `ABCDETurner(kernel = :gaussian)`, `:laplace`, `:none` | `ABCDETurner(kernel = GaussianABCKernel())`, `LaplaceABCKernel()`, `FlatABCKernel()` |
 | `ABCSpec`'s default `loss = MeanAbsoluteError()` | every `EstimationProblem` defaults to `loss = GaussianNLL()`; pass `loss = MeanAbsoluteError()` for an error discrepancy |
@@ -260,8 +260,9 @@ for posterior sampling, positive counts, a finite ABC target) now happens when
 ## Version 1 API
 
 Version 1 makes the remaining interfaces follow Julia and SciML conventions.
-The numerical methods and their results are unchanged. There are no
-deprecation shims.
+The numerical methods are unchanged. Mesh solves now take a fixed first step
+(see the table), so their results can differ within the solver tolerances.
+There are no deprecation shims.
 
 | Before | After |
 | --- | --- |
@@ -279,13 +280,15 @@ deprecation shims.
 | `result.backend_result` | `result.original` |
 | `sum(values(fit.objectives))` | `fit.objective` |
 | selected values as a vector: `last.(…leaves of fit.parameters)` | `fit.u` |
-| no status on fits and posteriors | `fit.retcode`, `posterior.retcode` and `successful_retcode(result)`; an ABC run whose generations end before every particle reaches `target` is `ReturnCode.MaxIters` |
+| no status on fits and posteriors | `fit.retcode`, `posterior.retcode` and `successful_retcode(result)`; an ABC run whose generations end before every particle reaches `target` is `ReturnCode.MaxIters`, and a fit whose optimum failed to simulate is `ReturnCode.Failure`, whatever the optimiser reports |
+| `posterior.objective`, `posterior.u` | not defined: a posterior is a set of draws, held in `posterior.samples` |
 | `using CriSTool, Metaheuristics` | still works, but `sample` is then ambiguous: write `using Metaheuristics: DE, Options` (or `using CriSTool: sample`) |
 | `CrystallisationSteadyStateProblem(problem; options = SteadyStateOptions(relaxation_horizon = 400.0, autonomous = true))` | `CrystallisationSteadyStateProblem(problem; autonomous = true)`, then `solve(steady_problem, solver; relaxation_horizon = 400.0)`; `SteadyStateOptions` is removed |
 | `SteadyStateOptions(residual_reltol, residual_abstol)` | `solve(steady_problem, solver; reltol, abstol)`: steady residual tolerances, as in SciML's `DynamicSS` |
 | `SteadyMode(SteadyStateOptions(...))` | `SteadyMode(; autonomous, relaxation_horizon, reltol, abstol, ...)` |
 | `merge(conditions; concentration = 20.0)` | `remake(conditions; concentration = 20.0)` |
 | no dense output; `sol(t)` undefined | `solve(problem, solver; dense = true)`, then `sol(t)` (one-point solution) or `sol(t, :d43)`; without `dense = true`, `sol(t)` is an `ArgumentError` |
+| `FiniteVol` and `WENO` start from OrdinaryDiffEq's estimated first step, which falls back to `1e-6` s with a `dt_epsilon` warning on sharp or empty meshes | they always start from `dt = 1e-6` s; `solve_options = (; dt = ...)` overrides it |
 | a DQMOM node dissolving to `minimum_size` throws a `DomainError` | the solve stops at the crossing with `ReturnCode.Failure` and a one-time warning, keeping the trajectory up to it |
 | `ensemble.diagnostics[i]` as a `NamedTuple` | an `EnsembleSampleDiagnostics` with the same fields (`success`, `retcode`, `ode_stats`, `initial_conditions`, `convergence`, `reason`); `reason` is now the failure message as text |
 | `rule.diagnostics.status == :deflated` (also `:ok`, `:empty`) | `rule.diagnostics.status == QuadratureStatus.Deflated` (`QuadratureStatus.OK`, `.Empty`), a scoped enum like `ReturnCode` |

@@ -2,10 +2,12 @@
 Approximate Bayesian computation samplers, the algorithms of
 `sample(::EstimationProblem, ::AbstractABCSampler, n_particles)`. To add a sampler, define a
 new `<:AbstractABCSampler` struct and a `_runsampler` method returning the
-result; `result.P` must hold the particles: KissABC `Particles`, or a
-parameters × samples matrix. The runner also receives the caller's `rng`. The runner receives
-`reference_loss`, a zero-argument function evaluating the loss at the model's current
-values, so samplers that do not need it never pay for the solve.
+result. `result.P` must hold the particles (KissABC `Particles`, or a
+parameters × samples matrix), and `result.reached_ϵ::Bool` must say whether
+every particle reached the target (`false` gives `ReturnCode.MaxIters`).
+The runner receives the caller's `rng` and `reference_loss`, a zero-argument
+function evaluating the loss at the model's current values, so samplers that do
+not need it never pay for the solve.
 """
 
 # KissABC returns one `Particles` per parameter, or a bare `Particles` for a single

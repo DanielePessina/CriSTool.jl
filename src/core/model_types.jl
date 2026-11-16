@@ -109,12 +109,9 @@ function _validate_material_model(crystal_model::CrystallisationModel)
         isfinite(required_value) && required_value > 0 ||
             throw(ArgumentError("$required_name must be finite and positive."))
     end
-    for (slot_name, expected_family) in zip(_MODEL_KINETIC_SLOTS,
-            (AbstractNucleationFunction, AbstractGrowthFunction, AbstractDissolutionFunction,
-                AbstractAggregationFunction, AbstractBreakageFunction))
+    # The constructor's slot type bounds already enforce each law's family.
+    for slot_name in _MODEL_KINETIC_SLOTS
         kinetic_law = getproperty(crystal_model, slot_name)
-        kinetic_law isa expected_family ||
-            throw(ArgumentError("$slot_name requires a law of $expected_family."))
         for required_name in required_properties(kinetic_law)
             _validate_required_material_property(kinetic_law, required_name,
                 _material_property(material_system, required_name))

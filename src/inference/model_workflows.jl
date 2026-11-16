@@ -294,7 +294,9 @@ SciML optimisation solution:
 
 - `u`: the selected parameter values as a flat vector, in selection order;
 - `objective`: the total loss at `u`;
-- `retcode`: a `ReturnCode.T`; check it with `successful_retcode(result)`;
+- `retcode`: a `ReturnCode.T`; check it with `successful_retcode(result)`.
+  It is `Failure` when the objectives at `u` are the failed-simulation penalty,
+  even if the optimiser reported convergence;
 - `parameters`: the same values, named and nested like the bounds;
 - `objectives`: the named observable objectives whose sum is `objective`;
 - `model`: the model with the fitted values;
@@ -467,11 +469,11 @@ _population_scores(::Metaheuristics.NSGA2, candidate_scores) =
     (permutedims(reduce(hcat, first.(candidate_scores))),
      zeros(length(candidate_scores), 1), zeros(length(candidate_scores), 1))
 
-# A population search has no convergence test: it succeeds when its best objective is finite.
-_metaheuristics_retcode(objective_value::Real) = isfinite(objective_value) ? ReturnCode.Success : ReturnCode.Failure
+# A population search has no convergence test of its own: it succeeds unless
+# `_fit_retcode` finds that its best candidate failed to simulate.
 _metaheuristics_fit_results(::Metaheuristics.AbstractParameters, estimation_problem, supplied_algorithm, final_state) =
     _model_fit_result(estimation_problem, supplied_algorithm, Metaheuristics.minimizer(final_state), final_state,
-        _metaheuristics_retcode(Metaheuristics.minimum(final_state)))
+        ReturnCode.Success)
 function _metaheuristics_fit_results(::Metaheuristics.NSGA2, estimation_problem, supplied_algorithm, final_state)
     pareto_solutions = Metaheuristics.get_non_dominated_solutions(final_state.population)
     pareto_values = Metaheuristics.positions(pareto_solutions)
@@ -479,8 +481,7 @@ function _metaheuristics_fit_results(::Metaheuristics.NSGA2, estimation_problem,
     pareto_objectives = Metaheuristics.fvals(pareto_solutions)
     objective_names = Tuple(estimation_problem.setup.observable_names)
     return [_model_fit_result(estimation_problem, supplied_algorithm, collect(candidate_values),
-                NamedTuple{objective_names}(Tuple(candidate_objectives)), final_state,
-                _metaheuristics_retcode(sum(candidate_objectives)))
+                NamedTuple{objective_names}(Tuple(candidate_objectives)), final_state, ReturnCode.Success)
             for (candidate_values, candidate_objectives) in zip(eachrow(pareto_values), eachrow(pareto_objectives))]
 end
 
@@ -489,12 +490,33 @@ _model_fit_result(estimation_problem, fit_algorithm, optimal_values, original_re
         loss_terms(estimation_problem, optimal_values), original_result, fit_retcode)
 
 function _model_fit_result(estimation_problem, fit_algorithm, optimal_values, objective_terms, original_result,
-        fit_retcode::ReturnCode.T)
+        algorithm_retcode::ReturnCode.T)
     fitted_model = _selected_model(estimation_problem.model, estimation_problem.selection, optimal_values)
     return FitResult(fitted_model, _selected_named_values(estimation_problem.selection, optimal_values),
-        objective_terms, Float64(sum(values(objective_terms))), collect(Float64, optimal_values), fit_retcode,
+        objective_terms, Float64(sum(values(objective_terms))), collect(Float64, optimal_values),
+        _fit_retcode(estimation_problem, objective_terms, algorithm_retcode),
         fit_algorithm, original_result, estimation_problem)
 end
+
+"""
+    _fit_retcode(estimation_problem, objective_terms, algorithm_retcode) -> ReturnCode.T
+
+`ReturnCode.Failure` when the optimum's objectives are not finite or are the
+failed-simulation penalty; otherwise the algorithm's own code. A candidate
+scores the penalty only when one of its simulations failed, and any candidate
+that simulates scores lower, so a penalised optimum means the search never
+found a parameter set that simulates. Optimisers cannot see this: the penalty
+surface is flat, so a gradient method reports convergence on it.
+"""
+function _fit_retcode(estimation_problem, objective_terms, algorithm_retcode::ReturnCode.T)
+    objective_values = collect(Float64, values(objective_terms))
+    all(isfinite, objective_values) || return ReturnCode.Failure
+    objective_values == _failed_simulation_objectives(estimation_problem.setup) && return ReturnCode.Failure
+    return algorithm_retcode
+end
+"""The objectives `_loss_objectives` returns for a failed simulation: each observable's weighted penalty."""
+_failed_simulation_objectives(setup) =
+    [observable_weight * CRISTOOL_FAILED_SIMULATION_PENALTY for observable_weight in setup.observable_weights]
 
 """Joint parameter draws: selected named paths in rows, common sample IDs in columns."""
 struct ParameterSamples{Values, Source}
@@ -594,12 +616,11 @@ function AbstractMCMC.sample(rng::Random.AbstractRNG, estimation_problem::Estima
         generations = n_generations, HPC = _threads_candidates(particle_parallel), stopping, rng)
     posterior_draws = ParameterSamples(split_problem.selection.names, _abc_particles_matrix(abc_result.P);
         source = :abc)
-    return InferenceResult(split_problem.model, posterior_draws, _abc_retcode(abc_result), abc_sampler, abc_result,
-        split_problem)
+    return InferenceResult(split_problem.model, posterior_draws, _abc_retcode(abc_result.reached_ϵ), abc_sampler,
+        abc_result, split_problem)
 end
 
-# KissABC reports whether every particle reached the target; a custom sampler without that flag succeeded.
-_abc_retcode(abc_result) = _abc_retcode(get(abc_result, :reached_ϵ, true))
+# Every ABC runner reports whether all particles reached the target (see `AbstractABCSampler`).
 _abc_retcode(reached_target::Bool) = reached_target ? ReturnCode.Success : ReturnCode.MaxIters
 
 """

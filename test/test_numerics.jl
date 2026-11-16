@@ -242,15 +242,15 @@ end
 @testset "Kinetic parameter schema" begin
     # paramaxis is the only parameter declaration; an empty axis counts zero.
     @test CriSTool._parameter_count(NoDissolution()) == 0
-    bound_combination = CombinedNucleation(CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4),
+    primary_secondary_nucleation = CombinedNucleation(CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4),
         EmpiricalNucleation(log10_nucleation_prefactor = 9.0, nucleation_order = 1.0))
-    @test CriSTool._parameter_count(bound_combination) == 4
+    @test CriSTool._parameter_count(primary_secondary_nucleation) == 4
     # A law is a value: its parameters are fields.
-    @test bound_combination.primary.surface_energy == 6e-4
-    @test bound_combination.secondary.nucleation_order == 1.0
+    @test primary_secondary_nucleation.primary.surface_energy == 6e-4
+    @test primary_secondary_nucleation.secondary.nucleation_order == 1.0
     # Values flatten depth-first in slot and field order onto paramaxis(problem).
     combined_problem = CrystallisationProblem(CrystallisationModel(LysozymeSystem();
-            nucleation = bound_combination,
+            nucleation = primary_secondary_nucleation,
             growth = EmpiricalGrowth(growth_coefficient = 2e-11, growth_order = 3.0)),
         RunConditions(temperature = 293.15, concentration = 18.0), (0.0, 1.0))
     combined_values = kinetic_parameter_vector(combined_problem)
@@ -366,9 +366,9 @@ function numerics_boundary_problem(growth_law;
         RunConditions(; temperature = 293.15, concentration = 5.0, operation), (0.0, 2.0)), solver)
 end
 # The values the model's laws hold, on the problem's composite axis.
-numerics_bound_values(problem) =
+numerics_problem_values(problem) =
     CriSTool.ComponentArray(CriSTool._model_kinetic_values(problem.model), paramaxis(problem))
-numerics_saved_solution(problem, saved_times, saved_states; parameters = numerics_bound_values(problem)) =
+numerics_saved_solution(problem, saved_times, saved_states; parameters = numerics_problem_values(problem)) =
     (; t = saved_times, u = saved_states, prob = (; p = parameters))
 numerics_boundary_flows(problem, saved_times, saved_states; kwargs...) = CriSTool._mesh_boundary_flow_state(
     problem.solver, problem, numerics_saved_solution(problem, saved_times, saved_states; kwargs...))

@@ -28,8 +28,9 @@ Relax each run to its MSMPR steady state and compare the steady values with
 every observation, regardless of observation time. Run conditions must be
 numeric. `autonomous` is the declaration of
 `CrystallisationSteadyStateProblem` (callable kinetic laws need
-`autonomous = true`); the other keywords are those of the steady `solve`.
-Without `relaxation_horizon`, the relaxation spans the run's observation times.
+`autonomous = true`); the other keywords are those of the steady `solve`,
+with the same defaults: without `relaxation_horizon`, each run relaxes for up to
+100 residence times.
 """
 struct SteadyMode <: AbstractSimulationMode
     autonomous::Bool

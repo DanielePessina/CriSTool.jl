@@ -133,7 +133,7 @@ export CrystallisationSystem, LysozymeSystem, CrystallisationModel,
 # is a no-op on Julia 1.10 and a real marker from 1.11 (`Base.ispublic`).
 # Underscore-prefixed names are internal and deliberately absent.
 Compat.@compat public CRISTOOL_GAS_CONSTANT, CRISTOOL_BOLTZMANN_CONSTANT,
-                      AbstractDiscretisedSolver, KissABC
+                      AbstractDiscretisedSolver, KissABC, EnsembleSampleDiagnostics
 
 # Core types and public interfaces.
 include("core/solution_types.jl")

@@ -31,7 +31,7 @@ function CriSTool._runsampler(target_sampler::FitPredictTargetSampler, prior, ca
         target, reference_loss; kwargs...)
     target_sampler.received_target[] = target
     target_sampler.received_reference_loss[] = reference_loss()
-    return (P = [0.4 0.6],)
+    return (P = [0.4 0.6], reached_ϵ = true)
 end
 
 # Draws a known sequence of unit uniforms for inverse-CDF sampling checks.
@@ -173,7 +173,12 @@ end
     @test lbfgs_fit.u == [fitted_speed]
     @test lbfgs_fit.objective ≈ loss(lbfgs_estimation, lbfgs_fit.u) rtol = 1e-12
     @test successful_retcode(lbfgs_fit)
-    @test lbfgs_fit.retcode === lbfgs_fit.original.retcode
+    # When every simulation fails, the penalty surface is flat and LBFGS reports
+    # convergence; the fit still reports the failure.
+    stalled_fit = solve(remake(lbfgs_estimation; solve_options = (; maxiters = 1)), OptimizationOptimJL.LBFGS();
+        maxiters = 5)
+    @test stalled_fit.original.retcode === ReturnCode.Success
+    @test stalled_fit.retcode === ReturnCode.Failure
     # predict(fit) uses the fitted draw, experiments, solver and observation times.
     fitted_prediction = predict(lbfgs_fit)
     @test fitted_prediction.experiments == [31]
@@ -220,6 +225,14 @@ end
            overridden_de.parameters.strategy, overridden_de.parameters.F, overridden_de.status.f_calls) ==
           (16, 7, true, :rand2, 0.43, 0)
     @test_throws ArgumentError CriSTool._configured_mh_algorithm(supplied_de; nparticles = 0)
+    # When every simulation stops at maxiters = 1, each candidate scores the failed-simulation
+    # penalty (1e6 per unit observable weight), and the fit reports failure.
+    failing_estimation = EstimationProblem(fitpredict_model, [fitpredict_experiment]; bounds = fitpredict_bounds,
+        loss = MeanAbsoluteError(), solve_options = (; maxiters = 1))
+    failing_fit = solve(failing_estimation,
+        Metaheuristics.DE(; N = 4, options = Metaheuristics.Options(; iterations = 1, seed = 7)))
+    @test failing_fit.retcode === ReturnCode.Failure
+    @test failing_fit.objective == 1e6 * length(failing_fit.objectives)
 end
 
 @testset "NSGA2 (threaded): non-dominated Pareto set within bounds" begin
@@ -336,8 +349,8 @@ end
     @test received_target[] == 1.5
     @test forwarded_result.samples.values == [0.4 0.6]
     @test forwarded_result.samples.source == :abc
-    # A custom sampler result without a reached-target flag counts as a success.
-    @test successful_retcode(forwarded_result)
+    # The runner's reached-target flag sets the retcode.
+    @test forwarded_result.retcode === ReturnCode.Success
 
     abc_estimation = EstimationProblem(fitpredict_model, [fitpredict_experiment]; priors = abc_priors,
         loss = MeanAbsoluteError())
@@ -514,11 +527,14 @@ end
     for (level_algorithm, expected_level) in expected_levels
         @test CriSTool._parallel_level(level_algorithm) === expected_level
     end
-    # MCMC threads chains through MCMCThreads(); `parallel` threads the experiments of each chain.
-    single_chain = sample(MersenneTwister(5), EstimationProblem(fitpredict_model, [fitpredict_experiment];
-            priors = (growth = (speed = Uniform(0.001, 0.03),),)), Turing.NUTS(3, 0.65), 3;
-        parallel = EnsembleThreads(), progress = false)
-    @test single_chain.estimation_problem.setup.parallel isa EnsembleThreads
+    # MCMC threads chains through MCMCThreads(); `parallel` threads the experiments of each
+    # chain, which must not change the seeded draws.
+    nuts_estimation = EstimationProblem(fitpredict_model, [fitpredict_experiment];
+        priors = (growth = (speed = Uniform(0.001, 0.03),),))
+    serial_chain, threaded_chain = (sample(MersenneTwister(5), nuts_estimation, Turing.NUTS(3, 0.65), 3;
+            parallel = chain_parallel, progress = false) for chain_parallel in (EnsembleSerial(), EnsembleThreads()))
+    @test threaded_chain.estimation_problem.setup.parallel isa EnsembleThreads
+    @test threaded_chain.samples.values == serial_chain.samples.values
     # The chosen level gets the supplied ensemble; the loss of the other level is serial.
     candidate_estimation = EstimationProblem(fitpredict_model, [fitpredict_experiment]; bounds = fitpredict_bounds)
     candidate_ensemble, candidate_split = CriSTool._split_parallel(candidate_estimation,

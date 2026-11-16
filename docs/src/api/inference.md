@@ -39,6 +39,7 @@ LaplaceABCKernel
 FlatABCKernel
 rename_chain
 PredictionEnsemble
+CriSTool.EnsembleSampleDiagnostics
 prediction_summary
 ```
 

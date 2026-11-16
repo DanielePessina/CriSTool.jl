@@ -482,13 +482,15 @@ function _solve_discretised(discretised_problem::DiscretisedProblem, tspan::Tupl
 end
 
 """The dense ODE solution and the solve-time problem that reconstructs physical values from it."""
-struct _DenseCrystallisationInterpolation{Problem <: DiscretisedProblem, ODESolution}
+struct _DenseCrystallisationInterpolation{Problem <: DiscretisedProblem, DenseODESolution}
     problem::Problem
-    ode_solution::ODESolution
+    ode_solution::DenseODESolution
 end
 
-# Save times read from a dense solve: every step without saveat, otherwise the
-# requested times the solve reached, plus the end of a solve stopped early.
+# Save times read from a dense solve; they match the non-dense solve with the same
+# `saveat`. Without saveat, every step. Otherwise the requested times the solve
+# reached (a step `saveat` also saves the span end), plus the crossing time when
+# the DQMOM boundary forces a save there and stops the solve with `ReturnCode.Failure`.
 _dense_save_times(save_times::Vector{Float64}, dense_solution) =
     isempty(save_times) ? copy(dense_solution.t) : _reached_save_times(save_times, dense_solution)
 function _dense_save_times(save_step::Float64, dense_solution)
@@ -498,14 +500,24 @@ end
 function _reached_save_times(save_times::Vector{Float64}, dense_solution)
     reached_end = last(dense_solution.t)
     reached_times = filter(<=(reached_end), save_times)
-    isempty(reached_times) || last(reached_times) == reached_end || push!(reached_times, reached_end)
-    return isempty(reached_times) ? [reached_end] : reached_times
+    dense_solution.retcode == ReturnCode.Failure && (isempty(reached_times) || last(reached_times) != reached_end) &&
+        push!(reached_times, reached_end)
+    return reached_times
 end
 
-"""A non-dense ODE solution holding the interpolated states of `dense_solution` at `save_times`."""
-_interpolated_ode_solution(dense_solution, save_times::Vector{Float64}) =
-    SciMLBase.build_solution(dense_solution.prob, dense_solution.alg, save_times, dense_solution(save_times).u;
+"""
+A non-dense ODE solution holding the interpolated states of `dense_solution` at
+`save_times`. The reached end keeps the integrator's own last state:
+interpolating there can round a state that sits on a boundary (a DQMOM node at
+`minimum_size`) just past it.
+"""
+function _interpolated_ode_solution(dense_solution, save_times::Vector{Float64})
+    saved_states = dense_solution(save_times).u
+    isempty(save_times) || last(save_times) != last(dense_solution.t) ||
+        (saved_states[end] = last(dense_solution.u))
+    return SciMLBase.build_solution(dense_solution.prob, dense_solution.alg, save_times, saved_states;
         retcode = dense_solution.retcode, stats = dense_solution.stats)
+end
 
 """
     (solution::CrystallisationSolution)(t)

@@ -65,9 +65,21 @@ simulate_solve(model, conditions, solver; saveat, problem_settings...) =
         @test dense_trajectory(37.5, :d43) ≈ fixture_translation_d43(37.5) rtol = dense_rtol
         @test dense_trajectory(37.5).t == [37.5]
     end
+    # A dense solve saves at the times the non-dense solve with the same saveat
+    # saves, including after an early MaxIters stop.
+    for (parity_saveat, parity_options) in (([0.0, 50.0], (;)), ([25.0, 100.0], (;)), (30.0, (;)),
+            ([0.0, 50.0], (; maxiters = 3)), (30.0, (; maxiters = 3)))
+        saved_only = solve(translation_problem_dense, MoM(); saveat = parity_saveat, solve_options = parity_options)
+        saved_dense = solve(translation_problem_dense, MoM(); saveat = parity_saveat, solve_options = parity_options,
+            dense = true)
+        @test saved_dense.t == saved_only.t
+        @test saved_dense.retcode === saved_only.retcode
+    end
     dense_moments = solve(translation_problem_dense, MoM(); dense = true)
     @test dense_moments(37.5, :concentration) ≈ fixture_translation_concentration(37.5) rtol = 1e-9
-    @test dense_moments(37.5, :moments) isa Vector{Float64}
+    # Interpolated moments agree with a solve that saves at the same time.
+    @test dense_moments(37.5, :moments) ≈
+          vec(observable_values(solve(translation_problem_dense, MoM(); saveat = [37.5]), :moments)) rtol = 1e-6
     @test_throws ArgumentError dense_moments(150.0)
     # Without dense = true only the saved times exist.
     @test_throws ArgumentError solve(translation_problem_dense, MoM(); saveat = [0.0, 100.0])(37.5)
@@ -279,6 +291,11 @@ end
     @test minimum(dqmom_extinction.population.nodes[:, end]) < 1e-9
     @test dqmom_extinction.concentration .+ 1000.0 .* dqmom_extinction.population.moments[4, :] ≈
           fill(5.25, length(dqmom_extinction.t)) rtol = 1e-6
+    # A dense solve keeps the same saved times, ending at the crossing.
+    dense_extinction = solve(CrystallisationProblem(extinction_model, extinction_conditions, (0.0, 60.0)), DQMOM();
+        saveat = [0.0, 60.0], dense = true)
+    @test dense_extinction.t == dqmom_extinction.t
+    @test dense_extinction.retcode == ReturnCode.Failure
 end
 
 @testset "Mesh nucleation and growth conserve solute" begin
