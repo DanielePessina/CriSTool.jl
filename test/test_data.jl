@@ -81,6 +81,22 @@ end
     end
 end
 
+@testset "RunConditions: temperature forms and remake" begin
+    pH_run = RunConditions(temperature = 293, concentration = 18.0, solvent = (pH = 7.0,),
+        crystals = fixture_uniform_seed())
+    # A number is a constant Kelvin temperature; anything else is an error.
+    @test pH_run.temperature === ConstantTemperature(293.0)
+    @test_throws ArgumentError RunConditions(temperature = "293 K", concentration = 18.0)
+    # remake replaces only the named settings and keeps the extra solvent values.
+    cooled_run = remake(pH_run; temperature = LinearTemperature(298.15, -1e-4), concentration = 20.0)
+    @test cooled_run.temperature === LinearTemperature(298.15, -1e-4)
+    @test cooled_run.solvent == (concentration = 20.0, pH = 7.0)
+    @test cooled_run.crystals == pH_run.crystals
+    # crystals = nothing removes the seed; the copy is validated like a new one.
+    @test remake(pH_run; crystals = nothing).crystals === nothing
+    @test_throws ArgumentError remake(pH_run; solvent = (concentration = 1.0,))
+end
+
 @testset "Table conditions keyword rules and seed columns" begin
     seed_table = DataFrame(Exp_ID = [1, 1], Time = [0.0, 1800.0], Concentration = [18.0, 16.0],
         Temperature = [293.15, 293.15], SeedMass = [0.25, 0.25], SeedD43 = [12e-6, 12e-6],
@@ -92,7 +108,7 @@ end
           GaussianInitialCrystals(mass_concentration = 0.25, d43 = 12e-6, standard_deviation = 2e-6)
     # The mapped seed carries its mass and d43 into the moment state (rho*kv = 1000).
     seeded_population = CriSTool.DiscretisedProblem(CrystallisationProblem(fixture_translation_model(),
-        merge(seeded_run.conditions; concentration = 18.0), (0.0, 1.0)), MoM()).initial_population
+        remake(seeded_run.conditions; concentration = 18.0), (0.0, 1.0)), MoM()).initial_population
     @test 1000.0 * seeded_population[4] ≈ 0.25 rtol = 1e-12
     @test seeded_population[5] / seeded_population[4] ≈ 12e-6 rtol = 1e-12
 

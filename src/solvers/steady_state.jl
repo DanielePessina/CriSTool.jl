@@ -1,68 +1,44 @@
 """
-    SteadyStateOptions(; relaxation_horizon=nothing, minimum_relaxation=0.0,
-                        residual_reltol=1e-10, residual_abstol=1e-12,
-                        residual_scales=nothing, autonomous=false,
-                        balance_reltol=1e-5)
+    _SteadyRelaxationSettings
 
-Settings for an MSMPR steady-state relaxation, validated on construction.
-
-- `relaxation_horizon` (s): longest relaxation time; `nothing` uses 100
-  residence times in a direct steady solve and the template ODE span in
-  prepared inference.
-- `minimum_relaxation` (s): earliest time at which the residual stop may fire.
-- `residual_reltol`, `residual_abstol`: the run is converged when every scaled
-  RHS component is at most their sum.
-- `residual_scales`: optional positive per-state residual scales.
-- `autonomous`: declare that opaque profiles and user kinetics are time
-  invariant.
-- `balance_reltol`: accepted relative total-API flow-balance error.
+Validated settings of one MSMPR steady-state relaxation, built by
+`_steady_relaxation_settings` from the keywords of
+`solve(::CrystallisationSteadyStateProblem, solver; ...)` (documented there) and
+`SteadyMode(; ...)`. In prepared inference a `nothing` horizon is resolved when
+the run template is built, so the template's ODE span is the horizon.
 """
-struct SteadyStateOptions
+struct _SteadyRelaxationSettings
     relaxation_horizon::Union{Nothing, Float64}
     minimum_relaxation::Float64
-    residual_reltol::Float64
-    residual_abstol::Float64
+    reltol::Float64
+    abstol::Float64
     residual_scales::Union{Nothing, Vector{Float64}}
-    autonomous::Bool
     balance_reltol::Float64
-    function SteadyStateOptions(relaxation_horizon, minimum_relaxation,
-                                residual_reltol, residual_abstol,
-                                residual_scales, autonomous, balance_reltol)
-        isnothing(relaxation_horizon) ||
-            (relaxation_horizon isa Real && isfinite(relaxation_horizon) &&
-             relaxation_horizon > 0.0) ||
-            throw(ArgumentError("relaxation_horizon must be finite and strictly positive."))
-        minimum_relaxation isa Real && isfinite(minimum_relaxation) &&
-            minimum_relaxation >= 0.0 ||
-            throw(ArgumentError("minimum_relaxation must be finite and nonnegative."))
-        isnothing(relaxation_horizon) || minimum_relaxation <= relaxation_horizon ||
-            throw(ArgumentError("minimum_relaxation must not exceed relaxation_horizon."))
-        all(tolerance -> tolerance isa Real && isfinite(tolerance) && tolerance >= 0.0,
-            (residual_reltol, residual_abstol)) ||
-            throw(ArgumentError("Residual tolerances must be finite and nonnegative."))
-        residual_reltol + residual_abstol > 0.0 ||
-            throw(ArgumentError("At least one residual tolerance must be strictly positive."))
-        isnothing(residual_scales) ||
-            all(scale -> scale isa Real && isfinite(scale) && scale > 0.0, residual_scales) ||
-            throw(ArgumentError("residual_scales must contain finite positive state scales."))
-        autonomous isa Bool || throw(ArgumentError("autonomous must be Bool."))
-        balance_reltol isa Real && isfinite(balance_reltol) && balance_reltol > 0.0 ||
-            throw(ArgumentError("balance_reltol must be finite and strictly positive."))
-        return new(relaxation_horizon, minimum_relaxation, residual_reltol,
-                   residual_abstol,
-                   isnothing(residual_scales) ? nothing : collect(Float64, residual_scales),
-                   autonomous, balance_reltol)
-    end
 end
 
-function SteadyStateOptions(; relaxation_horizon = nothing, minimum_relaxation = 0.0,
-                            residual_reltol = 1e-10, residual_abstol = 1e-12,
-                            residual_scales = nothing, autonomous = false,
-                            balance_reltol = 1e-5)
-    return SteadyStateOptions(relaxation_horizon, minimum_relaxation, residual_reltol,
-                              residual_abstol, residual_scales, autonomous,
-                              balance_reltol)
+function _steady_relaxation_settings(; relaxation_horizon::Union{Nothing, Real} = nothing,
+        minimum_relaxation::Real = 0.0, reltol::Real = 1e-10, abstol::Real = 1e-12,
+        residual_scales::Union{Nothing, AbstractVector{<:Real}} = nothing, balance_reltol::Real = 1e-5)
+    isnothing(relaxation_horizon) || (isfinite(relaxation_horizon) && relaxation_horizon > 0) ||
+        throw(ArgumentError("relaxation_horizon must be finite and strictly positive."))
+    isfinite(minimum_relaxation) && minimum_relaxation >= 0 ||
+        throw(ArgumentError("minimum_relaxation must be finite and nonnegative."))
+    isnothing(relaxation_horizon) || minimum_relaxation <= relaxation_horizon ||
+        throw(ArgumentError("minimum_relaxation must not exceed relaxation_horizon."))
+    all(tolerance -> isfinite(tolerance) && tolerance >= 0, (reltol, abstol)) ||
+        throw(ArgumentError("Steady reltol and abstol must be finite and nonnegative."))
+    reltol + abstol > 0 || throw(ArgumentError("At least one of reltol and abstol must be strictly positive."))
+    isnothing(residual_scales) || all(scale -> isfinite(scale) && scale > 0, residual_scales) ||
+        throw(ArgumentError("residual_scales must contain finite positive state scales."))
+    isfinite(balance_reltol) && balance_reltol > 0 ||
+        throw(ArgumentError("balance_reltol must be finite and strictly positive."))
+    return _SteadyRelaxationSettings(_steady_horizon_value(relaxation_horizon), Float64(minimum_relaxation),
+        Float64(reltol), Float64(abstol), _steady_scales_value(residual_scales), Float64(balance_reltol))
 end
+_steady_horizon_value(::Nothing) = nothing
+_steady_horizon_value(relaxation_horizon::Real) = Float64(relaxation_horizon)
+_steady_scales_value(::Nothing) = nothing
+_steady_scales_value(residual_scales::AbstractVector) = collect(Float64, residual_scales)
 
 
 """
@@ -173,11 +149,11 @@ function _steady_state_autonomy_issues(problem::DiscretisedProblem)
         push!(issues, :solvent_dynamics)
     isnothing(operation.feed.transport) || push!(issues, :feed_transport)
 
-    for (name, kinetic_model) in ((:nucleation_kinetics, problem.model.nucleation.law),
-                                  (:growth_kinetics, problem.model.growth.law),
-                                  (:dissolution_kinetics, problem.model.dissolution.law),
-                                  (:aggregation_kinetics, problem.model.aggregation.law),
-                                  (:breakage_kinetics, problem.model.breakage.law))
+    for (name, kinetic_model) in ((:nucleation_kinetics, problem.model.nucleation),
+                                  (:growth_kinetics, problem.model.growth),
+                                  (:dissolution_kinetics, problem.model.dissolution),
+                                  (:aggregation_kinetics, problem.model.aggregation),
+                                  (:breakage_kinetics, problem.model.breakage))
         _is_time_invariant(kinetic_model) || push!(issues, name)
     end
     return unique(issues)
@@ -409,8 +385,7 @@ end
 
 function _steady_population_constraints(solver::QMOM, problem, raw_state, physical_result,
                                         density_diagnostics)
-    all(diagnostic -> diagnostic.status in (:ok, :empty, :deflated),
-        physical_result.population.diagnostics) || return false, :unrealizable_moments
+    # Every saved quadrature was inverted, so it is realizable: unrealizable moments throw earlier.
     return true, :ok
 end
 
@@ -479,7 +454,7 @@ _default_steady_relaxation_horizon(problem) =
 
 """
     _steady_relaxation_solve(problem, ode_problem, algorithm;
-                           steady_options=SteadyStateOptions(), solve_options=(;),
+                           steady_settings=_steady_relaxation_settings(), solve_options=(;),
                            callback_factory=nothing)
 
 Internal prepared-loss entry point. `ode_problem` is authoritative: in
@@ -492,28 +467,27 @@ template.
 """
 function _steady_relaxation_solve(problem::DiscretisedProblem, ode_problem,
                                 algorithm;
-                                steady_options::SteadyStateOptions = SteadyStateOptions(),
+                                steady_settings::_SteadyRelaxationSettings = _steady_relaxation_settings(),
                                 solve_options::NamedTuple = (;),
                                 callback_factory = nothing,
                                 reconstruction_failure_handler = nothing)
-    options = steady_options
     start_time, original_end_time = ode_problem.tspan
-    horizon = something(options.relaxation_horizon, original_end_time - start_time)
-    options.minimum_relaxation <= horizon ||
+    horizon = something(steady_settings.relaxation_horizon, original_end_time - start_time)
+    steady_settings.minimum_relaxation <= horizon ||
         throw(ArgumentError("minimum_relaxation must not exceed relaxation_horizon."))
     end_time = start_time + horizon
     active_ode_problem = end_time == original_end_time ? ode_problem :
                          remake(ode_problem; tspan = (start_time, end_time))
 
-    residual_limit = options.residual_reltol + options.residual_abstol
+    residual_limit = steady_settings.reltol + steady_settings.abstol
     flow = operation_flows(problem.operation, start_time).inflow
     residence_time = problem.operation.volume / flow
     reference_scales = _steady_state_reference_scales(problem, active_ode_problem,
-                                                      options.residual_scales)
-    population_scaling = _steady_population_scaling(problem.solver, options.residual_scales)
+                                                      steady_settings.residual_scales)
+    population_scaling = _steady_population_scaling(problem.solver, steady_settings.residual_scales)
     convergence_callback = _steady_autostop_callback(
         problem, active_ode_problem, reference_scales, residence_time,
-        options.minimum_relaxation, options.residual_reltol, options.residual_abstol,
+        steady_settings.minimum_relaxation, steady_settings.reltol, steady_settings.abstol,
         population_scaling)
 
     combined_callback_factory = ode_problem_for_solve -> begin
@@ -553,7 +527,7 @@ function _steady_relaxation_solve(problem::DiscretisedProblem, ode_problem,
             problem, raw_state, physical_result, density_diagnostics)
         hydraulics, product, balance = _steady_product_diagnostics(
             problem, raw_state, physical_result, final_time)
-        balance_valid = balance.relative_error <= options.balance_reltol
+        balance_valid = balance.relative_error <= steady_settings.balance_reltol
         diagnostics = (; converged,
                         residual_norm = norm(residual, Inf),
                         scaled_residual_norm, residual_limit,
@@ -563,7 +537,7 @@ function _steady_relaxation_solve(problem::DiscretisedProblem, ode_problem,
                         physical_state_status = physical_status,
                         population_density_diagnostics = density_diagnostics,
                         total_api_balance = balance,
-                        balance_reltol = options.balance_reltol,
+                        balance_reltol = steady_settings.balance_reltol,
                         balance_valid,
                         equilibrium_time = final_time,
                         ode_final_state = raw_state,
@@ -581,16 +555,16 @@ function _steady_relaxation_solve(problem::DiscretisedProblem, ode_problem,
 end
 
 """
-    CrystallisationSteadyStateProblem(problem::CrystallisationProblem;
-                                      u0=nothing, options=SteadyStateOptions())
+    CrystallisationSteadyStateProblem(problem::CrystallisationProblem; autonomous=false, u0=nothing)
 
 Steady-state counterpart of a transient `problem`, solved with
-`solve(steady_problem, solver)`: relax a constant, autonomous fixed-volume
-MSMPR to a stable steady state. `u0` is an optional initial guess as a complete
+`solve(steady_problem, solver; relaxation_horizon, reltol, abstol, ...)`:
+relax a constant, autonomous fixed-volume MSMPR to a stable steady state.
+`autonomous = true` declares that opaque time profiles and user-defined
+kinetics are time invariant. `u0` is an optional initial guess as a complete
 state vector in the solver's layout; without it the relaxation starts from the
-problem's conditions. `options` sets the relaxation horizon, residual
-tolerances and the `autonomous` declaration. The problem's `tspan` is not used:
-the relaxation runs from `t0` over the relaxation horizon.
+problem's conditions. The problem's `tspan` is not used: the relaxation runs
+from `t0` over the relaxation horizon.
 
 SciMLBase's `SteadyStateProblem` wraps an `ODEFunction` and an initial state,
 both of which depend on the solver here, so CriSTool owns this steady type.
@@ -600,12 +574,12 @@ struct CrystallisationSteadyStateProblem{Problem <: CrystallisationProblem,
        SciMLBase.AbstractSciMLProblem
     problem::Problem
     u0::Guess
-    options::SteadyStateOptions
+    autonomous::Bool
 end
 
-CrystallisationSteadyStateProblem(problem::CrystallisationProblem; u0::Union{Nothing, AbstractVector} = nothing,
-                                  options::SteadyStateOptions = SteadyStateOptions()) =
-    CrystallisationSteadyStateProblem(problem, _steady_initial_guess(u0), options)
+CrystallisationSteadyStateProblem(problem::CrystallisationProblem; autonomous::Bool = false,
+                                  u0::Union{Nothing, AbstractVector} = nothing) =
+    CrystallisationSteadyStateProblem(problem, _steady_initial_guess(u0), autonomous)
 
 _steady_initial_guess(::Nothing) = nothing
 _steady_initial_guess(initial_guess::AbstractVector) = collect(Float64, initial_guess)
@@ -617,39 +591,50 @@ _steady_initial_problem(discretised_problem::DiscretisedProblem, initial_guess::
 
 """
     solve(steady_problem::CrystallisationSteadyStateProblem, solver::AbstractSolver;
+          relaxation_horizon=nothing, minimum_relaxation=0.0, reltol=1e-10, abstol=1e-12,
+          residual_scales=nothing, balance_reltol=1e-5,
           alg=nothing, solve_options=(;), callback_factory=nothing)
         -> CrystallisationSteadyStateSolution
 
 Integrate the generated ODE of `solver` and stop early only when the scaled
-full-state RHS residual is within tolerance. The result's `retcode` reports
-the outcome; when it is unsuccessful (relaxation horizon, residual, physical
-constraints or total-API flow balance) the direct solve throws
-`SteadyStateConvergenceError`, which carries the unsuccessful result and its
-diagnostics. `steady.equilibrium` holds the equilibrium values
-(`steady.equilibrium.concentration`, `.d43`).
+full-state RHS residual is within `reltol + abstol`.
+
+- `relaxation_horizon` (s): longest relaxation time; `nothing` uses 100
+  residence times.
+- `minimum_relaxation` (s): earliest time at which the residual stop may fire.
+- `reltol`, `abstol`: steady residual tolerances, as in SciML's `DynamicSS`;
+  the integrator tolerances belong to the solver and `solve_options`.
+- `residual_scales`: optional positive per-state residual scales.
+- `balance_reltol`: accepted relative total-API flow-balance error.
+
+The result's `retcode` reports the outcome; when it is unsuccessful
+(relaxation horizon, residual, physical constraints or total-API flow balance)
+the direct solve throws `SteadyStateConvergenceError`, which carries the
+unsuccessful result and its diagnostics. `steady.equilibrium` holds the
+equilibrium values (`steady.equilibrium.concentration`, `.d43`).
 
 Opaque time profiles and user-defined kinetics require
-`SteadyStateOptions(autonomous = true)` as an explicit declaration that their
-behavior is time invariant. Batch and fed-batch problems remain transient
-`solve(problem, solver)` workflows.
+`CrystallisationSteadyStateProblem(problem; autonomous = true)` as an explicit
+declaration that their behavior is time invariant. Batch and fed-batch
+problems remain transient `solve(problem, solver)` workflows.
 """
 function SciMLBase.solve(steady_problem::CrystallisationSteadyStateProblem, solver::AbstractSolver;
                          alg = nothing, solve_options::NamedTuple = (;),
-                         callback_factory = nothing)
-    options = steady_problem.options
+                         callback_factory = nothing, relaxation_settings...)
+    steady_settings = _steady_relaxation_settings(; relaxation_settings...)
     transient_problem = steady_problem.problem
     discretised_problem = _steady_initial_problem(DiscretisedProblem(transient_problem, solver),
                                                   steady_problem.u0)
-    _validate_steadystate_problem(discretised_problem; autonomous = options.autonomous)
+    _validate_steadystate_problem(discretised_problem; autonomous = steady_problem.autonomous)
     kinetic_values = _validate_kinetic_values(discretised_problem, transient_problem.p)
-    horizon = something(options.relaxation_horizon,
+    horizon = something(steady_settings.relaxation_horizon,
                         _default_steady_relaxation_horizon(discretised_problem))
     start_time = first(transient_problem.tspan)
     ode_problem, default_algorithm = crystallisation_odeproblem(
         solver, discretised_problem, (start_time, start_time + horizon), kinetic_values)
     steady = _steady_relaxation_solve(
         discretised_problem, ode_problem, something(alg, default_algorithm);
-        steady_options = options, solve_options, callback_factory)
+        steady_settings, solve_options, callback_factory)
     SciMLBase.successful_retcode(steady) || throw(SteadyStateConvergenceError(steady))
     return steady
 end

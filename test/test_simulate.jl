@@ -54,6 +54,37 @@ simulate_solve(model, conditions, solver; saveat, problem_settings...) =
         end
     end
 
+    # Dense output is opt-in: solution(t) interpolates between the saved times
+    # and still matches the closed form (moment methods: ODE tolerance; the
+    # 40-cell mesh: its discretisation error, as above).
+    translation_problem_dense = CrystallisationProblem(fixture_translation_model(), fixture_seeded_conditions(),
+        (0.0, 100.0))
+    for (dense_solver, dense_rtol) in ((MoM(), 1e-8), (DQMOM(), 1e-6), (simulate_mesh_solvers[1], 1.5e-2))
+        dense_trajectory = solve(translation_problem_dense, dense_solver; saveat = [0.0, 100.0], dense = true)
+        @test dense_trajectory.t == [0.0, 100.0]
+        @test dense_trajectory(37.5, :d43) ≈ fixture_translation_d43(37.5) rtol = dense_rtol
+        @test dense_trajectory(37.5).t == [37.5]
+    end
+    # A dense solve saves at the times the non-dense solve with the same saveat
+    # saves, including after an early MaxIters stop.
+    for (parity_saveat, parity_options) in (([0.0, 50.0], (;)), ([25.0, 100.0], (;)), (30.0, (;)),
+            ([0.0, 50.0], (; maxiters = 3)), (30.0, (; maxiters = 3)))
+        saved_only = solve(translation_problem_dense, MoM(); saveat = parity_saveat, solve_options = parity_options)
+        saved_dense = solve(translation_problem_dense, MoM(); saveat = parity_saveat, solve_options = parity_options,
+            dense = true)
+        @test saved_dense.t == saved_only.t
+        @test saved_dense.retcode === saved_only.retcode
+    end
+    dense_moments = solve(translation_problem_dense, MoM(); dense = true)
+    @test dense_moments(37.5, :concentration) ≈ fixture_translation_concentration(37.5) rtol = 1e-9
+    # Interpolated moments agree with a solve that saves at the same time.
+    @test dense_moments(37.5, :moments) ≈
+          vec(observable_values(solve(translation_problem_dense, MoM(); saveat = [37.5]), :moments)) rtol = 1e-6
+    @test_throws ArgumentError dense_moments(150.0)
+    # Without dense = true only the saved times exist.
+    @test_throws ArgumentError solve(translation_problem_dense, MoM(); saveat = [0.0, 100.0])(37.5)
+    @test_throws ArgumentError solve(translation_problem_dense, MoM(); solve_options = (; dense = true))
+
     # Replacing the kinetic values with remake takes effect: doubling the speed
     # doubles the shift (closed form at 2 µm), and the problem's own values are kept.
     translation_problem = CrystallisationProblem(fixture_translation_model(), fixture_seeded_conditions(), (0.0, 100.0))
@@ -249,16 +280,22 @@ end
     end
     # DQMOM cannot drop a node, so the solve stops at the first node's
     # boundary crossing (inside the run, where the other solvers report
-    # extinction) and names the solvers that can dissolve completely.
-    dqmom_extinction_error = try
-        simulate_solve(extinction_model, extinction_conditions, DQMOM(); saveat = [0.0, 60.0])
-        nothing
-    catch caught_error
-        caught_error
-    end
-    @test dqmom_extinction_error isa DomainError
-    @test occursin("Use QMOM, FiniteVol or WENO", dqmom_extinction_error.msg)
-    @test 0.0 < dqmom_extinction_error.val < 60.0
+    # extinction) with a failure retcode, keeping the trajectory up to it.
+    dqmom_extinction = @test_logs (:warn, r"use QMOM, FiniteVol or WENO") match_mode = :any simulate_solve(
+        extinction_model, extinction_conditions, DQMOM(); saveat = [0.0, 60.0])
+    @test dqmom_extinction.retcode == ReturnCode.Failure
+    @test !successful_retcode(dqmom_extinction)
+    @test 0.0 < dqmom_extinction.t[end] < 60.0
+    # The last state is at the boundary: the smallest node has dissolved to L = 0
+    # (the seed nodes start at several µm), and solute + crystal mass is conserved.
+    @test minimum(dqmom_extinction.population.nodes[:, end]) < 1e-9
+    @test dqmom_extinction.concentration .+ 1000.0 .* dqmom_extinction.population.moments[4, :] ≈
+          fill(5.25, length(dqmom_extinction.t)) rtol = 1e-6
+    # A dense solve keeps the same saved times, ending at the crossing.
+    dense_extinction = solve(CrystallisationProblem(extinction_model, extinction_conditions, (0.0, 60.0)), DQMOM();
+        saveat = [0.0, 60.0], dense = true)
+    @test dense_extinction.t == dqmom_extinction.t
+    @test dense_extinction.retcode == ReturnCode.Failure
 end
 
 @testset "Mesh nucleation and growth conserve solute" begin
@@ -310,8 +347,9 @@ end
 CriSTool.saturation_concentration(solubility::SimulateLinearSolubility, temperature_profile, elapsed_time) =
     solubility.slope_per_kelvin * (CriSTool.temperature(temperature_profile, elapsed_time) - 273.15) + solubility.intercept
 
-struct SimulateLinearGrowth <: AbstractScalarGrowthFunction end
-CriSTool.paramaxis(::SimulateLinearGrowth) = CriSTool.ComponentArrays.Axis(linear_growth_coefficient = 1)
+struct SimulateLinearGrowth{T <: Real} <: AbstractScalarGrowthFunction
+    linear_growth_coefficient::T
+end
 CriSTool.growthrate(::SimulateLinearGrowth, kinetic_parameters, configured_run, ode_state, elapsed_time) =
     kinetic_parameters[1] * (supersaturation(configured_run, ode_state, elapsed_time) - 1)
 
@@ -321,7 +359,7 @@ CriSTool.growthrate(::SimulateLinearGrowth, kinetic_parameters, configured_run, 
     @test saturation_concentration(custom_solubility, ConstantTemperature(303.15), 0.0) == 9.5
     custom_system = CrystallisationSystem(saturation_model = custom_solubility, crystal_density = 1000.0, volume_shape_factor = 1.0)
     custom_model = CrystallisationModel(custom_system;
-        growth = KineticModel(SimulateLinearGrowth(); parameters = (linear_growth_coefficient = 1e-5,)))
+        growth = SimulateLinearGrowth(1e-5))
     # Extra species: d(tracer)/dt = -1e4·G, so tracer(t) = 1 - 1e4·∫G dt, and
     # ∫G dt is exactly the shift of the mean length d10 = µ1/µ0 (no nucleation).
     tracer_dynamics = (configured_run, ode_state, elapsed_time, growth_rate) -> begin
@@ -414,11 +452,12 @@ end
 end
 
 @testset "Input contracts that guard user mistakes" begin
-    # Keyword binding must name every parameter, and only real ones.
-    @test_throws ArgumentError EmpiricalGrowth(growth_order = 2.0)
-    @test_throws ArgumentError EmpiricalGrowth(wrong = 1.0, growth_order = 2.0)
-    # An unbound law with parameters cannot enter a model.
-    @test_throws ArgumentError CrystallisationModel(fixture_system; nucleation = CNTNucleation(), growth = fixture_constant_growth())
+    # A law needs every parameter value, and only real ones.
+    @test_throws UndefKeywordError EmpiricalGrowth(growth_order = 2.0)
+    @test_throws MethodError EmpiricalGrowth(growth_coefficient = 1.0, growth_order = 2.0, wrong = 1.0)
+    # A law of the wrong family cannot fill a slot.
+    @test_throws MethodError CrystallisationModel(fixture_system; nucleation = fixture_constant_growth(),
+        growth = fixture_constant_growth())
     # CNT needs a molecular volume the fixture system does not define.
     @test_throws ArgumentError CrystallisationProblem(CrystallisationModel(fixture_system;
         nucleation = CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4), growth = fixture_constant_growth()),

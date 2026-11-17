@@ -2,16 +2,19 @@
 
 `EstimationProblem` follows the SciML problem/solve pattern: it holds the
 model, experiments, selected parameters, loss and simulation settings, and
-`solve(problem, alg)` dispatches on the estimation algorithm. The Turing method
-`solve(problem, NUTS(); n_samples, n_chains, rng, parallel)` is defined by the
-`CriSToolTuringExt` extension (`using Turing`).
+`solve(problem, alg)` dispatches on the optimiser, while
+`sample([rng], problem, sampler, n)` draws from the posterior. The Turing
+methods `sample([rng], problem, NUTS(), n_samples)` and
+`sample([rng], problem, NUTS(), MCMCThreads(), n_samples, n_chains)` are
+defined by the `CriSToolTuringExt` extension (`using Turing`).
 
 ```@docs
 EstimationProblem
 remake(::EstimationProblem)
 solve(::EstimationProblem, ::Any)
 solve(::EstimationProblem, ::CriSTool.Metaheuristics.Algorithm)
-solve(::EstimationProblem, ::AbstractABCSampler)
+sample(::EstimationProblem, ::AbstractABCSampler, ::Integer)
+solve(::EstimationProblem, ::Union{AbstractABCSampler, CriSTool.AbstractMCMC.AbstractSampler})
 FitResult
 is_likelihood
 loss_terms
@@ -36,6 +39,7 @@ LaplaceABCKernel
 FlatABCKernel
 rename_chain
 PredictionEnsemble
+CriSTool.EnsembleSampleDiagnostics
 prediction_summary
 ```
 

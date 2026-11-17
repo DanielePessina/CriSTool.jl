@@ -2,6 +2,38 @@
 
 ## 0.1.0 — unreleased
 
+- Version 1 API (see the migration guide's *Version 1 API* table):
+  - Kinetic laws hold their parameter values as fields, like Distributions.jl
+    distributions: `EmpiricalGrowth(growth_coefficient = 1e-9, growth_order = 2.0)`
+    or `EmpiricalGrowth(1e-9, 2.0)`. `KineticModel` is removed, and `model.growth.law`
+    is now `model.growth`.
+  - Samplers use `sample`: `sample([rng], problem, NUTS(), n)`,
+    `sample([rng], problem, NUTS(), MCMCThreads(), n, n_chains)` and
+    `sample([rng], problem, ABCDE(), n_particles; target)`. `solve(problem, sampler)`
+    throws an `ArgumentError`. The `rng` now reaches the ABC sampler, so ABC draws
+    are reproducible.
+  - `FitResult` gains `u`, `objective` and `retcode`; `InferenceResult` gains
+    `retcode`; both rename `backend_result` to `original` and support
+    `successful_retcode`. A fit whose optimum scores the failed-simulation penalty
+    is `ReturnCode.Failure`, whatever the optimiser reports. An ABC run that ends
+    before every particle reaches `target` is `ReturnCode.MaxIters`.
+  - Steady-state relaxation settings are keywords of
+    `solve(CrystallisationSteadyStateProblem(problem; autonomous, u0), solver; ...)`
+    and of `SteadyMode(; ...)`. `SteadyStateOptions` is removed.
+  - `remake(conditions; ...)` replaces `merge(::RunConditions)`.
+  - Opt-in dense output: `solve(...; dense = true)`, then `sol(t)` or `sol(t, :d43)`.
+    The saved times are those of the same solve without `dense`.
+  - A DQMOM node that dissolves to `minimum_size` stops the solve with
+    `ReturnCode.Failure` and a one-time warning, instead of throwing a `DomainError`.
+  - `run_ensemble` streams into preallocated rows, and its per-sample diagnostics
+    are `CriSTool.EnsembleSampleDiagnostics`. `QMOMInversionDiagnostics.status` is a
+    `QuadratureStatus` enum, not a `Symbol`.
+  - `FiniteVol` and `WENO` start every solve from `dt = 1e-6` s, the step that
+    OrdinaryDiffEq's initial-step fallback took on sharp or empty meshes. This
+    removes the `dt_epsilon` warnings. Results can differ within the solver
+    tolerances; `solve_options = (; dt = ...)` overrides the first step.
+  - Only forward-mode AD (`AutoForwardDiff`) is supported in v1.
+
 - Estimation follows the SciML problem/solve pattern: `EstimationProblem(model,
   experiments; bounds, priors, loss, solver, ...)` replaces `OptimisationSpec`,
   `BayesianSpec`, `ABCSpec` and `prepare_fit`, and `solve(problem, alg)` replaces

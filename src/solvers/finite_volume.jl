@@ -16,13 +16,13 @@ plain vector) for `Val(true)`. Without a dissolution law the scalar path calls `
 directly.
 """
 @inline _mesh_net_growth(::Val{false}, growth_rate_cache, parameters, problem, state, time) =
-    net_growth_rate(problem.model.growth.law, parameters.gr,
-                    problem.model.dissolution.law, parameters.diss,
+    net_growth_rate(problem.model.growth, parameters.gr,
+                    problem.model.dissolution, parameters.diss,
                     problem, state, time)
 
 @inline _mesh_net_growth(::Val{true}, growth_rate_cache, parameters, problem, state, time) =
-    net_growth_rate!(get_tmp(growth_rate_cache, state), problem.model.growth.law, parameters.gr,
-                     problem.model.dissolution.law, parameters.diss,
+    net_growth_rate!(get_tmp(growth_rate_cache, state), problem.model.growth, parameters.gr,
+                     problem.model.dissolution, parameters.diss,
                      problem, state, time, problem.solver.cell_centre)
 
 """Fill the legacy high-resolution FV scalar-growth flux in place."""
@@ -119,7 +119,7 @@ function _mesh_boundary_flow_state(solver::AbstractDiscretisedSolver, problem, o
     for time_index in eachindex(saved_times)
         numerical_state = ode_solution.u[time_index]
         simulation_time = saved_times[time_index]
-        nucleation_rate_value = nucleationrate(problem.model.nucleation.law,
+        nucleation_rate_value = nucleationrate(problem.model.nucleation,
                                                parameters.nucl, problem,
                                                numerical_state, simulation_time)
         net_growth = _mesh_net_growth(growth_layout, growth_rate_cache, parameters,
@@ -190,7 +190,7 @@ function _mesh_population_rhs(CryProblem::DiscretisedProblem, flux_cache_dc,
                               growth_rate_cache_dc, solver_cache_dc)
     solver = CryProblem.solver
     feed_population = _operation_feed_population(CryProblem)
-    aggregation_table = _mesh_aggregation_table(CryProblem.model.aggregation.law, solver)
+    aggregation_table = _mesh_aggregation_table(CryProblem.model.aggregation, solver)
     growth_layout = _mesh_growth_layout(CryProblem)
     cell_centre_cubed = solver.cell_centre .^ 3
 
@@ -200,15 +200,15 @@ function _mesh_population_rhs(CryProblem::DiscretisedProblem, flux_cache_dc,
                                       CryProblem, st, t)
         _fill_mesh_flux!(solver, _mesh_solver_cache_view(solver_cache_dc, st), face_flux,
                          crystal_state(CryProblem, st), net_growth,
-                         nucleationrate(CryProblem.model.nucleation.law, p.nucl,
+                         nucleationrate(CryProblem.model.nucleation, p.nucl,
                                         CryProblem, st, t))
 
         population_derivative = crystal_state(CryProblem, dstdt)
         solid_volume_rate = _mesh_transport_divergence!(population_derivative, face_flux,
                                                         solver, cell_centre_cubed)
-        _add_aggregation_rate!(population_derivative, CryProblem.model.aggregation.law, p.agg,
+        _add_aggregation_rate!(population_derivative, CryProblem.model.aggregation, p.agg,
                                CryProblem, st, t, aggregation_table)
-        _add_breakage_rate!(population_derivative, CryProblem.model.breakage.law, p.br,
+        _add_breakage_rate!(population_derivative, CryProblem.model.breakage, p.br,
                             CryProblem, st, t)
 
         _write_mesh_solvent_derivatives!(dstdt, CryProblem, st, t, net_growth,
@@ -239,6 +239,6 @@ function crystallisation_odeproblem(solver::FiniteVol, CryProblem::DiscretisedPr
     u0_typed = eltype(kinetic_values).(_get_initial_state(CryProblem))
     ODEprob = ODEProblem(finite_volume_rhs!, u0_typed, tspan,
                          kinetic_values)
-    default_algorithm = _is_length_law(CryProblem.model.growth.law) ? SSPRK43() : Tsit5()
+    default_algorithm = _is_length_law(CryProblem.model.growth) ? SSPRK43() : Tsit5()
     return (ODEprob, _timestepping_algorithm(solver, default_algorithm))
 end

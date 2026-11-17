@@ -200,15 +200,15 @@ function _validate_solid_mass_concentration_threshold(threshold::Float64)
 end
 
 """Whether the dissolution slot holds an active law, making crystal growth signed."""
-_dissolution_enabled(problem::DiscretisedProblem) = !_is_null_kinetic(problem.model.dissolution.law)
+_dissolution_enabled(problem::DiscretisedProblem) = !_is_null_kinetic(problem.model.dissolution)
 
 """Whether growth or dissolution returns a rate per crystal length."""
 _uses_length_rates(problem::DiscretisedProblem) =
-    _is_length_law(problem.model.growth.law) || _is_length_law(problem.model.dissolution.law)
+    _is_length_law(problem.model.growth) || _is_length_law(problem.model.dissolution)
 
 """Whether aggregation or breakage contributes a population source."""
 _has_binary_sources(problem::DiscretisedProblem) =
-    !(_is_null_kinetic(problem.model.aggregation.law) && _is_null_kinetic(problem.model.breakage.law))
+    !(_is_null_kinetic(problem.model.aggregation) && _is_null_kinetic(problem.model.breakage))
 
 """Hook for model-specific growth-parameter validation."""
 _validate_growth_parameters(model, parameters, problem) = nothing
@@ -224,8 +224,8 @@ the law-specific growth and dissolution domains. Some domains depend on the
 solver mesh, so this runs on the solve-time problem.
 """
 function _validate_kinetic_values(problem::DiscretisedProblem, kinetic_values)
-    _validate_growth_parameters(problem.model.growth.law, kinetic_values.gr, problem)
-    _validate_dissolution_parameters(problem.model.dissolution.law, kinetic_values.diss, problem)
+    _validate_growth_parameters(problem.model.growth, kinetic_values.gr, problem)
+    _validate_dissolution_parameters(problem.model.dissolution, kinetic_values.diss, problem)
     return kinetic_values
 end
 

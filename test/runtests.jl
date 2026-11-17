@@ -1,4 +1,6 @@
 using CriSTool
+# Metaheuristics (loaded by test_show.jl) exports an unrelated `sample`; the explicit import wins.
+using CriSTool: sample
 # Internal engine entry points used by a few regression checks.
 using CriSTool: run_ensemble, prepare_loss, LossSetup
 using Test

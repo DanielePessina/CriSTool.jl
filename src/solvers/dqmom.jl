@@ -62,10 +62,10 @@ end
 function _validate_dqmom_problem(problem::DiscretisedProblem)
     _validate_dqmom_public_state(problem)
 
-    _is_length_law(problem.model.dissolution.law) &&
+    _is_length_law(problem.model.dissolution) &&
         throw(ArgumentError("Length-dependent dissolution is not supported by DQMOM; " *
                             "use FiniteVol or WENO."))
-    for binary_law in (problem.model.aggregation.law, problem.model.breakage.law)
+    for binary_law in (problem.model.aggregation, problem.model.breakage)
         _has_moment_closure(binary_law) ||
             throw(ArgumentError("$(typeof(binary_law)) has no validated DQMOM moment closure."))
     end
@@ -146,7 +146,7 @@ function _dqmom_moment_source(problem::DiscretisedProblem,
                                 eltype(parameters), typeof(coordinate_scale))
 
     aggregation_source = _aggregation_moment_source(
-        problem.model.aggregation.law,
+        problem.model.aggregation,
         parameters.agg,
         physical_nodes,
         scaled_weights,
@@ -154,7 +154,7 @@ function _dqmom_moment_source(problem::DiscretisedProblem,
         shape_factor = problem.model.system.volume_shape_factor,
         pair_weight_scale = weight_scale)
     breakage_source = _breakage_moment_source(
-        problem.model.breakage.law,
+        problem.model.breakage,
         parameters.br,
         physical_nodes,
         scaled_weights,
@@ -184,10 +184,10 @@ _dqmom_growth_context(::DefaultSolventDynamics, problem::DiscretisedProblem,
 
 function _dqmom_growth_context(solvent_dynamics, problem::DiscretisedProblem,
                                state, parameters, time, growth_rates)
-    return _is_length_law(problem.model.growth.law) ? growth_rates :
-           net_growth_rate(problem.model.growth.law,
+    return _is_length_law(problem.model.growth) ? growth_rates :
+           net_growth_rate(problem.model.growth,
                            parameters.gr,
-                           problem.model.dissolution.law,
+                           problem.model.dissolution,
                            parameters.diss,
                            problem,
                            state,
@@ -200,16 +200,16 @@ function _dqmom_rhs(problem::DiscretisedProblem, state::SVector{S}, parameters, 
     solver = problem.solver
     scaled_weights, scaled_nodes, physical_nodes =
         _dqmom_static_nodes(state, solver, quadrature_count_value)
-    growth_rates = map(crystal_length -> net_growth_rate_at_length(problem.model.growth.law,
+    growth_rates = map(crystal_length -> net_growth_rate_at_length(problem.model.growth,
                                                                    parameters.gr,
-                                                                   problem.model.dissolution.law,
+                                                                   problem.model.dissolution,
                                                                    parameters.diss,
                                                                    problem,
                                                                    state,
                                                                    time,
                                                                    crystal_length),
                        physical_nodes)
-    nucleation_rate_value = nucleationrate(problem.model.nucleation.law,
+    nucleation_rate_value = nucleationrate(problem.model.nucleation,
                                            parameters.nucl,
                                            problem,
                                            state,
@@ -245,13 +245,14 @@ end
 """
     _dqmom_boundary_callback(problem)
 
-Stop a DQMOM solve when dissolution carries a node down to `minimum_size`.
+End a DQMOM solve when dissolution carries a node down to `minimum_size`.
 
 The DQMOM state stores each node's weight and position, so a node cannot be
-removed mid-solve the way QMOM drops one from its moment inversion.  Instead of
-integrating past the boundary into negative crystal sizes, the solve throws at
-the crossing and points to the solvers that model complete dissolution.
-Partial dissolution that stays above the boundary is unaffected.
+removed mid-solve the way QMOM drops one from its moment inversion. Instead of
+integrating past the boundary into negative crystal sizes, the solve stops at
+the crossing with `ReturnCode.Failure`, keeping the trajectory up to it, and
+warns once with the solvers that model complete dissolution. Partial
+dissolution that stays above the boundary is unaffected.
 """
 function _dqmom_boundary_callback(problem::DiscretisedProblem)
     _dissolution_enabled(problem) || return nothing
@@ -261,11 +262,18 @@ function _dqmom_boundary_callback(problem::DiscretisedProblem)
     condition = (state, time, integrator) ->
         minimum(node_index -> state[nquadrature + node_index] / state[node_index],
                 1:nquadrature) - scaled_minimum_size
-    affect! = integrator -> nothing
-    affect_neg! = integrator -> throw(DomainError(integrator.t,
-        "A DQMOM node dissolved down to minimum_size at this time; DQMOM cannot remove " *
-        "a node mid-solve. Use QMOM, FiniteVol or WENO for complete dissolution."))
-    return ContinuousCallback(condition, affect!, affect_neg!; save_positions = (false, false))
+    # Only a downward crossing is an event.
+    return ContinuousCallback(condition, nothing, _terminate_at_dqmom_boundary!; save_positions = (false, false))
+end
+
+function _terminate_at_dqmom_boundary!(integrator)
+    @warn "A DQMOM node dissolved down to minimum_size at t = $(SciMLBase.value(integrator.t)) s; the " *
+          "solve stops there with ReturnCode.Failure. DQMOM cannot remove a node mid-solve: use QMOM, " *
+          "FiniteVol or WENO for complete dissolution." maxlog = 1
+    # Record the boundary state: a terminated solve skips the callback's post-event save.
+    SciMLBase.savevalues!(integrator, true)
+    SciMLBase.terminate!(integrator, ReturnCode.Failure)
+    return nothing
 end
 
 """Construct the DQMOM ODE problem and selected time-stepping algorithm."""
@@ -387,7 +395,7 @@ function _dqmom_projection_diagnostics(node_matrix::AbstractMatrix{T}, weight_ma
                                          "DQMOM trajectory reached node coalescence; " *
                                          "active quadrature nodes cannot merge or be reborn.")
         projection_diagnostics[time_index] = DQMOMProjectionDiagnostics(
-            :ok,
+            QuadratureStatus.OK,
             minimum(@view weight_matrix[:, time_index]),
             minimum(@view node_matrix[:, time_index]),
             physical_minimum_gap,

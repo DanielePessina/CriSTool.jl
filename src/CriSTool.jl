@@ -26,6 +26,9 @@ using PreallocationTools: DiffCache, get_tmp
 using DataFrames
 using ComponentArrays
 using Distributions
+# `sample` is the StatsBase/AbstractMCMC verb (the same function Turing extends).
+import AbstractMCMC
+using AbstractMCMC: sample
 using QuadGK: quadgk
 using MCMCChains
 import Base.Iterators
@@ -39,6 +42,8 @@ using Metaheuristics
 
 # Utilities
 using ConcreteStructs
+import ConstructionBase
+using EnumX: @enumx
 using PrecompileTools: @setup_workload, @compile_workload
 using MonteCarloMeasurements
 using StaticArrays
@@ -50,6 +55,8 @@ const CRISTOOL_MOMENT_DENSITY_FLOOR = 1e-8
 const CRISTOOL_WENO_EPSILON = 1e-6
 const CRISTOOL_DISSOLUTION_EQUILIBRIUM_TOLERANCE = 1e-3
 const CRISTOOL_DISSOLUTION_LREF = 1e-6
+# First integrator step (s) of mesh solvers: the step OrdinaryDiffEq's initial-step fallback takes.
+const CRISTOOL_MESH_INITIAL_STEP = 1e-6
 const CRISTOOL_FAILED_SIMULATION_PENALTY = 1e6
 const CRISTOOL_MAX_SOLVER_ITERS = 1e8
 const CRISTOOL_PRIOR_PLOT_SAMPLES = 2^18
@@ -63,9 +70,9 @@ const CRISTOOL_BOLTZMANN_CONSTANT = 1.380649e-23
 ## Export stuff
 export CrystallisationSolution, AbstractPopulationTrajectory, MeshPopulation,
        MomentPopulation, QuadraturePopulation,
-       CrystallisationSteadyStateSolution, SteadyStateConvergenceError, SteadyStateOptions,
+       CrystallisationSteadyStateSolution, SteadyStateConvergenceError,
        CrystallisationProblem, CrystallisationSteadyStateProblem
-export solve, remake, ReturnCode, successful_retcode
+export solve, remake, sample, ReturnCode, successful_retcode
 export Observable, ObservableColumns, CrystallisationExperiment,
        initial_concentration
 export AbstractCrystallisationOperation, BatchOperation, MSMPROperation, FedBatchOperation,
@@ -102,7 +109,7 @@ export experiments_from_table, load_measurements,
        bootstrap_repeatmeasurements, balance_variances, repeatmeasurementbalancer,
        psd_measurementbalancer, bootstrap_measurements
 export AbstractSolver, AbstractMomentSolver, FiniteVol, MoM, QMOM, DQMOM, WENO,
-       QMOMQuadrature, QMOMInversionDiagnostics, DQMOMProjectionDiagnostics,
+       QMOMQuadrature, QMOMInversionDiagnostics, DQMOMProjectionDiagnostics, QuadratureStatus,
        invert_moments,
        moment_order, moment_count, quadrature,
        aggregation_moment_source, breakage_moment_source
@@ -112,7 +119,7 @@ export EnsembleSerial, EnsembleThreads
 export PredictionEnsemble, prediction_summary
 export plot_predictions, plot_posterior_pairplot, plot_chain_diagnostics
 export rename_chain
-export CrystallisationSystem, LysozymeSystem, KineticModel, CrystallisationModel,
+export CrystallisationSystem, LysozymeSystem, CrystallisationModel,
        CallableGrowth, CallableNucleation, CallableLengthGrowth, KineticContext, system_properties,
        required_properties, named_parameters, EstimationProblem, FitResult, InferenceResult,
        is_likelihood, loss_terms,
@@ -126,7 +133,7 @@ export CrystallisationSystem, LysozymeSystem, KineticModel, CrystallisationModel
 # is a no-op on Julia 1.10 and a real marker from 1.11 (`Base.ispublic`).
 # Underscore-prefixed names are internal and deliberately absent.
 Compat.@compat public CRISTOOL_GAS_CONSTANT, CRISTOOL_BOLTZMANN_CONSTANT,
-                      AbstractDiscretisedSolver, KissABC
+                      AbstractDiscretisedSolver, KissABC, EnsembleSampleDiagnostics
 
 # Core types and public interfaces.
 include("core/solution_types.jl")

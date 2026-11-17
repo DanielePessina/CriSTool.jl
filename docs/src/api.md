@@ -17,9 +17,9 @@ changing or composing.
 
 ## Named kinetic parameters
 
-Calling a law with all of its parameter names, e.g.
-`EmpiricalGrowth(growth_coefficient = 1e-9, growth_order = 2.0)`, returns a
-bound `KineticModel`; `KineticModel(law; parameters=(...))` is the long form.
+A law holds its parameter values as fields, like a `Distributions.jl`
+distribution: `EmpiricalGrowth(growth_coefficient = 1e-9, growth_order = 2.0)`,
+read back as `law.growth_order`. `paramaxis(law)` names the parameters.
 The `bounds` and `priors` of an `EstimationProblem` select kinetic parameters
 using nested names such as `growth.growth_coefficient`.
 Unselected values stay fixed. `ParameterSamples` uses those same paths for
@@ -42,7 +42,7 @@ joint uncertainty draws.
 - `predict(result)` reuses the fit's solver, mode and options; predicting from
   user samples requires an explicit `solver`.
 - Predictions retain failed draws; exclusion from summaries is explicit.
-- ForwardDiff and finite differences are tested; reverse Enzyme remains deferred.
+- Automatic differentiation is forward mode: ForwardDiff and finite differences are tested; reverse mode (Enzyme, Zygote) is not supported in v1.
 
 The lower-level solver engine still uses the internal block order nucleation,
 growth, dissolution, aggregation, breakage. Named model users do not assemble

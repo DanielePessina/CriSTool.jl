@@ -2,8 +2,8 @@
 using CriSTool
 
 function main()
-    # A model is a material system plus bound kinetic laws. Calling a law with
-    # its parameter names binds the values; aggregation and breakage default to none.
+    # A model is a material system plus kinetic laws. Each law holds its
+    # parameter values as fields; aggregation and breakage default to none.
     crystal_model = CrystallisationModel(LysozymeSystem();
         nucleation = CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 0.0006),
         growth = EmpiricalGrowth(growth_coefficient = 1e-9 / 60, growth_order = 3.0))

@@ -32,8 +32,8 @@ dissolution, aggregation and breakage slots default to their `No*` laws.
 ```julia
 ```
 
-Callable laws carry their values and are bound automatically;
-`KineticModel(custom_growth)` binds one explicitly.
+A callable law holds its values in `parameters`, as a built-in law holds its
+fields: `custom_growth.parameters.coefficient` reads one back.
 
 `temperature(context)` and `solvent_state(context)` expose physical values;
 `system_properties(context)` returns the material system's additional `properties`.

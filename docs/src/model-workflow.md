@@ -2,9 +2,9 @@
 
 A `CrystallisationSystem` describes material properties and solubility.
 `LysozymeSystem()` is an ordinary instance with explicit lysozyme defaults.
-`KineticModel` binds one law to named values. Calling a built-in law with all
-of its parameter names, such as `EmpiricalGrowth(growth_coefficient = 1e-9,
-growth_order = 2.0)`, returns a bound `KineticModel`. `CrystallisationModel(system; nucleation,
+Each kinetic law holds its parameter values as fields, such as
+`EmpiricalGrowth(growth_coefficient = 1e-9, growth_order = 2.0)`.
+`CrystallisationModel(system; nucleation,
 growth, dissolution, aggregation, breakage)` collects the five slots; omitted
 optional slots use no-op laws.
 
@@ -29,14 +29,15 @@ problem_options)` describes a study. The nested names of its `bounds` (for
 optimisers) or `priors` (for samplers) select kinetic parameters; unlisted
 values remain fixed. No initial condition, material property or noise parameter
 can be selected. Construction resolves names and builds solve templates once
-(`mode` is `TransientMode()` or `SteadyMode(SteadyStateOptions(...))`);
+(`mode` is `TransientMode()` or `SteadyMode(; autonomous, relaxation_horizon, ...)`);
 `loss(problem, values)` exposes the selected-vector objective for advanced users
 and autodiff. `solve(problem, alg; parallel=EnsembleSerial())` runs the study
-with a Metaheuristics algorithm, an Optimization.jl optimiser, a Turing sampler
-such as `NUTS()` or `ABCDE()`; `parallel = EnsembleThreads()` threads either the
-candidates (Metaheuristics population, ABC particles, several MCMC chains) or
-the experiments of each loss evaluation (Optimization.jl optimisers, one MCMC
-chain), never both.
+with a Metaheuristics algorithm or an Optimization.jl optimiser;
+`sample(problem, sampler, n)` draws with a Turing sampler such as `NUTS()` or
+with `ABCDE()`. `parallel = EnsembleThreads()` threads either the candidates
+(Metaheuristics population, ABC particles) or the experiments of each loss
+evaluation (Optimization.jl optimisers, MCMC chains), never both; MCMC chains
+run on threads with `sample(problem, NUTS(), MCMCThreads(), n, n_chains)`.
 
 `solve` returns a `FitResult` for optimisation or `InferenceResult` for sampling.
 An optimisation result contains a new fitted model, named estimates, observable

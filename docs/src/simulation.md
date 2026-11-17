@@ -19,29 +19,34 @@ trajectory[:d43][end]
 mesh_trajectory = solve(problem, FiniteVol(meshsize = 100, lmax = 100e-6);
     saveat = 0.0:600.0:28_800.0)
 mesh_trajectory[:d50q][end]
-cooling_run = merge(batch_run; temperature = LinearTemperature(298.15, -1e-4))
+cooling_run = remake(batch_run; temperature = LinearTemperature(298.15, -1e-4))
 quadrature_trajectory = solve(remake(problem; conditions = cooling_run), QMOM(nquadrature = 3))
 ```
 
-A model contains the material system and the bound kinetic laws. A law called
-with all of its parameter names returns a bound `KineticModel`; `CNTNucleation()`
-alone is the unbound law, and a partial set of names is an error. Keywords that
-name a law's configuration fields (for example `Lref` on
-`EmpiricalLengthGrowth`) configure the law instead of binding a parameter. Read named
-values through `crystal_model.growth.parameters`.
+A model contains the material system and five kinetic laws. A law holds its
+parameter values as fields, like a `Distributions.jl` distribution:
+`CNTNucleation(ln_nucleation_prefactor = 38.0, surface_energy = 6e-4)` needs
+every parameter keyword, and `crystal_model.nucleation.surface_energy` reads one
+back. Configuration fields with defaults (for example `Lref` on
+`EmpiricalLengthGrowth`) are not kinetic parameters.
 
 `RunConditions(; temperature, concentration, solvent=(;), crystals=nothing,
 operation=BatchOperation())` holds everything else about one run. A numeric
 temperature is Kelvin and becomes a `ConstantTemperature`; any
-`AbstractTemperature` is accepted. `merge(conditions; concentration = 20.0)`
-returns a copy with the named settings replaced.
+`AbstractTemperature` is accepted. `remake(conditions; concentration = 20.0)`
+returns a validated copy with the named settings replaced.
 
 `CrystallisationProblem(model, conditions, tspan)` is one run over
 `tspan = (t0, tf)` seconds. Like an `ODEProblem` it holds no numerical method:
 `solve(problem, solver; saveat)` picks the solver, so one problem can be solved
 with several. `saveat` is a save step (t0, every step and tf are saved) or a
-vector of times inside `tspan`; without it every accepted step is saved. There is
-no dense interpolation `sol(t)`; choose `saveat` instead.
+vector of times inside `tspan`; without it every accepted step is saved.
+Dense output is opt-in: `solve(problem, solver; saveat, dense = true)` keeps the
+integrator's interpolant, so `trajectory(t)` is the one-point solution at any
+`t` in the solved span and `trajectory(t, :d43)` one observable value there.
+Without `dense = true`, calling `trajectory(t)` is an `ArgumentError`. Dense
+output stores every integrator step, so use it for plotting or event times,
+not inside fitting loops.
 `remake(problem; model, conditions, tspan, p)` returns a validated copy.
 Always check `successful_retcode(trajectory)` (or `trajectory.retcode`) before
 interpreting outputs. `trajectory[:name]` returns any named trajectory, the same
@@ -127,14 +132,14 @@ SciML problem and physical reconstruction. Internal DQMOM coordinates differ
 from public weights and nodes; preserve that contract when solving directly.
 
 The kinetic values are the problem's `p`, a `ComponentArray` on
-`paramaxis(problem)` that defaults to the model's bound values
+`paramaxis(problem)` that defaults to the values the model's laws hold
 (`kinetic_parameter_vector(problem)`). `solve(remake(problem; p = values), solver; saveat)`
 solves for other values, given as a flat or `ComponentArray` vector; their
 element type may be a ForwardDiff dual, so this is the interface for automatic
 differentiation and sensitivity work.
 
 A configured problem stores each value once: `problem.model` (material system
-and bound kinetic laws), `problem.conditions` (temperature, initial solvent
+and kinetic laws), `problem.conditions` (temperature, initial solvent
 values — read the concentration with `initial_concentration(problem)` — seed
 and operation), `problem.tspan`, `problem.p`, `problem.solvent_dynamics` and
 `problem.solid_mass_concentration_threshold`. The seed becomes a solver

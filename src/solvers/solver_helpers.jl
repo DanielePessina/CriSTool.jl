@@ -330,7 +330,7 @@ function _validate_crystallisation_solve_options(solve_options::NamedTuple)
     for option_name in keys(solve_options)
         option_name in (:u0, :p, :tspan, :saveat, :save_idxs, :callback,
                         :merge_callbacks, :save_start, :save_end, :save_everystep,
-                        :initialize_save, :timeseries_steps) &&
+                        :initialize_save, :timeseries_steps, :dense) &&
             throw(ArgumentError("solve_options cannot set $option_name; preserve the prepared state/time contract and use callback_factory for callbacks."))
     end
     return solve_options
@@ -365,11 +365,12 @@ Iteration and elapsed-time limits may be supplied explicitly in `solve_options`.
 function _solve_crystallisation_ode(problem::DiscretisedProblem, odeproblem,
                                     algorithm, saveat;
                                     solve_options::NamedTuple = (;),
-                                    callback_factory = nothing)
+                                    callback_factory = nothing, dense::Bool = false)
     _validate_crystallisation_solve_options(solve_options)
     solver_defaults = (reltol = problem.solver.reltol,
                        abstol = _solver_absolute_floor(problem, odeproblem),
-                       dense = false, maxiters = CRISTOOL_MAX_SOLVER_ITERS,
+                       _solver_initial_step(problem.solver)...,
+                       dense, maxiters = CRISTOOL_MAX_SOLVER_ITERS,
                        internalnorm = _primal_error_norm)
     selected_options = merge(solver_defaults, solve_options)
     scalar_type = promote_type(eltype(odeproblem.u0), _parameter_eltype(odeproblem.p))
@@ -383,6 +384,19 @@ function _solve_crystallisation_ode(problem::DiscretisedProblem, odeproblem,
     return solve(odeproblem, algorithm; selected_options..., abstol = abstol,
                  saveat = saveat, callback = solve_callback)
 end
+
+"""
+    _solver_initial_step(solver) -> NamedTuple
+
+First integrator step, as a `dt` integrator option. Mesh populations have
+sharp seed edges or empty cells that nucleation fills, so the Hairer-Wanner
+initial-step estimate falls below machine epsilon and OrdinaryDiffEq falls
+back to `dt = 1e-6` s with a warning. Mesh solvers start from that step
+directly; the adaptive controller grows it within a few steps. `solve_options =
+(; dt = ...)` overrides it. Moment solvers keep the estimate.
+"""
+_solver_initial_step(::AbstractSolver) = (;)
+_solver_initial_step(::AbstractDiscretisedSolver) = (; dt = CRISTOOL_MESH_INITIAL_STEP)
 
 """Check prepared save times: finite, nonnegative SI seconds in increasing order."""
 function _validate_save_times(save_times)
@@ -420,7 +434,7 @@ _checked_saveat(saveat, tspan) =
 
 """
     solve(problem::CrystallisationProblem, solver::AbstractSolver; saveat=Float64[],
-          alg=nothing, solve_options=(;), callback_factory=nothing) -> CrystallisationSolution
+          dense=false, alg=nothing, solve_options=(;), callback_factory=nothing) -> CrystallisationSolution
 
 Integrate `problem` over `problem.tspan` with the population-balance `solver`
 (`MoM()`, `QMOM()`, `DQMOM()`, `FiniteVol()`, `WENO()`) and return its
@@ -430,6 +444,13 @@ replaces the solver's default OrdinaryDiffEq algorithm (e.g. `alg = Rodas5P()`),
 `solve_options` passes further integrator options, and `callback_factory(odeproblem)`
 builds a user callback composed with the package callbacks. Inspect the result
 with `sol.t`, `sol.retcode`, `successful_retcode(sol)` and `sol[:concentration]`.
+
+`dense = true` keeps the integrator's interpolant, so `sol(t)` returns the
+one-point solution at any `t` in the solved span and `sol(t, :d43)` one value.
+The saved trajectory is unchanged: the ODE saves every step and the solution
+is read at the `saveat` times from the interpolant, as OrdinaryDiffEq does for
+`saveat`. Dense output stores every step; the default `dense = false` keeps
+only the saved times, and calling `sol(t)` on it is an `ArgumentError`.
 """
 SciMLBase.solve(problem::CrystallisationProblem, solver::AbstractSolver; solve_settings...) =
     _solve_discretised(DiscretisedProblem(problem, solver), problem.tspan, problem.p; solve_settings...)
@@ -444,14 +465,80 @@ Transient solve of an already discretised problem, the body of the public
 and `_wrap_solution(solver, problem, ode_solution, boundary_flow_state)`.
 """
 function _solve_discretised(discretised_problem::DiscretisedProblem, tspan::Tuple{Float64, Float64},
-                            kinetic_values; saveat = Float64[], alg = nothing,
+                            kinetic_values; saveat = Float64[], dense::Bool = false, alg = nothing,
                             solve_options::NamedTuple = (;), callback_factory = nothing)
     checked_saveat = _checked_saveat(saveat, tspan)
     checked_values = _validate_kinetic_values(discretised_problem, kinetic_values)
     ode_problem, default_algorithm = crystallisation_odeproblem(discretised_problem.solver,
         discretised_problem, tspan, checked_values)
-    ode_solution = _solve_crystallisation_ode(discretised_problem, ode_problem,
-                                              something(alg, default_algorithm),
-                                              checked_saveat; solve_options, callback_factory)
-    return _wrap_solution(discretised_problem, ode_solution)
+    dense || return _wrap_solution(discretised_problem, _solve_crystallisation_ode(discretised_problem,
+        ode_problem, something(alg, default_algorithm), checked_saveat; solve_options, callback_factory))
+    dense_solution = _solve_crystallisation_ode(discretised_problem, ode_problem, something(alg, default_algorithm),
+        Float64[]; solve_options, callback_factory, dense = true)
+    saved_solution = _wrap_solution(discretised_problem,
+        _interpolated_ode_solution(dense_solution, _dense_save_times(checked_saveat, dense_solution)))
+    return ConstructionBase.setproperties(saved_solution;
+        interpolation = _DenseCrystallisationInterpolation(discretised_problem, dense_solution))
 end
+
+"""The dense ODE solution and the solve-time problem that reconstructs physical values from it."""
+struct _DenseCrystallisationInterpolation{Problem <: DiscretisedProblem, DenseODESolution}
+    problem::Problem
+    ode_solution::DenseODESolution
+end
+
+# Save times read from a dense solve; they match the non-dense solve with the same
+# `saveat`. Without saveat, every step. Otherwise the requested times the solve
+# reached (a step `saveat` also saves the span end), plus the crossing time when
+# the DQMOM boundary forces a save there and stops the solve with `ReturnCode.Failure`.
+_dense_save_times(save_times::Vector{Float64}, dense_solution) =
+    isempty(save_times) ? copy(dense_solution.t) : _reached_save_times(save_times, dense_solution)
+function _dense_save_times(save_step::Float64, dense_solution)
+    start_time, end_time = dense_solution.prob.tspan
+    return _reached_save_times(unique!(push!(collect(start_time:save_step:end_time), end_time)), dense_solution)
+end
+function _reached_save_times(save_times::Vector{Float64}, dense_solution)
+    reached_end = last(dense_solution.t)
+    reached_times = filter(<=(reached_end), save_times)
+    dense_solution.retcode == ReturnCode.Failure && (isempty(reached_times) || last(reached_times) != reached_end) &&
+        push!(reached_times, reached_end)
+    return reached_times
+end
+
+"""
+A non-dense ODE solution holding the interpolated states of `dense_solution` at
+`save_times`. The reached end keeps the integrator's own last state:
+interpolating there can round a state that sits on a boundary (a DQMOM node at
+`minimum_size`) just past it.
+"""
+function _interpolated_ode_solution(dense_solution, save_times::Vector{Float64})
+    saved_states = dense_solution(save_times).u
+    isempty(save_times) || last(save_times) != last(dense_solution.t) ||
+        (saved_states[end] = last(dense_solution.u))
+    return SciMLBase.build_solution(dense_solution.prob, dense_solution.alg, save_times, saved_states;
+        retcode = dense_solution.retcode, stats = dense_solution.stats)
+end
+
+"""
+    (solution::CrystallisationSolution)(t)
+    (solution::CrystallisationSolution)(t, name::Symbol)
+
+The one-point solution at time `t`, or the value of observable `name` there
+(a number, or a vector for `:moments`). Needs `solve(...; dense = true)`.
+"""
+(solution::CrystallisationSolution)(solution_time::Real) =
+    _dense_solution_at(solution.interpolation, Float64(solution_time))
+(solution::CrystallisationSolution)(solution_time::Real, observable_name::Symbol) =
+    _single_time_value(observable_values(solution(solution_time), observable_name))
+
+_dense_solution_at(::Nothing, solution_time) = throw(ArgumentError(
+    "This solution holds only its saved times; solve with dense = true to evaluate it at t = $solution_time."))
+function _dense_solution_at(dense_interpolation::_DenseCrystallisationInterpolation, solution_time::Float64)
+    start_time, reached_end = first(dense_interpolation.ode_solution.t), last(dense_interpolation.ode_solution.t)
+    start_time <= solution_time <= reached_end || throw(ArgumentError(
+        "t = $solution_time lies outside the solved span ($start_time, $reached_end)."))
+    return _wrap_solution(dense_interpolation.problem,
+        _interpolated_ode_solution(dense_interpolation.ode_solution, [solution_time]))
+end
+_single_time_value(observable_trajectory::AbstractVector) = only(observable_trajectory)
+_single_time_value(observable_trajectory::AbstractMatrix) = vec(observable_trajectory)

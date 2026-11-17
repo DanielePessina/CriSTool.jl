@@ -113,7 +113,7 @@ function benchmark_overhead_solver(solver_label, overhead_solver)
         1e6 * (gradient_time - raw_dual_time), 100 * (gradient_time - raw_dual_time) / gradient_time)
 
     first_run = first(OVERHEAD_RUNS)
-    first_conditions = merge(first_run.conditions; concentration = initial_concentration(first_run))
+    first_conditions = remake(first_run.conditions; concentration = initial_concentration(first_run))
     first_times = first(estimation_problem.setup.solves.runs).saveat
     first_problem = CrystallisationProblem(OVERHEAD_MODEL, first_conditions, (first(first_times), last(first_times)))
     solve(first_problem, overhead_solver; saveat = first_times)
@@ -146,19 +146,18 @@ const OVERHEAD_STEADY_CONDITIONS = RunConditions(temperature = 293.15, concentra
 
 function benchmark_overhead_steady(solver_label, overhead_solver)
     println("\n== steady MSMPR, ", solver_label, " ==")
-    steady_options = SteadyStateOptions(relaxation_horizon = 360_000.0)
     steady_problem = CrystallisationSteadyStateProblem(CrystallisationProblem(OVERHEAD_MODEL,
-        OVERHEAD_STEADY_CONDITIONS, (0.0, 360_000.0)); options = steady_options)
-    steady_result = solve(steady_problem, overhead_solver)
+        OVERHEAD_STEADY_CONDITIONS, (0.0, 360_000.0)))
+    steady_result = solve(steady_problem, overhead_solver; relaxation_horizon = 360_000.0)
     record_overhead("(e) steady solve",
-        @be(solve(steady_problem, overhead_solver), seconds = OVERHEAD_SECONDS))
+        @be(solve(steady_problem, overhead_solver; relaxation_horizon = 360_000.0), seconds = OVERHEAD_SECONDS))
     steady_concentration = steady_result.equilibrium.concentration
     steady_experiment = CrystallisationExperiment(observables = (
             concentration = Observable(time = [0.0], mean = [steady_concentration], variance = [0.01]),
             d43 = Observable(time = [0.0], mean = [steady_result.equilibrium.d43], variance = [1e-14])),
         conditions = OVERHEAD_STEADY_CONDITIONS, exp_id = 1)
     steady_fit = EstimationProblem(OVERHEAD_MODEL, [steady_experiment]; bounds = OVERHEAD_BOUNDS,
-        solver = overhead_solver, mode = SteadyMode(steady_options))
+        solver = overhead_solver, mode = SteadyMode(relaxation_horizon = 360_000.0))
     steady_objective = selected_values -> loss(steady_fit, selected_values)
     steady_objective(OVERHEAD_THETA)
     record_overhead("(e) steady loss",

@@ -94,15 +94,19 @@ Fields:
 - `ode_stats`: ODE solver statistics.
 - `retcode::ReturnCode.T`: return code of the ODE solve; check it with
   `successful_retcode(solution)`.
+- `interpolation`: the dense ODE solution behind `solution(t)` when solved with
+  `dense = true`, otherwise `nothing`.
 
 Named access does not depend on the solver: `solution[:concentration]`,
 `solution[:d43]`, `solution[:d50q]` or any solvent-state name index the
 trajectories, as do `state_vars`, `size_metrics`, `reactor_vars` and
-`observable_values`.
+`observable_values`. A solution from `solve(problem, solver; dense = true)` is
+also callable: `solution(t)` is the one-point solution at time `t` and
+`solution(t, :d43)` one observable value there.
 """
 struct CrystallisationSolution{Population <: AbstractPopulationTrajectory, TTime, TConcentration,
                                TSize, TSolvent <: NamedTuple, TReactor <: NamedTuple,
-                               TFinal, TStats} <: AbstractSolution
+                               TFinal, TStats, TInterpolation} <: AbstractSolution
     t::TTime
     concentration::TConcentration
     population::Population
@@ -115,4 +119,11 @@ struct CrystallisationSolution{Population <: AbstractPopulationTrajectory, TTime
     final_state::TFinal
     ode_stats::TStats
     retcode::SciMLBase.ReturnCode.T
+    interpolation::TInterpolation
 end
+
+# Solutions saved only at their save times carry no interpolation.
+CrystallisationSolution(t, concentration, population, d10, d32, d43, moment2, solvent_state, reactor_state,
+        final_state, ode_stats, retcode::SciMLBase.ReturnCode.T) =
+    CrystallisationSolution(t, concentration, population, d10, d32, d43, moment2, solvent_state, reactor_state,
+        final_state, ode_stats, retcode, nothing)

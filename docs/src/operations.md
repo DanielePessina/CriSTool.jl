@@ -98,9 +98,8 @@ constant feed concentration, and time-invariant kinetics), use the explicit
 steady-state counterpart of the transient problem:
 
 ```julia
-steady_problem = CrystallisationSteadyStateProblem(msmpr_problem;
-    options = SteadyStateOptions(relaxation_horizon = 400.0))
-steady = solve(steady_problem, MoM())
+steady_problem = CrystallisationSteadyStateProblem(msmpr_problem)
+steady = solve(steady_problem, MoM(); relaxation_horizon = 400.0)
 steady.retcode                       # ReturnCode.Success
 steady.equilibrium.concentration     # scalar kg/m³
 steady.equilibrium.d43               # scalar m
@@ -123,13 +122,14 @@ which carries the unsuccessful result in its `solution` field. Its `retcode`
 says why: `MaxIters` when the horizon ran out before the residual converged,
 `Failure` for an invalid physical state or flow balance, or the ODE code when
 the integration failed (`steady.diagnostics.ode_retcode` keeps the raw ODE
-code). `SteadyStateOptions` holds `relaxation_horizon`,
-`minimum_relaxation`, `residual_reltol`, `residual_abstol`, `residual_scales`,
-`autonomous` and `balance_reltol`; an initial guess is the `u0` keyword of
-`CrystallisationSteadyStateProblem`, a complete state in the solver's layout.
-The default relaxation horizon is `100 × residence time`
-for direct solving and prepared steady inference; residual tolerances default
-to `1e-10`/`1e-12`.
+code). The relaxation settings are keywords of the steady `solve`:
+`relaxation_horizon`, `minimum_relaxation`, `reltol`, `abstol` (steady
+residual tolerances, as in SciML's `DynamicSS`; integrator tolerances belong to
+the solver), `residual_scales` and `balance_reltol`. `autonomous` and the
+initial guess `u0` (a complete state in the solver's layout) are keywords of
+`CrystallisationSteadyStateProblem`. The default relaxation horizon is
+`100 × residence time` for direct solving and prepared steady inference;
+`reltol`/`abstol` default to `1e-10`/`1e-12`.
 
 Mesh density checks allow undershoots within 128 machine epsilons of the
 population peak. The raw values are preserved; accepted undershoots have status
@@ -140,8 +140,8 @@ the physical check. Quadrature states that cannot be reconstructed raise a
 and retains the reason in prediction diagnostics.
 
 Opaque time profiles and user-defined kinetics require
-`SteadyStateOptions(autonomous = true)` as an explicit declaration that they are
-time invariant; the declaration is the caller's responsibility. Batch and
+`CrystallisationSteadyStateProblem(problem; autonomous = true)` as an explicit
+declaration that they are time invariant; the declaration is the caller's responsibility. Batch and
 fed-batch runs are transient: use `solve(problem, solver)`. See
 [Tutorial 9](https://github.com/DanielePessina/CriSTool.jl/blob/main/examples/Tutorial%209%20MSMPR%20Dynamic%20versus%20Steady%20State.jl)
 for a dynamic-vs-steady comparison, and the [API reference](api/simulation.md)

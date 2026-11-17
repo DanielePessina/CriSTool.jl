@@ -9,6 +9,7 @@ QMOM
 DQMOM
 WENO
 QMOMQuadrature
+QuadratureStatus
 QMOMInversionDiagnostics
 DQMOMProjectionDiagnostics
 moment_order

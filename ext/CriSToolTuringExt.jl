@@ -1,15 +1,15 @@
 """
 Turing-backed posterior sampling of an `EstimationProblem`. Loaded when Turing
 is: it supplies the DynamicPPL loss model, the `nuts_model` method owned by
-CriSTool, `solve(problem, sampler)` for Turing samplers such as `NUTS()`, and
-the guard against passing a DynamicPPL model to the vendored AIS sampler.
+CriSTool, `sample(problem, sampler, n)` for Turing samplers such as `NUTS()`,
+and the guard against passing a DynamicPPL model to the vendored AIS sampler.
 """
 module CriSToolTuringExt
 
 import AbstractMCMC
 import Random
 import Turing
-using CriSTool: CriSTool, EstimationProblem, loss, EnsembleSerial, EnsembleThreads
+using CriSTool: CriSTool, EstimationProblem, loss, EnsembleSerial, EnsembleThreads, ReturnCode
 using CriSTool.SciMLBase: SciMLBase
 using CriSTool: nuts_model, _cristool_once_per_task, _prior_distributions
 using CriSTool.KissABC: AIS
@@ -59,45 +59,69 @@ _problem_per_task(estimation_problem, ::Turing.MCMCThreads) =
     _cristool_once_per_task(typeof(estimation_problem)) do
         deepcopy(estimation_problem)
     end
-
-_chain_ensemble(::EnsembleSerial) = Turing.MCMCSerial()
-_chain_ensemble(::EnsembleThreads) = Turing.MCMCThreads()
-_chain_ensemble(unsupported::SciMLBase.BasicEnsembleAlgorithm) = CriSTool._unsupported_parallel(unsupported)
+_problem_per_task(estimation_problem, unsupported::AbstractMCMC.AbstractMCMCEnsemble) = throw(ArgumentError(
+    "Chains run with MCMCSerial() or MCMCThreads(), not $(nameof(typeof(unsupported)))."))
 
 CriSTool.nuts_model(estimation_problem::EstimationProblem) =
     nuts_model(estimation_problem, Turing.MCMCSerial())
 
-function CriSTool.nuts_model(estimation_problem::EstimationProblem,
-        ensemble::Union{Turing.MCMCSerial, Turing.MCMCThreads})
+function CriSTool.nuts_model(estimation_problem::EstimationProblem, ensemble::AbstractMCMC.AbstractMCMCEnsemble)
     return _cristool_nuts_loss_model(_prior_distributions(estimation_problem.priors),
         _problem_per_task(estimation_problem, ensemble))
 end
 
 """
-    solve(problem::EstimationProblem, sampler::AbstractMCMC.AbstractSampler;
-          n_samples=1000, n_chains=1, rng=default_rng(), parallel=EnsembleSerial(), kwargs...)
-        -> InferenceResult
+    sample([rng], problem::EstimationProblem, sampler::AbstractMCMC.AbstractSampler, n_samples;
+           parallel=EnsembleSerial(), kwargs...) -> InferenceResult
+    sample([rng], problem::EstimationProblem, sampler::AbstractMCMC.AbstractSampler,
+           ensemble::AbstractMCMC.AbstractMCMCEnsemble, n_samples, n_chains;
+           parallel=EnsembleSerial(), kwargs...) -> InferenceResult
 
 Sample the posterior of the problem's priors and likelihood loss with a Turing
-sampler such as `NUTS()`: `n_chains` chains of `n_samples` draws each. With
-`n_chains > 1`, `parallel = EnsembleThreads()` runs the chains on threads
-(`MCMCThreads`); with one chain it solves the experiments inside each
-log-density evaluation on threads instead. Other keywords go to `Turing.sample`
-(e.g. `progress`). The likelihood uses supplied measurement variances; noise is
-never fitted.
+sampler such as `NUTS()`, with the same arguments as `Turing.sample`: one chain
+of `n_samples` draws, or `n_chains` chains under `MCMCSerial()` or
+`MCMCThreads()`. `parallel = EnsembleThreads()` solves the experiments inside
+each log-density evaluation on threads; with `MCMCThreads()` the chains already
+use the threads, so `parallel` must stay serial. Other keywords go to
+`Turing.sample` (e.g. `progress`). The likelihood uses supplied measurement
+variances; noise is never fitted.
 """
-function SciMLBase.solve(estimation_problem::EstimationProblem, sampler::AbstractMCMC.AbstractSampler;
-        n_samples::Integer = 1000, n_chains::Integer = 1, rng::Random.AbstractRNG = Random.default_rng(),
+AbstractMCMC.sample(estimation_problem::EstimationProblem, sampler::AbstractMCMC.AbstractSampler,
+        n_samples::Integer; sample_options...) =
+    AbstractMCMC.sample(Random.default_rng(), estimation_problem, sampler, n_samples; sample_options...)
+
+function AbstractMCMC.sample(rng::Random.AbstractRNG, estimation_problem::EstimationProblem,
+        sampler::AbstractMCMC.AbstractSampler, n_samples::Integer;
+        parallel::SciMLBase.BasicEnsembleAlgorithm = EnsembleSerial(), sample_options...)
+    CriSTool._validate_posterior_sampling(estimation_problem, n_samples, 1)
+    sampled_problem = CriSTool._with_parallel(estimation_problem, parallel)
+    # Turing ≥ 0.43 returns a FlexiChains chain by default; results hold MCMCChains.
+    posterior_chain = Turing.sample(rng, nuts_model(sampled_problem, Turing.MCMCSerial()), sampler, n_samples;
+        chain_type = CriSTool.MCMCChains.Chains, sample_options...)
+    return CriSTool._chain_inference_result(sampled_problem, sampler, posterior_chain)
+end
+
+AbstractMCMC.sample(estimation_problem::EstimationProblem, sampler::AbstractMCMC.AbstractSampler,
+        ensemble::AbstractMCMC.AbstractMCMCEnsemble, n_samples::Integer, n_chains::Integer; sample_options...) =
+    AbstractMCMC.sample(Random.default_rng(), estimation_problem, sampler, ensemble, n_samples, n_chains;
+        sample_options...)
+
+function AbstractMCMC.sample(rng::Random.AbstractRNG, estimation_problem::EstimationProblem,
+        sampler::AbstractMCMC.AbstractSampler, ensemble::AbstractMCMC.AbstractMCMCEnsemble,
+        n_samples::Integer, n_chains::Integer;
         parallel::SciMLBase.BasicEnsembleAlgorithm = EnsembleSerial(), sample_options...)
     CriSTool._validate_posterior_sampling(estimation_problem, n_samples, n_chains)
-    chain_parallel, split_problem = CriSTool._split_parallel(estimation_problem,
-        CriSTool._chain_parallel_level(n_chains), parallel)
-    ensemble = _chain_ensemble(chain_parallel)
-    # Turing ≥ 0.43 returns a FlexiChains chain by default; results hold MCMCChains.
-    posterior_chain = Turing.sample(rng, nuts_model(split_problem, ensemble), sampler, ensemble,
+    _validate_one_threaded_level(ensemble, parallel)
+    sampled_problem = CriSTool._with_parallel(estimation_problem, parallel)
+    posterior_chain = Turing.sample(rng, nuts_model(sampled_problem, ensemble), sampler, ensemble,
         n_samples, n_chains; chain_type = CriSTool.MCMCChains.Chains, sample_options...)
-    return CriSTool._chain_inference_result(split_problem, sampler, posterior_chain)
+    return CriSTool._chain_inference_result(sampled_problem, sampler, posterior_chain)
 end
+
+# Threading chains and the experiments inside each chain only adds scheduling overhead.
+_validate_one_threaded_level(ensemble, parallel) = nothing
+_validate_one_threaded_level(::Turing.MCMCThreads, ::EnsembleThreads) = throw(ArgumentError(
+    "MCMCThreads() already threads the chains; leave parallel = EnsembleSerial()."))
 
 # Resolve the method ambiguity between the vendored AIS step and DynamicPPL's
 # `step(::AbstractRNG, ::DynamicPPL.Model, ::AbstractMCMC.AbstractSampler)`.

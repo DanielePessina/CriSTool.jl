@@ -38,7 +38,7 @@ const BENCHMARK_MODEL = CrystallisationModel(LysozymeSystem();
 
 """Configured problem for one experiment over `timegrid`: its temperature and measured initial concentration."""
 benchmark_problem(e, timegrid; crystals = nothing) = CrystallisationProblem(BENCHMARK_MODEL,
-    merge(e.conditions; concentration = CriSTool.initial_concentration(e), crystals),
+    remake(e.conditions; concentration = CriSTool.initial_concentration(e), crystals),
     (first(timegrid), last(timegrid)))
 
 experiment_times(e) = e.observables.concentration.time

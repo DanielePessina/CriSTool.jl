@@ -180,10 +180,11 @@ weights and physical crystal nodes rather than raw moments; the solver
 converts the public state to weighted, scaled nodes internally.
 
 The first implementation requires a nonempty seeded population with positive,
-pairwise-distinct nodes.  Empty populations are rejected, and a solve throws a
-`DomainError` when dissolution carries a node down to `minimum_size`, because
-removing a node needs a separate boundary-flux model.  Use `QMOM`, `FiniteVol`
-or `WENO` when crystals may dissolve completely.
+pairwise-distinct nodes.  Empty populations are rejected, and a solve stops
+with `ReturnCode.Failure` (and a one-time warning) when dissolution carries a
+node down to `minimum_size`, because removing a node needs a separate
+boundary-flux model.  Use `QMOM`, `FiniteVol` or `WENO` when crystals may
+dissolve completely.
 
 Fields:
 - `nquadrature::Int64`: Number of direct quadrature nodes (default: 3).
@@ -237,14 +238,28 @@ _length_mesh(solver::AbstractSolver) =
                         "$(typeof(solver)) has none."))
 
 """
+    QuadratureStatus
+
+How a quadrature was reconstructed, a scoped enum like `ReturnCode`:
+
+- `QuadratureStatus.OK`: every requested node is active.
+- `QuadratureStatus.Empty`: an empty population, with no active nodes.
+- `QuadratureStatus.Deflated`: the moments support fewer distinct nodes than
+  requested, so the trailing nodes are inactive.
+
+Failed realizability checks throw before a quadrature exists, so there is no
+failure value.
+"""
+@enumx QuadratureStatus OK Empty Deflated
+
+"""
     QMOMInversionDiagnostics
 
-Numerical diagnostics returned alongside a QMOM quadrature.  `status` is one
-of `:ok`, `:empty`, or `:deflated` for successful inversions; failed
-realizability checks throw `ArgumentError` before a quadrature is returned.
+Numerical diagnostics returned alongside a QMOM quadrature; `status` is a
+`QuadratureStatus`.
 """
 struct QMOMInversionDiagnostics{T}
-    status::Symbol
+    status::QuadratureStatus.T
     active_nodes::Int
     minimum_node::T
     minimum_weight::T
@@ -257,10 +272,11 @@ end
 
 Diagnostics for one saved DQMOM state.  The condition estimate is computed
 during ordinary post-processing and intentionally kept out of the
-ForwardDiff-valued RHS.
+ForwardDiff-valued RHS. `status` is a `QuadratureStatus`; a saved state that
+cannot be projected is a reconstruction failure instead.
 """
 struct DQMOMProjectionDiagnostics{T}
-    status::Symbol
+    status::QuadratureStatus.T
     minimum_weight::T
     minimum_node::T
     minimum_node_gap::T

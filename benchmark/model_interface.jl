@@ -24,11 +24,12 @@ function benchmark_model_interface()
     # Rate laws receive the solve-time problem, whose state layout is the solver's.
     rate_problem = CriSTool.DiscretisedProblem(benchmark_run, MoM())
     rate_state = CriSTool._get_initial_state(rate_problem)
-    builtin_growth_law = benchmark_model.growth.law
+    builtin_growth_law = benchmark_model.growth
     callable_growth_law = CallableGrowth((rate_values, rate_context) -> begin
         driving_force = supersaturation(rate_context)
         driving_force > 1.001 ? rate_values.growth_coefficient * (driving_force - 1)^rate_values.growth_order : 0.
-    end; parameters = benchmark_model.growth.parameters)
+    end; parameters = (growth_coefficient = builtin_growth_law.growth_coefficient,
+        growth_order = builtin_growth_law.growth_order))
     @test @inferred(growthrate(callable_growth_law, named_growth_values, rate_problem, rate_state, 0.)) ==
         growthrate(builtin_growth_law, named_growth_values, rate_problem, rate_state, 0.)
 
