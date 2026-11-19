@@ -127,8 +127,12 @@ julia --project=examples "examples/Tutorial 1 Running Simulations.jl"
 
 ## Dependency compatibility
 
-`CompatHelper` (`.github/workflows/CompatHelper.yml`) opens pull requests when
-a dependency releases a version outside a `[compat]` range. Prefer open-ended
+Dependabot (`.github/dependabot.yml`) checks weekly and opens pull requests when
+a dependency releases a version outside a `[compat]` range. The Turing stack
+(Turing, DynamicPPL, AbstractMCMC, AbstractPPL, FlexiChains, MCMCChains) arrives
+as one grouped pull request because its packages must move together; the
+`ignore` entries there hold back bumps that no released Turing supports yet.
+CI tests the newest version each new bound allows. Prefer open-ended
 ranges such as `"0.25.88"` (which means `0.25.88` up to, not including,
 `0.26`) over upper-capped ranges, and cap a dependency only for a specific,
 documented reason. Record the reason in `CHANGELOG.md` and in the pull
